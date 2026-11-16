@@ -1,0 +1,1065 @@
+// ============================================================================
+// ENDOC BACKEND — PRISMA SCHEMA (POSTGRESQL)
+// ============================================================================
+// Arquitetura: White-Label / Instâncias Isoladas por Clínica Contratante
+// Regra de Ouro: Proibido Hard Delete em Prontuário. Todos os modelos possuem
+// suporte nativo a Soft Delete (deletedAt) e Rastreabilidade (createdBy/updatedBy).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS DE DOMÍNIO CLÍNICO E SEGURANÇA (RBAC)
+// ============================================================================
+
+enum OrganizationStatus {
+  ACTIVE
+  MAINTENANCE
+  SUSPENDED
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+  ADMIN
+  DOCTOR
+  NUTRITIONIST
+  RECEPTIONIST
+  STAFF
+  PATIENT
+}
+
+// Perfis de Acesso e Permissões Clínicas (RBAC v2.0 - Clínica FAAZ)
+enum Cargo {
+  DONO_CLINICA   // Médico Titular/Proprietário: poder administrativo TOTAL + prontuários
+  MEDICO         // Médico: acesso clínico aos prontuários e prescrições
+  SECRETARIA     // Secretária: Agenda, Recepção, Cadastro básico; BLOQUEADO prontuários
+  ADMINISTRADOR  // Administrador: gestão financeira; BLOQUEADO prontuários e diagnósticos
+}
+
+enum AccountStatus {
+  PENDING_INVITE
+  ACTIVE
+  REVOKED
+  LOCKED
+}
+
+enum BiologicalSex {
+  FEMALE
+  MALE
+  OTHER
+}
+
+enum PatientStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum ConsultationEventType {
+  ROUTINE_CONSULTATION
+  NUTRITION_EVALUATION
+  LAB_REVIEW
+  CLINICAL_ADDENDUM
+}
+
+enum ConsultationStatus {
+  DRAFT
+  FINALIZED
+  SUPERSEDED
+  ANNULLED_WITH_JUSTIFICATION
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CHECKED_IN
+  CANCELLED
+  COMPLETED
+}
+
+enum MeasurementSourceType {
+  CLINICAL_BIOIMPEDANCE
+  CLINICAL_SCALE
+  PATIENT_APP_SELF_REPORT
+}
+
+enum CarePlanStatus {
+  DRAFT
+  PUBLISHED
+  SUSPENDED
+  COMPLETED
+}
+
+enum DietPlanStatus {
+  DRAFT
+  UNDER_REVIEW
+  PUBLISHED
+  ARCHIVED
+  SUSPENDED
+}
+
+enum MealPeriodIcon {
+  morning
+  noon
+  afternoon
+  night
+}
+
+enum FoodMacroTag {
+  PROTEIN
+  CARB
+  FIBER_MICRO
+  HEALTHY_FAT
+}
+
+enum GoalCategory {
+  HYDRATION
+  CALORIE_BURN
+  SYMPTOM_DIARY
+  STEPS
+  FASTING_WINDOW
+  CAPILLARY_GLUCOSE
+}
+
+enum GoalFrequency {
+  DAILY
+  WEEKLY
+  CUSTOM
+}
+
+enum GoalStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  REPLACED
+}
+
+enum CheckinOrigin {
+  PATIENT_ANDROID_APP
+  CLINICAL_WEB_PANEL
+}
+
+enum AuditCategory {
+  CLINICAL_ACCESS
+  MEDICAL_RECORD
+  SECURITY_AND_AUTH
+  SYSTEM
+}
+
+enum AuditSeverity {
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+// ============================================================================
+// 1. TABELA: Organizations (Clínica / Unidade Contratante)
+// ============================================================================
+model Organization {
+  id              String             @id @default(uuid()) @db.Uuid
+  slug            String             @unique @db.VarChar(80)
+  legalName       String             @map("legal_name") @db.VarChar(200)
+  tradeName       String             @map("trade_name") @db.VarChar(150)
+  taxId           String             @unique @map("tax_id") @db.VarChar(20)
+  primaryColorHex String             @default("#059669") @map("primary_color_hex") @db.VarChar(7)
+  logoStorageKey  String?            @map("logo_storage_key") @db.VarChar(255)
+  enabledModules  Json               @default("{}") @map("enabled_modules")
+  rolePermissions Json?              @default("{}") @map("role_permissions")
+  status          OrganizationStatus @default(ACTIVE)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  users                 User[]
+  patients              Patient[]
+  consultations         Consultation[]
+  biometricMeasurements BiometricMeasurement[]
+  carePlans             CarePlan[]
+  dietPlans             DietPlan[]
+  patientGoals          PatientGoal[]
+  appointments          Appointment[]
+  auditLogs             AuditLog[]
+
+  @@map("organizations")
+}
+
+// ============================================================================
+// 2. TABELA: Users (Profissionais, Administradores, Equipe e Conta Paciente)
+// ============================================================================
+model User {
+  id                 String        @id @default(uuid()) @db.Uuid
+  organizationId     String        @map("organization_id") @db.Uuid
+  title              String?       @db.VarChar(20)
+  fullName           String        @map("full_name") @db.VarChar(160)
+  username           String        @unique @db.VarChar(60)
+  email              String?       @unique @db.VarChar(160)
+  passwordHash       String        @map("password_hash") @db.VarChar(255)
+  role               UserRole
+  cargo              Cargo         @default(DONO_CLINICA)
+  podeAcessarProntuario Boolean    @default(true) @map("pode_acessar_prontuario")
+  councilType        String?       @map("council_type") @db.VarChar(20)
+  councilNumber      String?       @map("council_number") @db.VarChar(40)
+  specialty          String?       @db.VarChar(100)
+  roomNumber         String?       @map("room_number") @db.VarChar(50)
+  isClinical         Boolean       @default(false) @map("is_clinical")
+  mfaEnabled         Boolean       @default(false) @map("mfa_enabled")
+  mfaSecretEncrypted String?       @map("mfa_secret_encrypted") @db.Text
+  accountStatus      AccountStatus @default(ACTIVE) @map("account_status")
+  mustChangePassword Boolean       @default(true) @map("must_change_password")
+  lastLoginAt        DateTime?     @map("last_login_at") @db.Timestamptz(6)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization                Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  patientAccount              Patient?       @relation("PatientUserAccount")
+  primaryDoctorPatients       Patient[]      @relation("PrimaryDoctorPatients")
+  primaryNutritionistPatients Patient[]      @relation("PrimaryNutritionistPatients")
+  consultationsAuthored       Consultation[] @relation("ProfessionalConsultations")
+  carePlansManaged            CarePlan[]     @relation("ResponsibleCarePlans")
+  dietPlansAuthored           DietPlan[]     @relation("AuthorDietPlans")
+  appointmentsAuthored        Appointment[]  @relation("ProfessionalAppointments")
+  auditLogsTriggered          AuditLog[]     @relation("ActorAuditLogs")
+
+  @@index([organizationId, role])
+  @@map("users")
+}
+
+// ============================================================================
+// 3. TABELA: Patients (Cadastro Clínico e Demográfico de Pacientes)
+// ============================================================================
+model Patient {
+  id                    String        @id @default(uuid()) @db.Uuid
+  organizationId        String        @map("organization_id") @db.Uuid
+  userId                String?       @unique @map("user_id") @db.Uuid
+  recordCode            String        @unique @map("record_code") @db.VarChar(40)
+  fullName              String        @map("full_name") @db.VarChar(160)
+  socialName            String?       @map("social_name") @db.VarChar(160)
+  cpf                   String?       @db.VarChar(14)
+  rg                    String?       @db.VarChar(20)
+  birthDate             DateTime?     @map("birth_date") @db.Date
+  biologicalSex         BiologicalSex? @map("biological_sex")
+  estadoCivil           String?       @map("estado_civil") @db.VarChar(30)
+  profissao             String?       @map("profissao") @db.VarChar(100)
+  convenio              String        @default("Particular") @map("convenio") @db.VarChar(50)
+  planoFaaz             Boolean       @default(false) @map("plano_faaz")
+  heightCm              Decimal?      @map("height_cm") @db.Decimal(5, 2)
+  phoneWhatsapp         String        @default("") @map("phone_whatsapp") @db.VarChar(30)
+  telefoneSecundario    String?       @map("telefone_secundario") @db.VarChar(30)
+  email                 String?       @db.VarChar(160)
+  contatoEmergenciaNome String?       @map("contato_emergencia_nome") @db.VarChar(160)
+  contatoEmergenciaTelefone String?   @map("contato_emergencia_telefone") @db.VarChar(30)
+  photoUrl              String?       @map("photo_url") @db.Text
+  avatarUrl             String?       @map("avatar_url") @db.Text
+  clinicalFocus         String?       @map("clinical_focus") @db.VarChar(200)
+  treatmentObjective    String?       @map("treatment_objective") @db.VarChar(200)
+
+  // Diretrizes de Atividade Física / Treinos (Habit Tracker)
+  workoutType           String?       @map("workout_type") @db.VarChar(100)
+  workoutFrequency      Int?          @map("workout_frequency")
+  workoutDuration       Int?          @map("workout_duration")
+  workoutRestrictions  String?       @map("workout_restrictions") @db.Text
+
+  // Endereço Residencial (ViaCEP)
+  zipCode               String?       @map("zip_code") @db.VarChar(10)
+  street                String?       @db.VarChar(200)
+  number                String?       @db.VarChar(30)
+  complement            String?       @db.VarChar(100)
+  neighborhood          String?       @db.VarChar(100)
+  city                  String?       @db.VarChar(100)
+  state                 String?       @db.VarChar(2)
+
+  primaryDoctorId       String?       @map("primary_doctor_id") @db.Uuid
+  primaryNutritionistId String?       @map("primary_nutritionist_id") @db.Uuid
+  metaDiariaMl          Int           @default(2500) @map("meta_diaria_ml")
+  patientStatus         PatientStatus @default(ACTIVE) @map("patient_status")
+  activeModules         String[]      @default([]) @map("active_modules")
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization          Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user                  User?                  @relation("PatientUserAccount", fields: [userId], references: [id], onDelete: SetNull)
+  primaryDoctor         User?                  @relation("PrimaryDoctorPatients", fields: [primaryDoctorId], references: [id], onDelete: SetNull)
+  primaryNutritionist   User?                  @relation("PrimaryNutritionistPatients", fields: [primaryNutritionistId], references: [id], onDelete: SetNull)
+  consultations         Consultation[]
+  biometricMeasurements BiometricMeasurement[]
+  carePlans             CarePlan[]
+  dietPlans             DietPlan[]
+  patientGoals          PatientGoal[]
+  goalCheckins          GoalCheckin[]
+  appointments          Appointment[]
+  auditLogs             AuditLog[]
+  prontuario            ProntuarioPaciente?
+  evolucoesClinicas     EvolucaoClinica[]
+  registrosGlicemia     RegistroGlicemia[]
+  agendamentos          Agendamento[]
+  planosAlimentares     PlanoAlimentar[]
+  checkinsSono          CheckInSono[]
+  workoutLogs           WorkoutLog[]
+  dietSubstitutions     DietSubstitution[]
+  measurements          Measurement[]
+
+  @@unique([organizationId, cpf], name: "uq_patients_org_cpf")
+  @@index([organizationId, fullName])
+  @@map("patients")
+}
+
+// ============================================================================
+// 4. TABELA: Consultations (Prontuário Clínico SOAP com Versionamento Imutável)
+// ============================================================================
+model Consultation {
+  id                   String                @id @default(uuid()) @db.Uuid
+  organizationId       String                @map("organization_id") @db.Uuid
+  patientId            String                @map("patient_id") @db.Uuid
+  professionalId       String                @map("professional_id") @db.Uuid
+  parentConsultationId String?               @map("parent_consultation_id") @db.Uuid
+  versionNumber        Int                   @default(1) @map("version_number")
+  eventType            ConsultationEventType @map("event_type")
+  consultationDate     DateTime              @map("consultation_date") @db.Timestamptz(6)
+  soapSubjective       String?               @map("soap_subjective") @db.Text
+  soapObjective        String?               @map("soap_objective") @db.Text
+  soapAssessment       String?               @map("soap_assessment") @db.Text
+  soapPlan             String?               @map("soap_plan") @db.Text
+  status               ConsultationStatus    @default(DRAFT)
+  amendmentReason      String?               @map("amendment_reason") @db.Text
+  finalizedAt          DateTime?             @map("finalized_at") @db.Timestamptz(6)
+  integrityChecksum    String                @map("integrity_checksum") @db.VarChar(64)
+
+  // Faturamento e Modalidade de Atendimento (TSK-057)
+  paymentType          String?               @default("PARTICULAR") @map("payment_type") @db.VarChar(20)
+  healthInsurance      String?               @map("health_insurance") @db.VarChar(100)
+  price                Decimal?              @db.Decimal(10, 2)
+  paymentStatus        String?               @default("PENDENTE") @map("payment_status") @db.VarChar(20)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization          Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  patient               Patient                @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  professional          User                   @relation("ProfessionalConsultations", fields: [professionalId], references: [id], onDelete: Restrict)
+  parentConsultation    Consultation?          @relation("ConsultationVersioning", fields: [parentConsultationId], references: [id], onDelete: Restrict)
+  amendedVersions       Consultation[]         @relation("ConsultationVersioning")
+  biometricMeasurements BiometricMeasurement[]
+
+  @@index([patientId, consultationDate(sort: Desc)])
+  @@index([parentConsultationId])
+  @@map("consultations")
+}
+
+// ============================================================================
+// 5. TABELA: Biometric_Measurements (Série Temporal de Peso, IMC e Biomarcadores)
+// ============================================================================
+model BiometricMeasurement {
+  id                   String                @id @default(uuid()) @db.Uuid
+  organizationId       String                @map("organization_id") @db.Uuid
+  patientId            String                @map("patient_id") @db.Uuid
+  consultationId       String?               @map("consultation_id") @db.Uuid
+  measuredAt           DateTime              @map("measured_at") @db.Timestamptz(6)
+  weightKg             Decimal               @map("weight_kg") @db.Decimal(5, 2)
+  bmi                  Decimal               @db.Decimal(4, 2)
+  waistCircumferenceCm Decimal?              @map("waist_circumference_cm") @db.Decimal(5, 2)
+  bodyFatPercentage    Decimal?              @map("body_fat_percentage") @db.Decimal(4, 2)
+  skeletalMuscleKg     Decimal?              @map("skeletal_muscle_kg") @db.Decimal(5, 2)
+  sourceType           MeasurementSourceType @map("source_type")
+  isValidatedByStaff   Boolean               @default(false) @map("is_validated_by_staff")
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  consultation Consultation? @relation(fields: [consultationId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, measuredAt(sort: Desc)])
+  @@map("biometric_measurements")
+}
+
+// ============================================================================
+// 6. TABELA: Care_Plans (Planos de Cuidado Longitudinal)
+// ============================================================================
+model CarePlan {
+  id                        String         @id @default(uuid()) @db.Uuid
+  organizationId            String         @map("organization_id") @db.Uuid
+  patientId                 String         @map("patient_id") @db.Uuid
+  responsibleProfessionalId String         @map("responsible_professional_id") @db.Uuid
+  title                     String         @db.VarChar(160)
+  clinicalObjectives        String         @map("clinical_objectives") @db.Text
+  status                    CarePlanStatus @default(DRAFT)
+  startDate                 DateTime       @map("start_date") @db.Date
+  endDate                   DateTime?      @map("end_date") @db.Date
+  publishedAt               DateTime?      @map("published_at") @db.Timestamptz(6)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization            Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  patient                 Patient       @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  responsibleProfessional User          @relation("ResponsibleCarePlans", fields: [responsibleProfessionalId], references: [id], onDelete: Restrict)
+  patientGoals            PatientGoal[]
+
+  @@index([patientId, status])
+  @@map("care_plans")
+}
+
+// ============================================================================
+// 7. TABELA: Diet_Plans (Planos Alimentares Versionados)
+// ============================================================================
+model DietPlan {
+  id                   String         @id @default(uuid()) @db.Uuid
+  organizationId       String         @map("organization_id") @db.Uuid
+  patientId            String         @map("patient_id") @db.Uuid
+  authorProfessionalId String         @map("author_professional_id") @db.Uuid
+  parentDietPlanId     String?        @map("parent_diet_plan_id") @db.Uuid
+  versionLabel         String         @map("version_label") @db.VarChar(30)
+  versionNumber        Int            @default(1) @map("version_number")
+  title                String         @db.VarChar(160)
+  goalDescription      String?        @map("goal_description") @db.VarChar(255)
+  targetKcal           Int            @map("target_kcal")
+  targetProteinG       Decimal        @map("target_protein_g") @db.Decimal(6, 2)
+  targetCarbsG         Decimal        @map("target_carbs_g") @db.Decimal(6, 2)
+  targetFatG           Decimal        @map("target_fat_g") @db.Decimal(6, 2)
+  generalGuidelines    Json           @default("[]") @map("general_guidelines")
+  status               DietPlanStatus @default(DRAFT)
+  effectiveFrom        DateTime?      @map("effective_from") @db.Date
+  effectiveUntil       DateTime?      @map("effective_until") @db.Date
+  publishedAt          DateTime?      @map("published_at") @db.Timestamptz(6)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  patient            Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  authorProfessional User         @relation("AuthorDietPlans", fields: [authorProfessionalId], references: [id], onDelete: Restrict)
+  parentDietPlan     DietPlan?    @relation("DietPlanVersioning", fields: [parentDietPlanId], references: [id], onDelete: Restrict)
+  subsequentVersions DietPlan[]   @relation("DietPlanVersioning")
+  meals              DietMeal[]
+
+  @@index([patientId, status, versionNumber(sort: Desc)])
+  @@map("diet_plans")
+}
+
+// ============================================================================
+// 8. TABELA: Diet_Meals (Refeições do Plano Alimentar)
+// ============================================================================
+model DietMeal {
+  id            String         @id @default(uuid()) @db.Uuid
+  dietPlanId    String         @map("diet_plan_id") @db.Uuid
+  mealName      String         @map("meal_name") @db.VarChar(80)
+  suggestedTime String         @map("suggested_time") @db.VarChar(10)
+  sortOrder     Int            @default(1) @map("sort_order")
+  periodIcon    MealPeriodIcon @default(morning) @map("period_icon")
+  notes         String?        @db.Text
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  dietPlan DietPlan       @relation(fields: [dietPlanId], references: [id], onDelete: Restrict)
+  items    DietMealItem[]
+
+  @@index([dietPlanId, sortOrder])
+  @@map("diet_meals")
+}
+
+// ============================================================================
+// 9. TABELA: Diet_Meal_Items (Alimentos e Macronutrientes por Refeição - TACO)
+// ============================================================================
+model DietMealItem {
+  id                 String       @id @default(uuid()) @db.Uuid
+  dietMealId         String       @map("diet_meal_id") @db.Uuid
+  tacoFoodCode       String?      @map("taco_food_code") @db.VarChar(40)
+  foodName           String       @map("food_name") @db.VarChar(160)
+  householdMeasure   String?      @map("household_measure") @db.VarChar(80)
+  quantityGrams      Decimal      @map("quantity_grams") @db.Decimal(6, 2)
+  calculatedKcal     Decimal      @map("calculated_kcal") @db.Decimal(6, 2)
+  calculatedProteinG Decimal      @map("calculated_protein_g") @db.Decimal(6, 2)
+  calculatedCarbsG   Decimal      @map("calculated_carbs_g") @db.Decimal(6, 2)
+  calculatedFatG     Decimal      @map("calculated_fat_g") @db.Decimal(6, 2)
+  macroTag           FoodMacroTag @map("macro_tag")
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  dietMeal DietMeal @relation(fields: [dietMealId], references: [id], onDelete: Restrict)
+
+  @@index([dietMealId])
+  @@map("diet_meal_items")
+}
+
+// ============================================================================
+// 10. TABELA: Patient_Goals (Metas e Módulos Ativos no App Android)
+// ============================================================================
+model PatientGoal {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  patientId      String        @map("patient_id") @db.Uuid
+  carePlanId     String?       @map("care_plan_id") @db.Uuid
+  category       GoalCategory
+  title          String        @db.VarChar(120)
+  targetValue    Decimal       @map("target_value") @db.Decimal(10, 2)
+  unit           String        @db.VarChar(30)
+  frequency      GoalFrequency @default(DAILY)
+  isEnabledInApp Boolean       @default(true) @map("is_enabled_in_app")
+  status         GoalStatus    @default(ACTIVE)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  carePlan     CarePlan?     @relation(fields: [carePlanId], references: [id], onDelete: SetNull)
+  checkins     GoalCheckin[]
+
+  @@index([patientId, status, isEnabledInApp])
+  @@map("patient_goals")
+}
+
+// ============================================================================
+// 11. TABELA: Goal_Checkins (Registros Diários do Paciente no App)
+// ============================================================================
+model GoalCheckin {
+  id             String        @id @default(uuid()) @db.Uuid
+  patientGoalId  String        @map("patient_goal_id") @db.Uuid
+  patientId      String        @map("patient_id") @db.Uuid
+  referenceDate  DateTime      @map("reference_date") @db.Date
+  recordedValue  Decimal       @map("recorded_value") @db.Decimal(10, 2)
+  symptomPayload Json?         @map("symptom_payload")
+  origin         CheckinOrigin @default(PATIENT_ANDROID_APP)
+  idempotencyKey String?       @unique @map("idempotency_key") @db.VarChar(80)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  patientGoal PatientGoal @relation(fields: [patientGoalId], references: [id], onDelete: Restrict)
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Restrict)
+
+  @@index([patientGoalId, referenceDate(sort: Desc)])
+  @@index([patientId, referenceDate(sort: Desc)])
+  @@map("goal_checkins")
+}
+
+// ============================================================================
+// 12. TABELA: Audit_Logs (Trilha de Auditoria Imutável — Append-Only)
+// ============================================================================
+model AuditLog {
+  id                String        @id @default(uuid()) @db.Uuid
+  organizationId    String        @map("organization_id") @db.Uuid
+  actorUserId       String?       @map("actor_user_id") @db.Uuid
+  actorRole         String        @map("actor_role") @db.VarChar(40)
+  actionType        String        @map("action_type") @db.VarChar(60)
+  category          AuditCategory
+  targetEntity      String        @map("target_entity") @db.VarChar(60)
+  targetEntityId    String?       @map("target_entity_id") @db.Uuid
+  patientId         String?       @map("patient_id") @db.Uuid
+  severity          AuditSeverity @default(NORMAL)
+  metadataSanitized Json          @default("{}") @map("metadata_sanitized")
+  ipHash            String?       @map("ip_hash") @db.VarChar(64)
+  userAgent         String?       @map("user_agent") @db.VarChar(255)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete (Imutáveis após inserção)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actorUser    User?        @relation("ActorAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
+  patient      Patient?     @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([patientId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// 13. TABELA: Appointments (Agendamentos e Grade de Horários da Clínica)
+// ============================================================================
+model Appointment {
+  id              String            @id @default(uuid()) @db.Uuid
+  organizationId  String            @map("organization_id") @db.Uuid
+  patientId       String            @map("patient_id") @db.Uuid
+  professionalId  String            @map("professional_id") @db.Uuid
+  date            DateTime          @db.Date
+  time            String            @db.VarChar(5)
+  durationMinutes Int               @default(45) @map("duration_minutes")
+  type            String            @default("Consulta de Rotina") @db.VarChar(100)
+  room            String?           @db.VarChar(50)
+  status          AppointmentStatus @default(SCHEDULED)
+  notes           String?           @db.Text
+
+  // Faturamento e Modalidade de Atendimento (TSK-057)
+  paymentType     String?           @default("PARTICULAR") @map("payment_type") @db.VarChar(20)
+  healthInsurance String?           @map("health_insurance") @db.VarChar(100)
+  price           Decimal?          @db.Decimal(10, 2)
+  paymentStatus   String?           @default("PENDENTE") @map("payment_status") @db.VarChar(20)
+
+  // Colunas obrigatórias de Rastreabilidade e Soft Delete
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz(6)
+  createdBy       String?           @map("created_by") @db.Uuid
+  updatedBy       String?           @map("updated_by") @db.Uuid
+
+  // Relacionamentos
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  patient         Patient           @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  professional    User              @relation("ProfessionalAppointments", fields: [professionalId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, date])
+  @@index([patientId])
+  @@index([professionalId])
+  @@map("appointments")
+}
+
+// ============================================================================
+// 14. TABELA: ClinicSettings (Configurações Globais da Clínica / White-Label TSK-069)
+// ============================================================================
+model ClinicSettings {
+  id        String   @id @default("default") @db.VarChar(50)
+  name      String   @default("Instituto Vida Metabólica") @db.VarChar(200)
+  logoUrl   String?  @map("logo_url") @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("clinic_settings")
+}
+
+// ============================================================================
+// 15. TABELA: Foods (Banco de Alimentos e Tabela TACO - TSK-084)
+// ============================================================================
+model Food {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String   @unique @db.VarChar(255)
+  category      String   @db.VarChar(100)
+  basePortion   Float    @default(100) @map("base_portion")
+  calories      Float
+  proteins      Float
+  carbohydrates Float
+  fats          Float
+  fiber         Float?   @default(0)
+
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([name])
+  @@index([category])
+  @@map("foods")
+}
+
+// ============================================================================
+// 16. TABELA: CheckinIntestinal (Módulo Saúde Intestinal - Escala de Bristol)
+// ============================================================================
+model CheckinIntestinal {
+  id          String   @id @default(uuid())
+  pacienteId  String
+  // paciente    Paciente @relation(fields: [pacienteId], references: [id]) -> Descomente se o modelo Paciente já existir
+  tipoBristol Int      // Escala de 1 a 7
+  categoria   String   // 'constipacao', 'ideal', 'diarreia'
+  sintomas    String[] // Array de sintomas, ex: ["Gases", "Dor"]
+  data        DateTime @default(now())
+
+  @@map("checkins_intestinais")
+}
+
+// ============================================================================
+// 17. TABELA: CheckinHidratacao (Módulo de Aderência Hídrica)
+// ============================================================================
+model CheckinHidratacao {
+  id           String   @id @default(uuid())
+  pacienteId   String
+  volumeMl     Int      // Volume ingerido no registro (ex: 500ml)
+  metaDiariaMl Int      @default(2500) // Meta configurada pelo médico
+  data         DateTime @default(now())
+
+  @@map("checkins_hidratacao")
+}
+
+// ============================================================================
+// 18. TABELA: ProntuarioPaciente (Ficha Clínica Digital do Paciente)
+// ============================================================================
+model ProntuarioPaciente {
+  id           String    @id @default(uuid()) @db.Uuid
+  pacienteId   String    @unique @map("paciente_id") @db.Uuid
+  pesoAtualKg  Decimal?  @map("peso_atual_kg") @db.Decimal(5, 2)
+  alturaCm     Decimal?  @map("altura_cm") @db.Decimal(5, 2)
+  imc          Decimal?  @db.Decimal(4, 2)
+  objetivo     String?   @db.Text
+  comorbidades String?   @db.Text
+  alergias     String?   @db.Text
+  medicacoes   String?   @db.Text
+  evolucao     String?   @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  patient      Patient   @relation(fields: [pacienteId], references: [id], onDelete: Cascade)
+
+  @@map("prontuarios_pacientes")
+}
+
+// ============================================================================
+// 19. TABELA: EvolucaoClinica (Histórico de Consultas e Linha do Tempo)
+// ============================================================================
+model EvolucaoClinica {
+  id                String   @id @default(uuid()) @db.Uuid
+  pacienteId        String   @map("paciente_id") @db.Uuid
+  dataAtendimento   DateTime @default(now()) @map("data_atendimento") @db.Timestamptz(6)
+  pesoAtual         Float?   @map("peso_atual")
+  alturaCm          Float?   @map("altura_cm")
+  imc               Float?
+  queixaPrincipal   String?  @map("queixa_principal") @db.Text
+  condutaEvolucao   String   @map("conduta_evolucao") @db.Text
+  medicoResponsavel String   @default("Dr. Carlos Fantini") @map("medico_responsavel") @db.VarChar(160)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  patient           Patient  @relation(fields: [pacienteId], references: [id], onDelete: Cascade)
+
+  @@index([pacienteId, dataAtendimento(sort: Desc)])
+  @@map("evolucoes_clinicas")
+}
+
+// ============================================================================
+// 20. TABELA: RegistroGlicemia (Monitoramento Bidirecional de Glicemia Capilar)
+// ============================================================================
+model RegistroGlicemia {
+  id           String   @id @default(uuid()) @db.Uuid
+  pacienteId   String   @map("paciente_id") @db.Uuid
+  dataRegistro DateTime @default(now()) @map("data_registro") @db.Timestamptz(6)
+  valor        Int      // mg/dL
+  momento      String   @default("JEJUM") @db.VarChar(30) // 'JEJUM', 'POS_PRANDIAL', 'CASUAL'
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  paciente     Patient  @relation(fields: [pacienteId], references: [id], onDelete: Cascade)
+
+  @@index([pacienteId, dataRegistro(sort: Desc)])
+  @@index([dataRegistro(sort: Desc)])
+  @@map("registros_glicemia")
+}
+
+// ============================================================================
+// 21. TABELA: Medico (Corpo Clínico / Profissionais da Agenda da Clínica FAAZ)
+// ============================================================================
+model Medico {
+  id            String   @id @default(uuid()) @db.Uuid
+  nome          String   @db.VarChar(160)
+  especialidade String?  @db.VarChar(120)
+  corHex        String   @default("#059669") @map("cor_hex") @db.VarChar(20)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  agendamentos  Agendamento[]
+
+  @@map("medicos")
+}
+
+// ============================================================================
+// 22. TABELA: Agendamento (Agenda Diária de Consultas e Exames da Clínica FAAZ)
+// ============================================================================
+model Agendamento {
+  id             String   @id @default(uuid()) @db.Uuid
+  pacienteId     String   @map("paciente_id") @db.Uuid
+  medicoId       String   @default("00000000-0000-4000-8000-000000000001") @map("medico_id") @db.Uuid
+  especialidade  String   @default("ENDOCRINOLOGIA") @db.VarChar(40) // 'ENDOCRINOLOGIA', 'CIRURGIA_PLASTICA'
+  dataHora       DateTime @map("data_hora") @db.Timestamptz(6)
+  duracaoMinutos Int      @default(30) @map("duracao_minutos")
+  encaixe        Boolean  @default(false)
+  tipo           String   @default("RETORNO") @db.VarChar(40) // 'PRIMEIRA_CONSULTA', 'RETORNO', 'EXAME'
+  status         String   @default("AGENDADO") @db.VarChar(30) // 'AGENDADO', 'CONFIRMADO', 'CANCELADO', 'FINALIZADO'
+  observacao     String?  @db.Text
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  paciente   Patient  @relation(fields: [pacienteId], references: [id], onDelete: Cascade)
+  medico     Medico   @relation(fields: [medicoId], references: [id], onDelete: Restrict)
+
+  @@index([dataHora(sort: Asc)])
+  @@index([especialidade, dataHora(sort: Asc)])
+  @@index([medicoId, dataHora(sort: Asc)])
+  @@index([pacienteId, dataHora(sort: Desc)])
+  @@map("agendamentos")
+}
+
+// ============================================================================
+// ============================================================================
+// 23. TABELA: Alimento (Banco de Alimentos e Nutrientes Base - TACO / UNICAMP)
+// ============================================================================
+model Alimento {
+  id            String         @id @default(uuid()) @db.Uuid
+  nome          String         @unique @db.VarChar(255)
+  porcaoBase    Float          @default(100) @map("porcao_base") // ex: 100g
+  calorias      Float          // kcal na porção base
+  proteinas     Float          // gramas
+  carboidratos  Float          // gramas
+  gorduras      Float          // gramas
+  fibras        Float?         @default(0) // gramas
+  categoria     String?        @default("Geral") @db.VarChar(100)
+  fonte         String?        @default("TACO") @db.VarChar(50)
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  itensRefeicao ItemRefeicao[]
+  substituicoes DietSubstitution[]
+
+  @@index([nome])
+  @@index([categoria])
+  @@map("alimentos")
+}
+
+// ============================================================================
+// 24. TABELA: PlanoAlimentar (Prescrição Dietética Vinculada ao Paciente)
+// ============================================================================
+model PlanoAlimentar {
+  id          String          @id @default(uuid()) @db.Uuid
+  pacienteId  String          @map("paciente_id") @db.Uuid
+  titulo      String          @default("Plano Alimentar") @db.VarChar(160)
+  objetivo    String?         @db.VarChar(255)
+  ativo       Boolean         @default(true)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  paciente    Patient         @relation(fields: [pacienteId], references: [id], onDelete: Cascade)
+  variacoes   VariacaoDieta[]
+
+  @@index([pacienteId])
+  @@map("planos_alimentares")
+}
+
+// ============================================================================
+// 24.1 TABELA: VariacaoDieta (Opções de Cardápio: Opção 1, Opção 2, Treino...)
+// ============================================================================
+model VariacaoDieta {
+  id               String         @id @default(uuid()) @db.Uuid
+  planoAlimentarId String         @map("plano_alimentar_id") @db.Uuid
+  nome             String         @db.VarChar(100) // 'Opção 1 (Padrão)', 'Opção 2 (Variada)', 'Dia de Treino', 'Fim de Semana'
+  descricao        String?        @db.VarChar(255)
+  ordem            Int            @default(1)
+  ativo            Boolean        @default(true)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  planoAlimentar   PlanoAlimentar @relation(fields: [planoAlimentarId], references: [id], onDelete: Cascade)
+  refeicoes        Refeicao[]
+
+  @@index([planoAlimentarId, ordem])
+  @@map("variacoes_dieta")
+}
+
+// ============================================================================
+// 25. TABELA: Refeicao (Refeições vinculadas à Variação: Desjejum, Almoço...)
+// ============================================================================
+model Refeicao {
+  id              String         @id @default(uuid()) @db.Uuid
+  variacaoDietaId String         @map("variacao_dieta_id") @db.Uuid
+  nome            String         @db.VarChar(100) // 'Café da Manhã', 'Lanche da Manhã', 'Almoço', 'Lanche da Tarde', 'Jantar', 'Ceia'
+  horario         String?        @db.VarChar(10)  // '07:30', '12:30', etc.
+  ordem           Int            @default(1)
+  observacoes     String?        @db.Text
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  variacaoDieta   VariacaoDieta  @relation(fields: [variacaoDietaId], references: [id], onDelete: Cascade)
+  itens           ItemRefeicao[]
+
+  @@index([variacaoDietaId, ordem])
+  @@map("refeicoes")
+}
+
+// ============================================================================
+// 26. TABELA: ItemRefeicao (Vínculo de Refeição ao Alimento com Quantidade em Gramas)
+// ============================================================================
+model ItemRefeicao {
+  id               String    @id @default(uuid()) @db.Uuid
+  refeicaoId       String    @map("refeicao_id") @db.Uuid
+  alimentoId       String    @map("alimento_id") @db.Uuid
+  quantidadeGramas Float     @default(100) @map("quantidade_gramas")
+  observacao       String?   @db.VarChar(160)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  refeicao         Refeicao  @relation(fields: [refeicaoId], references: [id], onDelete: Cascade)
+  alimento         Alimento  @relation(fields: [alimentoId], references: [id], onDelete: Restrict)
+  substituicoes    DietSubstitution[]
+
+  @@index([refeicaoId])
+  @@index([alimentoId])
+  @@map("itens_refeicoes")
+}
+
+// ============================================================================
+// 27. TABELA: CheckInSono (Módulo Sono & Recuperação do Paciente via App)
+// ============================================================================
+model CheckInSono {
+  id         String   @id @default(uuid()) @db.Uuid
+  pacienteId String   @map("paciente_id") @db.Uuid
+  horas      Float
+  qualidade  String   @default("BOM") @db.VarChar(50)
+  observacao String?  @db.Text
+  data       DateTime @default(now()) @db.Timestamptz(6)
+
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  paciente   Patient  @relation(fields: [pacienteId], references: [id], onDelete: Cascade)
+
+  @@index([pacienteId, data(sort: Desc)])
+  @@map("checkins_sono")
+}
+
+// ============================================================================
+// 28. TABELA: WorkoutLog (Habit Tracker de Treinos / Atividade Física)
+// ============================================================================
+model WorkoutLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  patientId  String   @map("patient_id") @db.Uuid
+  date       DateTime @default(now()) @db.Timestamptz(6)
+
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  patient    Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, date(sort: Desc)])
+  @@map("workout_logs")
+}
+
+// ============================================================================
+// 29. TABELA: DietSubstitution (Substituições / Trocas de Alimentos pelo Paciente)
+// ============================================================================
+model DietSubstitution {
+  id                   String        @id @default(uuid()) @db.Uuid
+  patientId            String        @map("patient_id") @db.Uuid
+  prescribedDietItemId String        @map("prescribed_diet_item_id") @db.Uuid
+  substituteFoodId     String?       @map("substitute_food_id") @db.Uuid
+  substituteFoodName   String        @map("substitute_food_name") @db.VarChar(160)
+  quantityGrams        Float         @default(100) @map("quantity_grams")
+  calories             Float         @default(0)
+  proteins             Float?        @default(0)
+  carbohydrates        Float?        @default(0)
+  fats                 Float?        @default(0)
+  date                 DateTime      @default(now()) @db.Timestamptz(6)
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  patient              Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  prescribedDietItem   ItemRefeicao  @relation(fields: [prescribedDietItemId], references: [id], onDelete: Cascade)
+  substituteFood       Alimento?     @relation(fields: [substituteFoodId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, date(sort: Desc)])
+  @@index([prescribedDietItemId])
+  @@map("diet_substitutions")
+}
+
+// ============================================================================
+// 30. TABELA: Measurement (Antropometria, Circunferências e Composição Corporal)
+// ============================================================================
+model Measurement {
+  id                String   @id @default(uuid()) @db.Uuid
+  patientId         String   @map("patient_id") @db.Uuid
+  measuredAt        DateTime @default(now()) @map("measured_at") @db.Timestamptz(6)
+  bodyFatPercentage Float?   @map("body_fat_percentage")
+  waist             Float?
+  abdomen           Float?
+  hips              Float?
+  rightArm          Float?   @map("right_arm")
+  leftArm           Float?   @map("left_arm")
+  rightThigh        Float?   @map("right_thigh")
+  leftThigh         Float?   @map("left_thigh")
+  notes             String?  @db.VarChar(255)
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, measuredAt(sort: Desc)])
+  @@map("measurements")
+}
+
+// ============================================================================
+// 31. TABELA: DocumentTemplate (Modelos Clínicos Salvos - Receitas/Exames/Atestados)
+// ============================================================================
+model DocumentTemplate {
+  id             String   @id @default(uuid()) @db.Uuid
+  title          String   @db.VarChar(160)
+  content        String   @db.Text
+  category       String   @db.VarChar(40)
+  documentTitle  String?  @map("document_title") @db.VarChar(200)
+  organizationId String?  @map("organization_id") @db.Uuid
+  createdBy      String?  @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([category, createdAt(sort: Asc)])
+  @@map("document_templates")
+}
+
+
+
+
+
+
+

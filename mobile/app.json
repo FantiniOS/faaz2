@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Clínica FAAZ",
+    "slug": "clinica-faaz",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./src/assets/logo.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./src/assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
+    "android": {
+      "package": "com.mobile",
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo-fenix-transparent.png",
+        "backgroundColor": "#0A1128"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "name": "Clínica FAAZ",
+      "shortName": "Clínica FAAZ",
+      "display": "standalone",
+      "themeColor": "#0f172a",
+      "backgroundColor": "#0f172a",
+      "orientation": "portrait",
+      "lang": "pt-BR",
+      "scope": "/",
+      "startUrl": "/",
+      "favicon": "./src/assets/logo.png",
+      "meta": {
+        "apple": {
+          "mobileWebAppCapable": "yes",
+          "statusBarStyle": "black-translucent"
+        }
+      }
+    }
+  }
+}

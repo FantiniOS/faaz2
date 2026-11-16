@@ -2,6 +2,15 @@
 
 # dependencies
 /node_modules
+node_modules/
+mobile/node_modules/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/build/
+mobile/.gradle/
+mobile/.idea/
+mobile/.bundle/
+painel-medico/
 /.pnp
 .pnp.*
 .yarn/*

@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ======================================================== */
+/* BLINDAGEM DE LAYOUT E TIPOGRAFIA WEB & PWA (CLÍNICA FAAZ) */
+/* ======================================================== */
+
+/* Suavização de Fonte Universal (Web Anti-aliasing para PWA) */
+* {
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  -ms-overflow-style: none !important; /* IE e Edge */
+  scrollbar-width: none !important; /* Firefox */
+}
+
+html,
+body {
+  background-color: #f1f5f9; /* Cinza neutro suave no fundo externo */
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 400;
+  color: #374151;
+}
+
+#root {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  background-color: #f1f5f9;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+}
+
+/* Oculta a barra de rolagem nativa do navegador preservando o scroll */
+::-webkit-scrollbar {
+  display: none !important;
+  width: 0px !important;
+  height: 0px !important;
+  background: transparent !important;
+}
+
+/* Reset de peso base para tipografia no navegador / React Native Web */
+[dir="auto"],
+p,
+span,
+div,
+input,
+textarea,
+label {
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
+}
+
+/* Remoção de borda preta espessa padrão de navegadores (Web Default Focus Outline) */
+input,
+textarea,
+[role="textbox"] {
+  outline: none !important;
+  outline-style: none !important;
+}
+
+input:focus,
+textarea:focus,
+[role="textbox"]:focus {
+  outline: none !important;
+  outline-style: none !important;
+  box-shadow: none !important;
+}
