@@ -48,9 +48,10 @@ export function MetasScreen({
   const realPacienteId = pacienteId || authPaciente?.id;
   const nomeExibicao = (pacienteNome || authPaciente?.nome || "PACIENTE").toUpperCase();
 
-  // Estados de Metas sincronizados com o Diário Alimentar do Paciente
+  // Estados de Metas sincronizados com o Diário Alimentar do Paciente e API
   const diario = useDiarioAlimentar();
-  const caloriasAlvo = diario.caloriasMeta || 2000;
+  const [caloriasAlvoApi, setCaloriasAlvoApi] = useState<number | null>(null);
+  const caloriasAlvo = caloriasAlvoApi || diario.caloriasMeta || 2000;
   const caloriasConsumidas = diario.caloriasConsumidas;
   const [caloriasBonusGanhos, setCaloriasBonusGanhos] = useState(320);
   const [caloriasBonusMeta, setCaloriasBonusMeta] = useState(400);
@@ -69,14 +70,17 @@ export function MetasScreen({
       try {
         const json = await api.pacientes.getMetas(pacienteId);
         if (isMounted && json?.metas) {
-          if (json.metas.caloriasBonusAlvo) {
+          if (json.metas.caloriasAlvo) {
+            setCaloriasAlvoApi(Number(json.metas.caloriasAlvo));
+          }
+          if (json.metas.caloriasBonusAlvo !== undefined) {
             setCaloriasBonusMeta(Number(json.metas.caloriasBonusAlvo));
           } else if (json.metas.pontosBonusAlvo) {
             const bVal = Number(json.metas.pontosBonusAlvo);
             setCaloriasBonusMeta(bVal > 50 ? bVal : bVal * 30);
           }
-          if (json.metas.sonoHorasAlvo) setSonoAlvoHoras(json.metas.sonoHorasAlvo);
-          if (json.metas.aguaMlAlvo) setAguaMetaMl(json.metas.aguaMlAlvo);
+          if (json.metas.sonoHorasAlvo) setSonoAlvoHoras(Number(json.metas.sonoHorasAlvo));
+          if (json.metas.aguaMlAlvo) setAguaMetaMl(Number(json.metas.aguaMlAlvo));
         }
       } catch {
         // Fallback para os valores locais estáticos

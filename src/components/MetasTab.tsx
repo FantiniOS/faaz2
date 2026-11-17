@@ -340,6 +340,45 @@ export function MetasTab({
       });
 
       if (res.ok) {
+        const resJson = await res.json().catch(() => null);
+        if (resJson?.metas) {
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  metas: {
+                    ...prev.metas,
+                    ...resJson.metas,
+                  },
+                  hidratacaoHoje: {
+                    ...prev.hidratacaoHoje,
+                    metaMl: resJson.metas.aguaMlAlvo,
+                    percentual: Math.min(
+                      100,
+                      Math.round(
+                        (prev.hidratacaoHoje.consumidoMl /
+                          resJson.metas.aguaMlAlvo) *
+                          100
+                      )
+                    ),
+                  },
+                  pesoEvolucao: {
+                    ...prev.pesoEvolucao,
+                    pesoAlvoKg: resJson.metas.pesoAlvoKg,
+                    distanciaAlvoKg: Math.max(
+                      0,
+                      Math.round(
+                        (prev.pesoEvolucao.pesoAtualKg -
+                          resJson.metas.pesoAlvoKg) *
+                          10
+                      ) / 10
+                    ),
+                  },
+                }
+              : prev
+          );
+          syncFormFromMetas(resJson.metas);
+        }
         isModalAjusteOpenRef.current = false;
         setIsModalAjusteOpen(false);
         setToastMensagem("Metas clínicas atualizadas com sucesso!");
