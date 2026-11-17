@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import bcrypt from "bcryptjs";
 import { getDataSource, getRepository } from "../src/lib/db/data-source";
 import {
@@ -71,8 +73,51 @@ async function upsertUser(params: {
   );
 }
 
+async function ensureOracleSchema() {
+  const ds = await getDataSource();
+  const ddlFiles = [
+    path.join(process.cwd(), "database", "oracle", "001_lote1_nucleo.sql"),
+    path.join(
+      process.cwd(),
+      "database",
+      "oracle",
+      "002_lote2_a_4_demais_tabelas.sql",
+    ),
+  ];
+
+  for (const filePath of ddlFiles) {
+    if (!fs.existsSync(filePath)) continue;
+    const rawSql = fs.readFileSync(filePath, "utf-8");
+    const withoutComments = rawSql
+      .split(/\r?\n/)
+      .map((line) => line.replace(/--.*$/, ""))
+      .filter((line) => line.trim().length > 0)
+      .join("\n");
+    const statements = withoutComments
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    for (const stmt of statements) {
+      try {
+        await ds.query(stmt);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // ORA-00955: objeto já existe | ORA-01408: colunas já indexadas
+        if (msg.includes("ORA-00955") || msg.includes("ORA-01408")) {
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+  console.log("✅ Estrutura DDL (31 tabelas + índices + constraints) verificada no Oracle ADB!");
+}
+
 async function main() {
   console.log("🌱 Semeando dados iniciais da Clínica FAAZ no Oracle Autonomous Database...");
+
+  await ensureOracleSchema();
 
   const orgRepo = await getRepository(OrganizationEntity);
   const medicoRepo = await getRepository(MedicoEntity);

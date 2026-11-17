@@ -198,25 +198,33 @@ export async function carregarTabelaTaco(): Promise<number> {
 
   const existentes = await alimentoRepo.find({ select: { nome: true } });
   const jaNoBanco = new Set(existentes.map((e) => e.nome));
+  const novos = alimentosFormatados.filter((item) => !jaNoBanco.has(item.nome));
 
+  const BATCH_SIZE = 4;
   let totalInseridos = 0;
-  for (const item of alimentosFormatados) {
-    if (jaNoBanco.has(item.nome)) continue;
-    await alimentoRepo.save(alimentoRepo.create(item));
-    totalInseridos++;
+  for (let i = 0; i < novos.length; i += BATCH_SIZE) {
+    const lote = novos.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      lote.map((item) => alimentoRepo.insert(alimentoRepo.create(item))),
+    );
+    totalInseridos += lote.length;
 
     try {
-      await foodRepo.save(
-        foodRepo.create({
-          name: item.nome,
-          category: item.categoria,
-          basePortion: item.porcaoBase,
-          calories: item.calorias,
-          proteins: item.proteinas,
-          carbohydrates: item.carboidratos,
-          fats: item.gorduras,
-          fiber: item.fibras,
-        }),
+      await Promise.all(
+        lote.map((item) =>
+          foodRepo.insert(
+            foodRepo.create({
+              name: item.nome,
+              category: item.categoria,
+              basePortion: item.porcaoBase,
+              calories: item.calorias,
+              proteins: item.proteinas,
+              carbohydrates: item.carboidratos,
+              fats: item.gorduras,
+              fiber: item.fibras,
+            }),
+          ),
+        ),
       );
     } catch {
       // Ignora se já existir em FOODS
