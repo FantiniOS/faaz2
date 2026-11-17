@@ -205,14 +205,14 @@ export async function carregarTabelaTaco(): Promise<number> {
   for (let i = 0; i < novos.length; i += BATCH_SIZE) {
     const lote = novos.slice(i, i + BATCH_SIZE);
     await Promise.all(
-      lote.map((item) => alimentoRepo.insert(alimentoRepo.create(item))),
+      lote.map((item) => alimentoRepo.save(alimentoRepo.create(item))),
     );
     totalInseridos += lote.length;
 
     try {
       await Promise.all(
         lote.map((item) =>
-          foodRepo.insert(
+          foodRepo.save(
             foodRepo.create({
               name: item.nome,
               category: item.categoria,
