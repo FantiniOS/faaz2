@@ -124,6 +124,37 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
         setScreenStack(next);
         return true;
       },
+      popToTop: () => {
+        const next: ScreenRoute[] = ["home"];
+        stackRef.current = next;
+        setScreenStack(next);
+      },
+      reset: (
+        stateOrRoute?:
+          | ScreenRoute
+          | { index?: number; routes?: Array<{ name: ScreenRoute }> }
+      ) => {
+        if (typeof stateOrRoute === "string") {
+          const next: ScreenRoute[] =
+            stateOrRoute === "home" ? ["home"] : ["home", stateOrRoute];
+          stackRef.current = next;
+          setScreenStack(next);
+          return;
+        }
+        if (
+          stateOrRoute &&
+          Array.isArray(stateOrRoute.routes) &&
+          stateOrRoute.routes.length > 0
+        ) {
+          const next = stateOrRoute.routes.map((r) => r.name);
+          stackRef.current = next;
+          setScreenStack(next);
+          return;
+        }
+        const next: ScreenRoute[] = ["home"];
+        stackRef.current = next;
+        setScreenStack(next);
+      },
       navigate: (target: ScreenRoute) => {
         if (target === "home") {
           const next: ScreenRoute[] = ["home"];
@@ -163,8 +194,8 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
 
   const handleTabPress = useCallback(
     (tabName: string) => {
-      if (tabName === "Home") {
-        navigation.navigate("home");
+      if (tabName === "Home" || tabName === "home") {
+        navigation.reset({ index: 0, routes: [{ name: "home" }] });
       } else if (tabName === "Dieta") {
         navigation.navigate("dieta");
       } else if (tabName === "METAS" || tabName === "Metas") {

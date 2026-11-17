@@ -464,9 +464,9 @@ export function MetasScreen({
               activeOpacity={0.7}
               onPress={() => {
                 if (tab.label === "Home") {
-                  onBack ? onBack() : onTabPress?.("Home");
+                  onTabPress ? onTabPress("Home") : onBack?.();
                 } else if (tab.label === "Dieta") {
-                  onNavigateToDieta ? onNavigateToDieta() : onTabPress?.("Dieta");
+                  onTabPress ? onTabPress("Dieta") : onNavigateToDieta?.();
                 } else if (onTabPress) {
                   onTabPress(tab.label);
                 }
