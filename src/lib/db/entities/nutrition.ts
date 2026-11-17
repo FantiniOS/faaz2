@@ -69,6 +69,7 @@ export const AlimentoEntity = new EntitySchema<Alimento>({
 export interface PlanoAlimentar {
   id: string;
   pacienteId: string;
+  nome?: string;
   titulo: string;
   objetivo: string | null;
   ativo: boolean;

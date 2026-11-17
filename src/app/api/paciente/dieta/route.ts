@@ -226,6 +226,7 @@ export async function GET(req: NextRequest) {
       },
       plano: {
         id: plano.id,
+        nome: plano.titulo,
         titulo: plano.titulo,
         objetivo: plano.objetivo,
         caloriasAlvo: variacoesComTotais[0]?.totais?.calorias || 2000,

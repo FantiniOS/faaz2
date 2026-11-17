@@ -308,6 +308,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       },
       plano: {
         ...plano,
+        nome: plano.titulo,
+        titulo: plano.titulo,
         variacoes: variacoesComTotais,
       },
     });
@@ -596,8 +598,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 }
 
 /**
- * PUT /api/pacientes/[id]/dieta
- * Atualiza item da refeição ou dados de uma variação
+ * PUT / PATCH /api/pacientes/[id]/dieta
+ * Atualiza o nome/título do Plano Alimentar, dados de uma variação ou item da refeição
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
@@ -613,7 +615,58 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
 
     const body = await req.json();
     const acao =
-      body.acao || (body.itemId ? "atualizar_item" : "atualizar_variacao");
+      body.acao ||
+      (body.itemId
+        ? "atualizar_item"
+        : body.variacaoId
+          ? "atualizar_variacao"
+          : "atualizar_plano");
+
+    if (acao === "atualizar_plano") {
+      const { planoId, nome, titulo, objetivo } = body;
+      const novoNomeRaw = nome ?? titulo;
+      const trimmedNome =
+        typeof novoNomeRaw === "string" ? novoNomeRaw.trim() : "";
+
+      if (!trimmedNome) {
+        return NextResponse.json(
+          { error: "O nome do plano alimentar não pode ficar vazio." },
+          { status: 400 },
+        );
+      }
+
+      const planoRepo = await getRepository(PlanoAlimentarEntity);
+      const planoExistente = await planoRepo.findOne({
+        where: planoId
+          ? { id: planoId, pacienteId: id }
+          : { pacienteId: id, ativo: true },
+      });
+
+      if (!planoExistente) {
+        return NextResponse.json(
+          { error: "Plano alimentar não encontrado para este paciente." },
+          { status: 404 },
+        );
+      }
+
+      planoExistente.titulo = trimmedNome.slice(0, 160);
+      if (objetivo !== undefined) {
+        planoExistente.objetivo = objetivo
+          ? String(objetivo).trim().slice(0, 255)
+          : null;
+      }
+
+      const planoAtualizado = await planoRepo.save(planoExistente);
+
+      return NextResponse.json({
+        sucesso: true,
+        plano: {
+          ...planoAtualizado,
+          nome: planoAtualizado.titulo,
+          titulo: planoAtualizado.titulo,
+        },
+      });
+    }
 
     if (acao === "atualizar_variacao") {
       const { variacaoId, nome, descricao } = body;
@@ -699,6 +752,10 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       { status: 500 },
     );
   }
+}
+
+export async function PATCH(req: NextRequest, context: RouteParams) {
+  return PUT(req, context);
 }
 
 /**

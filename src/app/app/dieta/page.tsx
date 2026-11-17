@@ -70,6 +70,7 @@ interface VariacaoDieta {
 
 interface PlanoAlimentarData {
   id: string;
+  nome?: string;
   titulo: string;
   objetivo?: string | null;
   caloriasAlvo?: number | null;
@@ -213,7 +214,7 @@ export default function AppDietaPage() {
               </div>
 
               <h1 className="text-base font-bold text-white leading-snug">
-                {plano?.titulo || "Plano Alimentar Individualizado"}
+                {plano?.nome || plano?.titulo || "Plano Alimentar Individualizado"}
               </h1>
 
               {plano?.objetivo && (

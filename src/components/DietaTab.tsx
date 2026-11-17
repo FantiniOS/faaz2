@@ -71,6 +71,7 @@ export interface VariacaoDietaState {
 
 export interface PlanoAlimentarState {
   id: string;
+  nome?: string;
   titulo: string;
   objetivo?: string | null;
   ativo: boolean;
@@ -167,6 +168,7 @@ export function calcularNutrientesItem(alimento?: any, quantidadeGramas: number 
 
 export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
   const [plano, setPlano] = useState<PlanoAlimentarState | null>(null);
+  const [nomePlano, setNomePlano] = useState("Plano Alimentar Individualizado");
   const [variacoes, setVariacoes] = useState<VariacaoDietaState[]>([]);
   const [activeVariacaoId, setActiveVariacaoId] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -203,6 +205,13 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
         ? dataPlano.plano.variacoes
         : [];
       setPlano(dataPlano.plano);
+      if (dataPlano.plano) {
+        setNomePlano(
+          dataPlano.plano.nome ||
+            dataPlano.plano.titulo ||
+            "Plano Alimentar Individualizado"
+        );
+      }
       setVariacoes(loadedVariacoes);
 
       // Define a primeira variação como ativa por padrão
@@ -486,12 +495,15 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     [pacienteId, variacoes]
   );
 
-  // 3. Salvar alterações pendentes
+  // 3. Salvar alterações pendentes (Nome do Plano, Variações e Quantidades)
   const handleSalvarPlano = async () => {
     if (!plano || !variacaoAtiva) return;
     try {
       setSalvando(true);
       setErro(null);
+
+      const nomePlanoLimpo =
+        nomePlano.trim() || "Plano Alimentar Individualizado";
 
       const activeIds = new Set(variacoes.map((v) => v.id));
       const pendingRenames = Object.entries(pendingRenamesRef.current).filter(([id]) =>
@@ -499,6 +511,20 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
       );
 
       const updates: Array<Promise<Response>> = [];
+
+      // 3.1 Persiste o novo Nome/Título do Plano Alimentar no Oracle
+      updates.push(
+        fetch(`/api/pacientes/${pacienteId}/dieta`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            acao: "atualizar_plano",
+            planoId: plano.id,
+            nome: nomePlanoLimpo,
+            titulo: nomePlanoLimpo,
+          }),
+        })
+      );
 
       for (const [variacaoId, nome] of pendingRenames) {
         updates.push(
@@ -538,6 +564,11 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
         const errData = await failed.json().catch(() => ({}));
         throw new Error(errData?.error || "Falha ao salvar alterações.");
       }
+
+      setNomePlano(nomePlanoLimpo);
+      setPlano((prev) =>
+        prev ? { ...prev, nome: nomePlanoLimpo, titulo: nomePlanoLimpo } : prev
+      );
 
       for (const [variacaoId] of pendingRenames) {
         delete pendingRenamesRef.current[variacaoId];
@@ -698,10 +729,25 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
             <Utensils className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-bold text-slate-800">
-                {plano?.titulo || "Plano Alimentar Individualizado"}
-              </h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative flex items-center group">
+                <input
+                  type="text"
+                  value={nomePlano}
+                  onChange={(e) => {
+                    const novoNome = e.target.value;
+                    setNomePlano(novoNome);
+                    setPlano((prev) =>
+                      prev ? { ...prev, nome: novoNome, titulo: novoNome } : prev
+                    );
+                  }}
+                  placeholder="Nome do Plano Alimentar..."
+                  title="Clique para editar o nome do plano alimentar"
+                  aria-label="Nome do Plano Alimentar"
+                  className="text-sm font-bold text-slate-800 bg-transparent border border-transparent hover:border-slate-200 focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/15 rounded-lg px-2 py-0.5 -ml-2 pr-6 outline-none transition-all min-w-[260px] sm:min-w-[340px]"
+                />
+                <Edit3 className="w-3.5 h-3.5 text-slate-400 opacity-60 group-hover:opacity-100 group-focus-within:text-teal-600 transition-opacity pointer-events-none -ml-5 mr-1.5" />
+              </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                 Tabela TACO (UNICAMP)
               </span>

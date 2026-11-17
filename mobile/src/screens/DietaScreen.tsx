@@ -105,6 +105,7 @@ export interface VariacaoDieta {
 
 export interface PlanoAlimentarData {
   id?: string;
+  nome?: string;
   titulo?: string;
   objetivo?: string | null;
   caloriasAlvo?: number | null;
@@ -532,7 +533,7 @@ export function DietaScreen({
           </View>
 
           <Text style={styles.planoTitulo}>
-            {plano?.titulo || "Plano Alimentar Individualizado"}
+            {plano?.nome || plano?.titulo || "Plano Alimentar Individualizado"}
           </Text>
 
           {plano?.objetivo ? (
