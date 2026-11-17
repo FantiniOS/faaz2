@@ -1,7 +1,11 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  EvolucaoClinicaEntity,
+  ProntuarioPacienteEntity,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos, podeExcluirPacientes } from "@/lib/auth-rbac";
 
@@ -19,21 +23,28 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     const { id, evolucaoId } = await params;
     const sessao = await getSessao();
 
-    if (sessao && !podeAcessarDadosClinicos(sessao.cargo) && sessao.cargo !== "ADMINISTRADOR") {
+    if (
+      sessao &&
+      !podeAcessarDadosClinicos(sessao.cargo) &&
+      sessao.cargo !== "ADMINISTRADOR"
+    ) {
       return NextResponse.json(
         { error: "Acesso negado para edição de registros clínicos." },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
-    const evolucaoExistente = await prisma.evolucaoClinica.findUnique({
+    const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
+    const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+
+    const evolucaoExistente = await evolucaoRepo.findOne({
       where: { id: evolucaoId },
     });
 
     if (!evolucaoExistente || evolucaoExistente.pacienteId !== id) {
       return NextResponse.json(
         { error: "Registro de atendimento não encontrado para este paciente." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -57,42 +68,53 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         ? parseFloat(String(alturaCm).replace(",", "."))
         : null;
 
-    // Recalcula o IMC daquele atendimento
     let imcCalculado: number | null = null;
     if (pesoNum && alturaNum && pesoNum > 0 && alturaNum > 0) {
       const alturaM = alturaNum > 3 ? alturaNum / 100 : alturaNum;
       imcCalculado = Math.round((pesoNum / (alturaM * alturaM)) * 100) / 100;
     }
 
-    const dataAtualizada = await prisma.evolucaoClinica.update({
-      where: { id: evolucaoId },
-      data: {
-        pesoAtual: pesoNum,
-        alturaCm: alturaNum,
-        imc: imcCalculado,
-        queixaPrincipal: queixaPrincipal !== undefined ? (queixaPrincipal ? String(queixaPrincipal).trim().toUpperCase() : null) : undefined,
-        condutaEvolucao: condutaEvolucao !== undefined ? String(condutaEvolucao).trim().toUpperCase() : undefined,
-        ...(dataAtendimento ? { dataAtendimento: new Date(dataAtendimento) } : {}),
-        ...(medicoResponsavel ? { medicoResponsavel: String(medicoResponsavel).trim().toUpperCase() } : {}),
-      },
-    });
+    evolucaoExistente.pesoAtual = pesoNum;
+    evolucaoExistente.alturaCm = alturaNum;
+    evolucaoExistente.imc = imcCalculado;
+    if (queixaPrincipal !== undefined) {
+      evolucaoExistente.queixaPrincipal = queixaPrincipal
+        ? String(queixaPrincipal).trim().toUpperCase()
+        : null;
+    }
+    if (condutaEvolucao !== undefined) {
+      evolucaoExistente.condutaEvolucao = String(condutaEvolucao)
+        .trim()
+        .toUpperCase();
+    }
+    if (dataAtendimento) {
+      evolucaoExistente.dataAtendimento = new Date(dataAtendimento);
+    }
+    if (medicoResponsavel) {
+      evolucaoExistente.medicoResponsavel = String(medicoResponsavel)
+        .trim()
+        .toUpperCase();
+    }
 
-    // Busca o histórico consolidado atualizado para a interface refletir imediatamente
-    const historicoAtualizado = await prisma.evolucaoClinica.findMany({
+    const dataAtualizada = await evolucaoRepo.save(evolucaoExistente);
+
+    const historicoAtualizado = await evolucaoRepo.find({
       where: { pacienteId: id },
-      orderBy: { dataAtendimento: "desc" },
+      order: { dataAtendimento: "DESC" },
     });
 
-    // Se este foi o atendimento mais recente, mantém o prontuário base sincronizado
-    if (historicoAtualizado.length > 0 && historicoAtualizado[0].id === evolucaoId) {
-      await prisma.prontuarioPaciente.updateMany({
-        where: { pacienteId: id },
-        data: {
+    if (
+      historicoAtualizado.length > 0 &&
+      historicoAtualizado[0].id === evolucaoId
+    ) {
+      await prontuarioRepo.update(
+        { pacienteId: id },
+        {
           pesoAtualKg: pesoNum,
           ...(alturaNum ? { alturaCm: alturaNum } : {}),
           imc: imcCalculado,
         },
-      });
+      );
     }
 
     return NextResponse.json({
@@ -101,11 +123,12 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       evolucao: dataAtualizada,
       historico: historicoAtualizado,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[EVOLUCAO/[ID]/PUT] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao atualizar atendimento histórico.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao atualizar atendimento histórico.", details },
+      { status: 500 },
     );
   }
 }
@@ -115,38 +138,38 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
  * Exclui um atendimento histórico específico.
  * Acesso Restrito: DONO_CLINICA e ADMINISTRADOR.
  */
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
+export async function DELETE(_req: NextRequest, { params }: RouteParams) {
   try {
     const { id, evolucaoId } = await params;
     const sessao = await getSessao();
 
-    // Validação estrita de exclusão (apenas Dono da Clínica e Administrador)
     if (sessao && !podeExcluirPacientes(sessao.cargo)) {
       return NextResponse.json(
-        { error: "Apenas o Dono da Clínica e o Administrador possuem permissão para excluir registros históricos." },
-        { status: 403 }
+        {
+          error:
+            "Apenas o Dono da Clínica e o Administrador possuem permissão para excluir registros históricos.",
+        },
+        { status: 403 },
       );
     }
 
-    const evolucaoExistente = await prisma.evolucaoClinica.findUnique({
+    const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
+    const evolucaoExistente = await evolucaoRepo.findOne({
       where: { id: evolucaoId },
     });
 
     if (!evolucaoExistente || evolucaoExistente.pacienteId !== id) {
       return NextResponse.json(
         { error: "Registro de atendimento não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    await prisma.evolucaoClinica.delete({
-      where: { id: evolucaoId },
-    });
+    await evolucaoRepo.delete({ id: evolucaoId });
 
-    // Retorna a lista atualizada
-    const historicoAtualizado = await prisma.evolucaoClinica.findMany({
+    const historicoAtualizado = await evolucaoRepo.find({
       where: { pacienteId: id },
-      orderBy: { dataAtendimento: "desc" },
+      order: { dataAtendimento: "DESC" },
     });
 
     return NextResponse.json({
@@ -154,11 +177,12 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       message: "Atendimento histórico excluído com sucesso!",
       historico: historicoAtualizado,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[EVOLUCAO/[ID]/DELETE] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao excluir atendimento histórico.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao excluir atendimento histórico.", details },
+      { status: 500 },
     );
   }
 }

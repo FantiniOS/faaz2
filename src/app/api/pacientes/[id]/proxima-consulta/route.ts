@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { IsNull, MoreThan, Not } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import { AgendamentoEntity, PatientEntity } from "@/lib/db/entities";
 
 const MESES_PT = [
   "Janeiro",
@@ -68,7 +70,7 @@ function formatTipoLegivel(tipo: string): string {
 
 export async function GET(
   _request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await context.params;
@@ -77,29 +79,29 @@ export async function GET(
     if (!rawId) {
       return NextResponse.json(
         { success: false, error: "ID do paciente é obrigatório." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Resolve o paciente (suporta UUID direto, CPF ou recordCode por segurança)
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        rawId
+        rawId,
       );
 
     let resolvedPacienteId = rawId;
     if (!isUuid) {
       const cleanDigits = rawId.replace(/\D/g, "");
-      const foundPatient = await prisma.patient.findFirst({
-        where: {
-          OR: [
-            { recordCode: rawId },
-            ...(cleanDigits.length > 0
-              ? [{ cpf: cleanDigits }, { cpf: rawId }]
-              : []),
-          ],
-          deletedAt: null,
-        },
+      const patientRepo = await getRepository(PatientEntity);
+      const foundPatient = await patientRepo.findOne({
+        where: [
+          { recordCode: rawId, deletedAt: IsNull() },
+          ...(cleanDigits.length > 0
+            ? [
+                { cpf: cleanDigits, deletedAt: IsNull() },
+                { cpf: rawId, deletedAt: IsNull() },
+              ]
+            : []),
+        ],
         select: { id: true },
       });
 
@@ -114,31 +116,27 @@ export async function GET(
             headers: {
               "Cache-Control": "no-store, no-cache, must-revalidate",
             },
-          }
+          },
         );
       }
       resolvedPacienteId = foundPatient.id;
     }
 
     const agora = new Date();
+    const agendamentoRepo = await getRepository(AgendamentoEntity);
 
-    const agendamento = await prisma.agendamento.findFirst({
+    const agendamento = await agendamentoRepo.findOne({
       where: {
         pacienteId: resolvedPacienteId,
-        dataHora: {
-          gt: agora,
-        },
-        status: {
-          not: "CANCELADO",
-        },
+        dataHora: MoreThan(agora),
+        status: Not("CANCELADO"),
       },
-      include: {
+      relations: {
         medico: true,
       },
-      orderBy: {
-        dataHora: "asc",
+      order: {
+        dataHora: "ASC",
       },
-      take: 1,
     });
 
     if (!agendamento) {
@@ -152,7 +150,7 @@ export async function GET(
           headers: {
             "Cache-Control": "no-store, no-cache, must-revalidate",
           },
-        }
+        },
       );
     }
 
@@ -171,7 +169,7 @@ export async function GET(
           medicoEspecialidade:
             agendamento.medico?.especialidade || "Endocrinologia & Nutrologia",
           medicoCorHex: agendamento.medico?.corHex || "#059669",
-          dataHora: agendamento.dataHora.toISOString(),
+          dataHora: new Date(agendamento.dataHora).toISOString(),
           dataLocalIso: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
           dataFormatada: formatDataHumanaLocal(d),
           horario: formatHorarioLocal(d),
@@ -188,7 +186,7 @@ export async function GET(
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
         },
-      }
+      },
     );
   } catch (error) {
     console.error("[GET /api/pacientes/[id]/proxima-consulta] Erro:", error);
@@ -197,7 +195,7 @@ export async function GET(
         success: false,
         error: "Erro ao buscar a próxima consulta do paciente.",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import prisma from "@/lib/prisma";
+import { IsNull, Raw } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  OrganizationEntity,
+  UserEntity,
+  type UserRole,
+} from "@/lib/db/entities";
 import { criarSessao } from "@/lib/auth-session";
 import type { Cargo } from "@/lib/auth-rbac";
 
@@ -10,7 +16,7 @@ const HOMOLOGACAO_USERS: Record<
   {
     nome: string;
     cargo: Cargo;
-    role: any;
+    role: UserRole;
     specialty: string;
     username: string;
     podeAcessarProntuario: boolean;
@@ -56,7 +62,7 @@ const HOMOLOGACAO_USERS: Record<
     username: "patricia.santos",
     podeAcessarProntuario: false,
   },
-  "secretaria": {
+  secretaria: {
     nome: "Patrícia Santos",
     cargo: "SECRETARIA",
     role: "RECEPTIONIST",
@@ -80,7 +86,7 @@ const HOMOLOGACAO_USERS: Record<
     username: "eduardo.lima",
     podeAcessarProntuario: false,
   },
-  "admin": {
+  admin: {
     nome: "Eduardo Lima",
     cargo: "ADMINISTRADOR",
     role: "ADMIN",
@@ -104,23 +110,25 @@ export async function POST(request: Request) {
     const { username, email, senha, autoCargo } = body;
 
     const identifier = (username || email || "").toLowerCase().trim();
+    const userRepo = await getRepository(UserEntity);
+    const orgRepo = await getRepository(OrganizationEntity);
 
     // 1. Busca usuário ativo no banco checando USERNAME (prioritário) ou E-mail (fallback)
     let user = identifier
-      ? await prisma.user.findFirst({
-          where: {
-            OR: [
-              { username: { equals: identifier, mode: "insensitive" } },
-              { email: { equals: identifier, mode: "insensitive" } },
-            ],
-            deletedAt: null,
-            accountStatus: "ACTIVE",
-          },
-          include: {
-            organization: {
-              select: { id: true, tradeName: true, slug: true },
+      ? await userRepo.findOne({
+          where: [
+            {
+              username: Raw((alias) => `LOWER(${alias}) = :id`, { id: identifier }),
+              deletedAt: IsNull(),
+              accountStatus: "ACTIVE",
             },
-          },
+            {
+              email: Raw((alias) => `LOWER(${alias}) = :id`, { id: identifier }),
+              deletedAt: IsNull(),
+              accountStatus: "ACTIVE",
+            },
+          ],
+          relations: { organization: true },
         })
       : null;
 
@@ -131,48 +139,56 @@ export async function POST(request: Request) {
         Object.values(HOMOLOGACAO_USERS).find((h) => h.cargo === autoCargo);
 
       if (config) {
-        // Assegura organização
-        const org = await prisma.organization.upsert({
-          where: { slug: "clinica-faaz" },
-          update: {},
-          create: {
-            slug: "clinica-faaz",
-            tradeName: "Clínica FAAZ",
-            legalName: "Clínica FAAZ Medicina & Saúde Integrativa Ltda",
-            taxId: "12345678000190",
-            primaryColorHex: "#0f766e",
-          },
+        let org = await orgRepo.findOne({ where: { slug: "clinica-faaz" } });
+        if (!org) {
+          org = await orgRepo.save(
+            orgRepo.create({
+              slug: "clinica-faaz",
+              tradeName: "Clínica FAAZ",
+              legalName: "Clínica FAAZ Medicina & Saúde Integrativa Ltda",
+              taxId: "12345678000190",
+              primaryColorHex: "#0f766e",
+              enabledModules: {},
+              rolePermissions: {},
+              status: "ACTIVE",
+            }),
+          );
+        }
+
+        const existingUser = await userRepo.findOne({
+          where: { username: config.username },
         });
 
-        const passwordHash = await bcrypt.hash("faaz123", 10);
+        if (existingUser) {
+          existingUser.cargo = config.cargo;
+          existingUser.role = config.role;
+          existingUser.podeAcessarProntuario = config.podeAcessarProntuario;
+          existingUser.accountStatus = "ACTIVE";
+          await userRepo.save(existingUser);
+        } else {
+          const passwordHash = await bcrypt.hash("faaz123", 10);
+          await userRepo.save(
+            userRepo.create({
+              organizationId: org.id,
+              fullName: config.nome,
+              username: config.username,
+              email: `${config.username}@clinicafaaz.com.br`,
+              passwordHash,
+              role: config.role,
+              cargo: config.cargo,
+              podeAcessarProntuario: config.podeAcessarProntuario,
+              isClinical: config.podeAcessarProntuario,
+              specialty: config.specialty,
+              mfaEnabled: false,
+              accountStatus: "ACTIVE",
+              mustChangePassword: false,
+            }),
+          );
+        }
 
-        user = await prisma.user.upsert({
+        user = await userRepo.findOne({
           where: { username: config.username },
-          update: {
-            cargo: config.cargo,
-            role: config.role,
-            podeAcessarProntuario: config.podeAcessarProntuario,
-            accountStatus: "ACTIVE",
-          },
-          create: {
-            organizationId: org.id,
-            fullName: config.nome,
-            username: config.username,
-            email: `${config.username}@clinicafaaz.com.br`,
-            passwordHash,
-            role: config.role,
-            cargo: config.cargo,
-            podeAcessarProntuario: config.podeAcessarProntuario,
-            isClinical: config.podeAcessarProntuario,
-            specialty: config.specialty,
-            accountStatus: "ACTIVE",
-            mustChangePassword: false,
-          },
-          include: {
-            organization: {
-              select: { id: true, tradeName: true, slug: true },
-            },
-          },
+          relations: { organization: true },
         });
       }
     }
@@ -180,7 +196,7 @@ export async function POST(request: Request) {
     if (!user) {
       return NextResponse.json(
         { error: "Credenciais inválidas. Verifique o usuário e a senha." },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -190,7 +206,7 @@ export async function POST(request: Request) {
       if (!senhaValida) {
         return NextResponse.json(
           { error: "Senha incorreta. Para o ambiente de homologação, utilize 'faaz123'." },
-          { status: 401 }
+          { status: 401 },
         );
       }
     }
@@ -205,10 +221,7 @@ export async function POST(request: Request) {
     });
 
     // 5. Atualiza registro de último login
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
+    await userRepo.update({ id: user.id }, { lastLoginAt: new Date() });
 
     return NextResponse.json({
       sucesso: true,
@@ -224,11 +237,11 @@ export async function POST(request: Request) {
       },
       token,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[AUTH/LOGIN] Erro:", error);
     return NextResponse.json(
       { error: "Erro interno no servidor de autenticação." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

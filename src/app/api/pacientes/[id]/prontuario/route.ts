@@ -1,7 +1,16 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  BiometricMeasurementEntity,
+  EvolucaoClinicaEntity,
+  GoalCheckinEntity,
+  MeasurementEntity,
+  PatientEntity,
+  ProntuarioPacienteEntity,
+  RegistroGlicemiaEntity,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { invalidarCacheMetricaPeso } from "@/lib/metrica-peso-eliminado";
@@ -15,112 +24,82 @@ interface RouteParams {
  * Busca o prontuário clínico e os dados essenciais do paciente.
  * Acesso restrito: DONO_CLINICA, MEDICO.
  */
-export async function GET(req: NextRequest, { params }: RouteParams) {
+export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const sessao = await getSessao();
 
-    // Validação de RBAC Clínico
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         {
-          error: "Acesso negado. O prontuário clínico é restrito ao corpo médico e ao responsável clínico.",
+          error:
+            "Acesso negado. O prontuário clínico é restrito ao corpo médico e ao responsável clínico.",
           bloqueado: true,
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
-    // 1. Busca paciente
-    const paciente = await prisma.patient.findUnique({
+    const patientRepo = await getRepository(PatientEntity);
+    const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+    const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
+    const glicemiaRepo = await getRepository(RegistroGlicemiaEntity);
+    const bioRepo = await getRepository(BiometricMeasurementEntity);
+    const measurementRepo = await getRepository(MeasurementEntity);
+    const goalCheckinRepo = await getRepository(GoalCheckinEntity);
+
+    const paciente = await patientRepo.findOne({
       where: { id },
-      select: {
-        id: true,
-        recordCode: true,
-        fullName: true,
-        socialName: true,
-        cpf: true,
-        birthDate: true,
-        biologicalSex: true,
-        convenio: true,
-        patientStatus: true,
-        phoneWhatsapp: true,
-        heightCm: true,
-        clinicalFocus: true,
-        treatmentObjective: true,
-        avatarUrl: true,
-        photoUrl: true,
-        deletedAt: true,
-        prontuario: true,
-        evolucoesClinicas: {
-          orderBy: [{ dataAtendimento: "desc" }, { createdAt: "desc" }],
-        },
-        registrosGlicemia: {
-          orderBy: [{ dataRegistro: "desc" }, { createdAt: "desc" }],
-          take: 30,
-          select: {
-            id: true,
-            dataRegistro: true,
-            valor: true,
-            momento: true,
-            createdAt: true,
-          },
-        },
-        biometricMeasurements: {
-          orderBy: [{ measuredAt: "desc" }, { createdAt: "desc" }],
-          take: 30,
-          select: {
-            id: true,
-            measuredAt: true,
-            waistCircumferenceCm: true,
-            bodyFatPercentage: true,
-            createdAt: true,
-          },
-        },
-        measurements: {
-          orderBy: [{ measuredAt: "desc" }, { createdAt: "desc" }],
-          take: 30,
-          select: {
-            id: true,
-            patientId: true,
-            measuredAt: true,
-            bodyFatPercentage: true,
-            waist: true,
-            abdomen: true,
-            hips: true,
-            rightArm: true,
-            leftArm: true,
-            rightThigh: true,
-            leftThigh: true,
-            notes: true,
-          },
-        },
-        goalCheckins: {
-          where: {
-            patientGoal: {
-              category: "CAPILLARY_GLUCOSE",
-            },
-          },
-          orderBy: [{ referenceDate: "desc" }, { createdAt: "desc" }],
-          take: 30,
-          select: {
-            id: true,
-            referenceDate: true,
-            recordedValue: true,
-            createdAt: true,
-          },
-        },
-      },
     });
 
     if (!paciente || paciente.deletedAt) {
       return NextResponse.json(
         { error: "Paciente não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    // Cálculo da idade se birthDate existir
+    const [
+      prontuario,
+      evolucoesClinicas,
+      registrosGlicemia,
+      biometricMeasurements,
+      measurements,
+      goalCheckins,
+    ] = await Promise.all([
+      prontuarioRepo.findOne({ where: { pacienteId: id } }),
+      evolucaoRepo.find({
+        where: { pacienteId: id },
+        order: { dataAtendimento: "DESC", createdAt: "DESC" },
+      }),
+      glicemiaRepo.find({
+        where: { pacienteId: id },
+        order: { dataRegistro: "DESC", createdAt: "DESC" },
+        take: 30,
+      }),
+      bioRepo.find({
+        where: { patientId: id },
+        order: { measuredAt: "DESC", createdAt: "DESC" },
+        take: 30,
+      }),
+      measurementRepo.find({
+        where: { patientId: id },
+        order: { measuredAt: "DESC", createdAt: "DESC" },
+        take: 30,
+      }),
+      goalCheckinRepo.find({
+        where: {
+          patientId: id,
+          patientGoal: {
+            category: "CAPILLARY_GLUCOSE",
+          },
+        },
+        relations: { patientGoal: true },
+        order: { referenceDate: "DESC", createdAt: "DESC" },
+        take: 30,
+      }),
+    ]);
+
     let idade: number | null = null;
     if (paciente.birthDate) {
       const hoje = new Date();
@@ -132,48 +111,48 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const statusFormatado = paciente.patientStatus === "ACTIVE" ? "Ativo" : "Inativo";
+    const statusFormatado =
+      paciente.patientStatus === "ACTIVE" ? "Ativo" : "Inativo";
     const sexoFormatado =
       paciente.biologicalSex === "FEMALE"
         ? "Feminino"
         : paciente.biologicalSex === "MALE"
-        ? "Masculino"
-        : "Outro";
+          ? "Masculino"
+          : "Outro";
 
-    // Mapeamento dos dados do prontuário
-    const prontuario = paciente.prontuario;
+    const pesoAtualKg =
+      prontuario?.pesoAtualKg != null ? Number(prontuario.pesoAtualKg) : null;
+    const alturaCm =
+      prontuario?.alturaCm != null
+        ? Number(prontuario.alturaCm)
+        : paciente.heightCm != null
+          ? Number(paciente.heightCm)
+          : null;
+    const imc = prontuario?.imc != null ? Number(prontuario.imc) : null;
 
-    const pesoAtualKg = prontuario?.pesoAtualKg ? Number(prontuario.pesoAtualKg) : null;
-    const alturaCm = prontuario?.alturaCm
-      ? Number(prontuario.alturaCm)
-      : paciente.heightCm
-      ? Number(paciente.heightCm)
-      : null;
-    const imc = prontuario?.imc ? Number(prontuario.imc) : null;
-
-    const latestMeasurement = paciente.measurements?.[0];
-    const bioRecente = paciente.biometricMeasurements?.[0];
-    const regGlicemiaRecente = paciente.registrosGlicemia?.[0];
+    const latestMeasurement = measurements[0];
+    const bioRecente = biometricMeasurements[0];
+    const regGlicemiaRecente = registrosGlicemia[0];
     const glicemiaRecente =
       regGlicemiaRecente?.valor != null
         ? Number(regGlicemiaRecente.valor)
-        : paciente.goalCheckins?.[0]?.recordedValue != null
-        ? Number(paciente.goalCheckins[0].recordedValue)
-        : null;
+        : goalCheckins[0]?.recordedValue != null
+          ? Number(goalCheckins[0].recordedValue)
+          : null;
     const circunferenciaAbdominal =
       latestMeasurement?.waist != null
         ? Number(latestMeasurement.waist)
         : latestMeasurement?.abdomen != null
-        ? Number(latestMeasurement.abdomen)
-        : bioRecente?.waistCircumferenceCm != null
-        ? Number(bioRecente.waistCircumferenceCm)
-        : null;
+          ? Number(latestMeasurement.abdomen)
+          : bioRecente?.waistCircumferenceCm != null
+            ? Number(bioRecente.waistCircumferenceCm)
+            : null;
     const percentualGordura =
       latestMeasurement?.bodyFatPercentage != null
         ? Number(latestMeasurement.bodyFatPercentage)
         : bioRecente?.bodyFatPercentage != null
-        ? Number(bioRecente.bodyFatPercentage)
-        : null;
+          ? Number(bioRecente.bodyFatPercentage)
+          : null;
 
     const momentoLabel = (m?: string | null) => {
       if (m === "POS_PRANDIAL") return "Pós-Refeição";
@@ -186,29 +165,31 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         ? glicemiaRecente < 70
           ? "Hipoglicemia"
           : glicemiaRecente > 180
-          ? "Hiperglicemia"
-          : regGlicemiaRecente?.momento === "POS_PRANDIAL"
-          ? glicemiaRecente <= 140
-            ? "Pós-Ref. Normal"
-            : "Pós-Ref. Elevada"
-          : glicemiaRecente < 100
-          ? "Jejum Normal"
-          : glicemiaRecente <= 125
-          ? "Pré-Diabetes"
-          : "Alterada"
+            ? "Hiperglicemia"
+            : regGlicemiaRecente?.momento === "POS_PRANDIAL"
+              ? glicemiaRecente <= 140
+                ? "Pós-Ref. Normal"
+                : "Pós-Ref. Elevada"
+              : glicemiaRecente < 100
+                ? "Jejum Normal"
+                : glicemiaRecente <= 125
+                  ? "Pré-Diabetes"
+                  : "Alterada"
         : null;
 
-    const biometriaHistorico = (paciente.biometricMeasurements || []).map((b) => ({
+    const biometriaHistorico = biometricMeasurements.map((b) => ({
       id: b.id,
-      measuredAt: b.measuredAt.toISOString(),
-      waistCircumferenceCm: b.waistCircumferenceCm != null ? Number(b.waistCircumferenceCm) : null,
-      bodyFatPercentage: b.bodyFatPercentage != null ? Number(b.bodyFatPercentage) : null,
+      measuredAt: new Date(b.measuredAt).toISOString(),
+      waistCircumferenceCm:
+        b.waistCircumferenceCm != null ? Number(b.waistCircumferenceCm) : null,
+      bodyFatPercentage:
+        b.bodyFatPercentage != null ? Number(b.bodyFatPercentage) : null,
     }));
 
-    const measurementsHistorico = (paciente.measurements || []).map((m) => ({
+    const measurementsHistorico = measurements.map((m) => ({
       id: m.id,
       patientId: m.patientId,
-      measuredAt: m.measuredAt.toISOString(),
+      measuredAt: new Date(m.measuredAt).toISOString(),
       bodyFatPercentage: m.bodyFatPercentage ?? null,
       waist: m.waist ?? null,
       abdomen: m.abdomen ?? null,
@@ -221,70 +202,85 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }));
 
     const glicemiaHistorico =
-      paciente.registrosGlicemia && paciente.registrosGlicemia.length > 0
-        ? paciente.registrosGlicemia.map((g) => ({
+      registrosGlicemia.length > 0
+        ? registrosGlicemia.map((g) => ({
             id: g.id,
-            referenceDate: g.dataRegistro.toISOString(),
+            referenceDate: new Date(g.dataRegistro).toISOString(),
             recordedValue: Number(g.valor),
             momento: g.momento,
             notes: `Medição: ${momentoLabel(g.momento)}`,
           }))
-        : (paciente.goalCheckins || []).map((g) => ({
+        : goalCheckins.map((g) => ({
             id: g.id,
-            referenceDate: g.referenceDate.toISOString(),
-            recordedValue: g.recordedValue != null ? Number(g.recordedValue) : null,
+            referenceDate: new Date(g.referenceDate).toISOString(),
+            recordedValue:
+              g.recordedValue != null ? Number(g.recordedValue) : null,
             momento: "JEJUM",
             notes: null,
           }));
 
-    return NextResponse.json({
-      success: true,
-      paciente: {
-        id: paciente.id,
-        recordCode: paciente.recordCode,
-        nome: paciente.socialName || paciente.fullName,
-        cpf: paciente.cpf,
-        birthDate: paciente.birthDate ? paciente.birthDate.toISOString().split("T")[0] : null,
-        idade,
-        sexo: sexoFormatado,
-        status: statusFormatado,
-        convenio: paciente.convenio,
-        telefoneWhatsapp: paciente.phoneWhatsapp,
-        heightCm: paciente.heightCm ? Number(paciente.heightCm) : null,
-        clinicalFocus: paciente.treatmentObjective || paciente.clinicalFocus,
-        treatmentObjective: paciente.treatmentObjective || paciente.clinicalFocus,
-        avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
-        glicemiaRecente,
-        glicemiaStatus,
-        circunferenciaAbdominal,
-        percentualGordura,
-      },
-      prontuario: {
-        pesoAtualKg,
-        alturaCm,
-        imc,
-        objetivo: prontuario?.objetivo || paciente.treatmentObjective || paciente.clinicalFocus || "",
-        comorbidades: prontuario?.comorbidades || "",
-        alergias: prontuario?.alergias || "",
-        medicacoes: prontuario?.medicacoes || "",
-        evolucao: prontuario?.evolucao || "",
-        ultimaAtualizacao: prontuario?.updatedAt || null,
-      },
-      historico: paciente.evolucoesClinicas || [],
-      biometriaHistorico,
-      measurementsHistorico,
-      glicemiaHistorico,
-    }, {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-        Pragma: "no-cache",
-      },
-    });
-  } catch (error: any) {
-    console.error("[PRONTUARIO/GET] Erro:", error);
+    const birthDateIso = paciente.birthDate
+      ? String(paciente.birthDate).split("T")[0]
+      : null;
+
     return NextResponse.json(
-      { error: "Erro ao buscar prontuário do paciente.", details: error?.message },
-      { status: 500 }
+      {
+        success: true,
+        paciente: {
+          id: paciente.id,
+          recordCode: paciente.recordCode,
+          nome: paciente.socialName || paciente.fullName,
+          cpf: paciente.cpf,
+          birthDate: birthDateIso,
+          idade,
+          sexo: sexoFormatado,
+          status: statusFormatado,
+          convenio: paciente.convenio,
+          telefoneWhatsapp: paciente.phoneWhatsapp,
+          heightCm: paciente.heightCm != null ? Number(paciente.heightCm) : null,
+          clinicalFocus:
+            paciente.treatmentObjective || paciente.clinicalFocus,
+          treatmentObjective:
+            paciente.treatmentObjective || paciente.clinicalFocus,
+          avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
+          glicemiaRecente,
+          glicemiaStatus,
+          circunferenciaAbdominal,
+          percentualGordura,
+        },
+        prontuario: {
+          pesoAtualKg,
+          alturaCm,
+          imc,
+          objetivo:
+            prontuario?.objetivo ||
+            paciente.treatmentObjective ||
+            paciente.clinicalFocus ||
+            "",
+          comorbidades: prontuario?.comorbidades || "",
+          alergias: prontuario?.alergias || "",
+          medicacoes: prontuario?.medicacoes || "",
+          evolucao: prontuario?.evolucao || "",
+          ultimaAtualizacao: prontuario?.updatedAt || null,
+        },
+        historico: evolucoesClinicas,
+        biometriaHistorico,
+        measurementsHistorico,
+        glicemiaHistorico,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          Pragma: "no-cache",
+        },
+      },
+    );
+  } catch (error: unknown) {
+    console.error("[PRONTUARIO/GET] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: "Erro ao buscar prontuário do paciente.", details },
+      { status: 500 },
     );
   }
 }
@@ -299,18 +295,22 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const sessao = await getSessao();
 
-    // Validação de RBAC Clínico
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         {
-          error: "Acesso negado. Apenas o corpo médico e o dono da clínica podem salvar prontuários.",
+          error:
+            "Acesso negado. Apenas o corpo médico e o dono da clínica podem salvar prontuários.",
           bloqueado: true,
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
-    const paciente = await prisma.patient.findUnique({
+    const patientRepo = await getRepository(PatientEntity);
+    const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+    const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
+
+    const paciente = await patientRepo.findOne({
       where: { id },
       select: { id: true, deletedAt: true },
     });
@@ -318,7 +318,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     if (!paciente || paciente.deletedAt) {
       return NextResponse.json(
         { error: "Paciente não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -335,49 +335,56 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       registrarAtendimento = true,
     } = body;
 
-    const pesoNum = pesoAtualKg !== undefined && pesoAtualKg !== null && pesoAtualKg !== ""
-      ? parseFloat(String(pesoAtualKg).replace(",", "."))
-      : null;
+    const pesoNum =
+      pesoAtualKg !== undefined && pesoAtualKg !== null && pesoAtualKg !== ""
+        ? parseFloat(String(pesoAtualKg).replace(",", "."))
+        : null;
 
-    const alturaNum = alturaCm !== undefined && alturaCm !== null && alturaCm !== ""
-      ? parseFloat(String(alturaCm).replace(",", "."))
-      : null;
+    const alturaNum =
+      alturaCm !== undefined && alturaCm !== null && alturaCm !== ""
+        ? parseFloat(String(alturaCm).replace(",", "."))
+        : null;
 
-    // Cálculo automático de IMC: Peso (kg) / [Altura (m)]²
     let imcCalculado: number | null = null;
     if (pesoNum && alturaNum && pesoNum > 0 && alturaNum > 0) {
-      const alturaM = alturaNum > 3 ? alturaNum / 100 : alturaNum; // Normaliza se digitado em cm ou metros
+      const alturaM = alturaNum > 3 ? alturaNum / 100 : alturaNum;
       imcCalculado = Math.round((pesoNum / (alturaM * alturaM)) * 100) / 100;
     }
 
-    // Persistência no Prisma via Upsert (Ficha Base)
-    const prontuarioSalvo = await prisma.prontuarioPaciente.upsert({
+    const fields = {
+      pesoAtualKg: pesoNum,
+      alturaCm: alturaNum,
+      imc: imcCalculado,
+      objetivo: objetivo ? String(objetivo).trim().toUpperCase() : null,
+      comorbidades: comorbidades
+        ? String(comorbidades).trim().toUpperCase()
+        : null,
+      alergias: alergias ? String(alergias).trim().toUpperCase() : null,
+      medicacoes: medicacoes ? String(medicacoes).trim().toUpperCase() : null,
+      evolucao: evolucao ? String(evolucao).trim().toUpperCase() : null,
+    };
+
+    const existingProntuario = await prontuarioRepo.findOne({
       where: { pacienteId: id },
-      create: {
-        pacienteId: id,
-        pesoAtualKg: pesoNum,
-        alturaCm: alturaNum,
-        imc: imcCalculado,
-        objetivo: objetivo ? String(objetivo).trim().toUpperCase() : null,
-        comorbidades: comorbidades ? String(comorbidades).trim().toUpperCase() : null,
-        alergias: alergias ? String(alergias).trim().toUpperCase() : null,
-        medicacoes: medicacoes ? String(medicacoes).trim().toUpperCase() : null,
-        evolucao: evolucao ? String(evolucao).trim().toUpperCase() : null,
-      },
-      update: {
-        pesoAtualKg: pesoNum,
-        alturaCm: alturaNum,
-        imc: imcCalculado,
-        objetivo: objetivo ? String(objetivo).trim().toUpperCase() : null,
-        comorbidades: comorbidades ? String(comorbidades).trim().toUpperCase() : null,
-        alergias: alergias ? String(alergias).trim().toUpperCase() : null,
-        medicacoes: medicacoes ? String(medicacoes).trim().toUpperCase() : null,
-        evolucao: evolucao ? String(evolucao).trim().toUpperCase() : null,
-      },
     });
 
-    // Mantém a altura e o objetivo clínico sincronizados no cadastro geral do paciente
-    const patientUpdateData: Record<string, any> = {};
+    const prontuarioSalvo = existingProntuario
+      ? await prontuarioRepo.save({
+          ...existingProntuario,
+          ...fields,
+        })
+      : await prontuarioRepo.save(
+          prontuarioRepo.create({
+            pacienteId: id,
+            ...fields,
+          }),
+        );
+
+    const patientUpdateData: {
+      heightCm?: number;
+      treatmentObjective?: string;
+      clinicalFocus?: string;
+    } = {};
     if (alturaNum && alturaNum > 0) {
       patientUpdateData.heightCm = alturaNum;
     }
@@ -386,16 +393,12 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       patientUpdateData.clinicalFocus = String(objetivo).trim();
     }
     if (Object.keys(patientUpdateData).length > 0) {
-      await prisma.patient.update({
-        where: { id },
-        data: patientUpdateData,
-      });
+      await patientRepo.update({ id }, patientUpdateData);
     }
 
-    // Grava novo registro no Histórico Clínico (Linha do Tempo de Atendimentos)
     if (registrarAtendimento && (evolucao || queixaPrincipal || pesoNum)) {
-      await prisma.evolucaoClinica.create({
-        data: {
+      await evolucaoRepo.save(
+        evolucaoRepo.create({
           pacienteId: id,
           dataAtendimento: new Date(),
           pesoAtual: pesoNum,
@@ -404,24 +407,22 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
           queixaPrincipal: queixaPrincipal
             ? String(queixaPrincipal).trim().toUpperCase()
             : objetivo
-            ? String(objetivo).trim().toUpperCase()
-            : null,
+              ? String(objetivo).trim().toUpperCase()
+              : null,
           condutaEvolucao:
             evolucao && String(evolucao).trim().length > 0
               ? String(evolucao).trim().toUpperCase()
               : "CONSULTA E ATENDIMENTO CLÍNICO REGISTRADO.",
           medicoResponsavel: sessao?.nome || "Dr. Carlos Fantini",
-        },
-      });
+        }),
+      );
     }
 
-    // Invalida cache da métrica global de peso eliminado
     invalidarCacheMetricaPeso();
 
-    // Busca o histórico consolidado atualizado
-    const historicoAtualizado = await prisma.evolucaoClinica.findMany({
+    const historicoAtualizado = await evolucaoRepo.find({
       where: { pacienteId: id },
-      orderBy: { dataAtendimento: "desc" },
+      order: { dataAtendimento: "DESC" },
     });
 
     return NextResponse.json({
@@ -429,17 +430,24 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       message: "Atendimento registrado e prontuário salvo com sucesso!",
       prontuario: {
         ...prontuarioSalvo,
-        pesoAtualKg: prontuarioSalvo.pesoAtualKg ? Number(prontuarioSalvo.pesoAtualKg) : null,
-        alturaCm: prontuarioSalvo.alturaCm ? Number(prontuarioSalvo.alturaCm) : null,
-        imc: prontuarioSalvo.imc ? Number(prontuarioSalvo.imc) : null,
+        pesoAtualKg:
+          prontuarioSalvo.pesoAtualKg != null
+            ? Number(prontuarioSalvo.pesoAtualKg)
+            : null,
+        alturaCm:
+          prontuarioSalvo.alturaCm != null
+            ? Number(prontuarioSalvo.alturaCm)
+            : null,
+        imc: prontuarioSalvo.imc != null ? Number(prontuarioSalvo.imc) : null,
       },
       historico: historicoAtualizado,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[PRONTUARIO/PUT] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao salvar prontuário.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao salvar prontuário.", details },
+      { status: 500 },
     );
   }
 }

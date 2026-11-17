@@ -1,22 +1,24 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import { BiometricMeasurementEntity } from "@/lib/db/entities";
 
 /**
  * GET /api/pacientes/[id]/medicoes
  * Retorna as medições biométricas do paciente em ordem estritamente descendente (mais recentes primeiro)
  */
 export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
-    const medicoes = await prisma.biometricMeasurement.findMany({
+    const bioRepo = await getRepository(BiometricMeasurementEntity);
+    const medicoes = await bioRepo.find({
       where: { patientId: id },
-      orderBy: {
-        createdAt: "desc",
+      order: {
+        createdAt: "DESC",
       },
       take: 50,
     });
@@ -26,10 +28,11 @@ export async function GET(
       total: medicoes.length,
       medicoes,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao buscar medições do paciente.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao buscar medições do paciente.", details },
+      { status: 500 },
     );
   }
 }

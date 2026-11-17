@@ -1,4 +1,6 @@
-import prisma from "@/lib/prisma";
+import { IsNull } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import { PatientEntity } from "@/lib/db/entities";
 
 export interface MetricaPesoEliminadoData {
   pesoTotalEliminadoKg: number;
@@ -48,19 +50,17 @@ export function invalidarCacheMetricaPeso() {
 
 /**
  * Calcula o Total de Peso Eliminado no Mês Corrente (Indicador Cíclico Mensal).
- * 
- * Regra de Negócio Clínica (Atualização Cíclica):
- * 1. Filtra apenas variações de peso ocorridas dentro do mês corrente (createdAt >= primeiroDiaDoMes).
- * 2. Para cada paciente ativo, avalia os retornos/pesagens consecutivas.
- * 3. Se (peso_anterior - peso_atual) > 0, soma ao acumulado do mês corrente.
- * 4. Calcula o comparativo com o mês anterior para exibir tendência de evolução clínica.
  */
 export async function calcularMetricaPesoEliminado(
-  options: { forceRefresh?: boolean } = {}
+  options: { forceRefresh?: boolean } = {},
 ): Promise<MetricaPesoEliminadoData> {
   const nowMs = Date.now();
 
-  if (!options.forceRefresh && cachedMetric && nowMs - lastCacheTimestamp < CACHE_TTL_MS) {
+  if (
+    !options.forceRefresh &&
+    cachedMetric &&
+    nowMs - lastCacheTimestamp < CACHE_TTL_MS
+  ) {
     return cachedMetric;
   }
 
@@ -68,59 +68,38 @@ export async function calcularMetricaPesoEliminado(
   const anoAtual = now.getFullYear();
   const mesAtual = now.getMonth();
 
-  // Início do mês atual (ex: 01/11/2026 00:00:00)
   const primeiroDiaDoMes = new Date(anoAtual, mesAtual, 1, 0, 0, 0, 0);
-
-  // Início do mês anterior (ex: 01/10/2026 00:00:00)
   const primeiroDiaMesAnterior = new Date(anoAtual, mesAtual - 1, 1, 0, 0, 0, 0);
 
   const nomesMeses = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
   ];
   const nomeMes = nomesMeses[mesAtual] || "Mês Atual";
   const nomeMesUpper = nomeMes.toUpperCase();
   const dataReset = `01/${String(mesAtual + 1).padStart(2, "0")}`;
 
   try {
-    const pacientes = await prisma.patient.findMany({
+    const patientRepo = await getRepository(PatientEntity);
+    const pacientes = await patientRepo.find({
       where: {
         patientStatus: "ACTIVE",
-        deletedAt: null,
+        deletedAt: IsNull(),
       },
-      select: {
-        id: true,
-        fullName: true,
-        recordCode: true,
-        prontuario: {
-          select: {
-            pesoAtualKg: true,
-            updatedAt: true,
-          },
-        },
-        evolucoesClinicas: {
-          where: {
-            pesoAtual: { not: null },
-          },
-          select: {
-            pesoAtual: true,
-            dataAtendimento: true,
-            createdAt: true,
-          },
-          orderBy: {
-            createdAt: "asc",
-          },
-        },
-        biometricMeasurements: {
-          select: {
-            weightKg: true,
-            measuredAt: true,
-            createdAt: true,
-          },
-          orderBy: {
-            createdAt: "asc",
-          },
-        },
+      relations: {
+        prontuario: true,
+        evolucoesClinicas: true,
+        biometricMeasurements: true,
       },
     });
 
@@ -130,7 +109,6 @@ export async function calcularMetricaPesoEliminado(
     let maiorPerdaIndividual = 0;
 
     for (const p of pacientes) {
-      // Unifica registros cronológicos de peso
       const timeline: { date: Date; peso: number }[] = [];
 
       if (p.evolucoesClinicas && p.evolucoesClinicas.length > 0) {
@@ -155,24 +133,23 @@ export async function calcularMetricaPesoEliminado(
         }
       }
 
-      // Ordena cronologicamente
       timeline.sort((a, b) => a.date.getTime() - b.date.getTime());
 
       let perdaPacienteMesAtual = 0;
 
-      // Calcula as variações de peso entre consultas consecutivas
       for (let i = 1; i < timeline.length; i++) {
         const prev = timeline[i - 1];
         const curr = timeline[i];
         const delta = Math.round((prev.peso - curr.peso) * 10) / 10;
 
         if (delta > 0) {
-          // Variação ocorrida no mês corrente
           if (curr.date >= primeiroDiaDoMes) {
             totalPerdaMesAtual += delta;
             perdaPacienteMesAtual += delta;
-          } else if (curr.date >= primeiroDiaMesAnterior && curr.date < primeiroDiaDoMes) {
-            // Variação ocorrida no mês anterior
+          } else if (
+            curr.date >= primeiroDiaMesAnterior &&
+            curr.date < primeiroDiaDoMes
+          ) {
             totalPerdaMesAnterior += delta;
           }
         }
@@ -203,7 +180,7 @@ export async function calcularMetricaPesoEliminado(
 
     if (totalPerdaMesAnterior > 0) {
       comparativoPercentual = Math.round(
-        ((totalArredondado - totalPerdaMesAnterior) / totalPerdaMesAnterior) * 100
+        ((totalArredondado - totalPerdaMesAnterior) / totalPerdaMesAnterior) * 100,
       );
       if (comparativoPercentual >= 0) {
         comparativoBadgeTexto = `+${comparativoPercentual}% vs mês passado`;
@@ -242,7 +219,10 @@ export async function calcularMetricaPesoEliminado(
 
     return result;
   } catch (error) {
-    console.error("[calcularMetricaPesoEliminado] Erro ao calcular métrica mensal de peso:", error);
+    console.error(
+      "[calcularMetricaPesoEliminado] Erro ao calcular métrica mensal de peso:",
+      error,
+    );
 
     if (cachedMetric) {
       return cachedMetric;

@@ -1,293 +1,373 @@
-import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { getDataSource, getRepository } from "../src/lib/db/data-source";
+import {
+  AlimentoEntity,
+  EvolucaoClinicaEntity,
+  ItemRefeicaoEntity,
+  MedicoEntity,
+  OrganizationEntity,
+  PatientEntity,
+  PlanoAlimentarEntity,
+  ProntuarioPacienteEntity,
+  RefeicaoEntity,
+  UserEntity,
+  VariacaoDietaEntity,
+  type BiologicalSex,
+  type Cargo,
+  type UserRole,
+} from "../src/lib/db/entities";
 import { carregarTabelaTaco } from "./seed-taco";
 
-const prisma = new PrismaClient();
-
-async function main() {
-  console.log("🌱 Semeando dados iniciais da Clínica FAAZ...");
-
-  // 1. Organização Clínica FAAZ
-  const org = await prisma.organization.upsert({
-    where: { slug: "clinica-faaz" },
-    update: {},
-    create: {
-      slug: "clinica-faaz",
-      tradeName: "Clínica FAAZ",
-      legalName: "Clínica FAAZ Medicina & Saúde Integrativa Ltda",
-      taxId: "12345678000190",
-      primaryColorHex: "#0f766e",
-    },
+async function upsertUser(params: {
+  organizationId: string;
+  fullName: string;
+  username: string;
+  email: string;
+  passwordHash: string;
+  role: UserRole;
+  cargo: Cargo;
+  podeAcessarProntuario: boolean;
+  isClinical: boolean;
+  specialty: string;
+  councilType?: string | null;
+  councilNumber?: string | null;
+}) {
+  const userRepo = await getRepository(UserEntity);
+  let user = await userRepo.findOne({
+    where: [{ username: params.username }, { email: params.email }],
   });
 
+  if (user) {
+    user.fullName = params.fullName;
+    user.username = params.username;
+    user.email = params.email;
+    user.cargo = params.cargo;
+    user.role = params.role;
+    user.podeAcessarProntuario = params.podeAcessarProntuario;
+    user.isClinical = params.isClinical;
+    user.specialty = params.specialty;
+    user.accountStatus = "ACTIVE";
+    return userRepo.save(user);
+  }
+
+  return userRepo.save(
+    userRepo.create({
+      organizationId: params.organizationId,
+      fullName: params.fullName,
+      username: params.username,
+      email: params.email,
+      passwordHash: params.passwordHash,
+      role: params.role,
+      cargo: params.cargo,
+      podeAcessarProntuario: params.podeAcessarProntuario,
+      isClinical: params.isClinical,
+      mfaEnabled: false,
+      specialty: params.specialty,
+      councilType: params.councilType ?? null,
+      councilNumber: params.councilNumber ?? null,
+      accountStatus: "ACTIVE",
+      mustChangePassword: false,
+    }),
+  );
+}
+
+async function main() {
+  console.log("🌱 Semeando dados iniciais da Clínica FAAZ no Oracle Autonomous Database...");
+
+  const orgRepo = await getRepository(OrganizationEntity);
+  const medicoRepo = await getRepository(MedicoEntity);
+  const patientRepo = await getRepository(PatientEntity);
+  const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+  const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
+  const alimentoRepo = await getRepository(AlimentoEntity);
+  const planoRepo = await getRepository(PlanoAlimentarEntity);
+  const variacaoRepo = await getRepository(VariacaoDietaEntity);
+  const refeicaoRepo = await getRepository(RefeicaoEntity);
+  const itemRepo = await getRepository(ItemRefeicaoEntity);
+
+  // 1. Organização Clínica FAAZ
+  let org = await orgRepo.findOne({ where: { slug: "clinica-faaz" } });
+  if (!org) {
+    org = await orgRepo.save(
+      orgRepo.create({
+        slug: "clinica-faaz",
+        tradeName: "Clínica FAAZ",
+        legalName: "Clínica FAAZ Medicina & Saúde Integrativa Ltda",
+        taxId: "12345678000190",
+        primaryColorHex: "#0f766e",
+        enabledModules: {},
+        rolePermissions: {},
+        status: "ACTIVE",
+      }),
+    );
+  }
   console.log(`✅ Organização criada/encontrada: ${org.tradeName} (${org.id})`);
 
   const passwordHash = await bcrypt.hash("faaz123", 10);
 
-  // 2. Usuário 1: Dono da Clínica - Dr. Carlos Fantini
-  let drCarlos = await prisma.user.findFirst({
-    where: { OR: [{ username: "carlos.fantini" }, { email: "carlos.fantini@clinicafaaz.com.br" }] },
+  // 2. Corpo Clínico e Equipe (Dra. Ana Flávia, Dr. Carlos Fantini, Dr. Rodrigo Mendes, Patrícia, Eduardo)
+  const draAnaFlavia = await upsertUser({
+    organizationId: org.id,
+    fullName: "Dra. Ana Flávia",
+    username: "ana.flavia",
+    email: "ana.flavia@clinicafaaz.com.br",
+    passwordHash,
+    role: "CLINIC_ADMIN",
+    cargo: "DONO_CLINICA",
+    podeAcessarProntuario: true,
+    isClinical: true,
+    specialty: "Endocrinologia & Metabologia",
+    councilType: "CRM",
+    councilNumber: "54321/MG",
   });
+  console.log(`✅ Médica Titular: ${draAnaFlavia.fullName} (${draAnaFlavia.cargo})`);
 
-  if (drCarlos) {
-    drCarlos = await prisma.user.update({
-      where: { id: drCarlos.id },
-      data: {
-        username: "carlos.fantini",
-        cargo: "DONO_CLINICA",
-        role: "CLINIC_ADMIN",
-        podeAcessarProntuario: true,
-        accountStatus: "ACTIVE",
-      },
-    });
-  } else {
-    drCarlos = await prisma.user.create({
-      data: {
-        organizationId: org.id,
-        fullName: "Dr. Carlos Fantini",
-        username: "carlos.fantini",
-        email: "carlos.fantini@clinicafaaz.com.br",
-        passwordHash,
-        role: "CLINIC_ADMIN",
-        cargo: "DONO_CLINICA",
-        podeAcessarProntuario: true,
-        isClinical: true,
-        specialty: "Endocrinologia & Nutrologia",
-        councilType: "CRM",
-        councilNumber: "45678/SP",
-        accountStatus: "ACTIVE",
-        mustChangePassword: false,
-      },
-    });
-  }
+  const drCarlos = await upsertUser({
+    organizationId: org.id,
+    fullName: "Dr. Carlos Fantini",
+    username: "carlos.fantini",
+    email: "carlos.fantini@clinicafaaz.com.br",
+    passwordHash,
+    role: "CLINIC_ADMIN",
+    cargo: "DONO_CLINICA",
+    podeAcessarProntuario: true,
+    isClinical: true,
+    specialty: "Endocrinologia & Nutrologia",
+    councilType: "CRM",
+    councilNumber: "45678/SP",
+  });
   console.log(`✅ Dono da Clínica: ${drCarlos.fullName} (${drCarlos.cargo})`);
 
-  // 3. Usuário 2: Médico Parceiro - Dr. Rodrigo Mendes
-  const drRodrigo = await prisma.user.upsert({
-    where: { username: "rodrigo.mendes" },
-    update: {
-      cargo: "MEDICO",
-      role: "DOCTOR",
-      podeAcessarProntuario: true,
-      accountStatus: "ACTIVE",
-    },
-    create: {
-      organizationId: org.id,
-      fullName: "Dr. Rodrigo Mendes",
-      username: "rodrigo.mendes",
-      email: "medico.parceiro@clinicafaaz.com.br",
-      passwordHash,
-      role: "DOCTOR",
-      cargo: "MEDICO",
-      podeAcessarProntuario: true,
-      isClinical: true,
-      specialty: "Nutrologia & Medicina Funcional",
-      councilType: "CRM",
-      councilNumber: "89123/SP",
-      accountStatus: "ACTIVE",
-      mustChangePassword: false,
-    },
+  const drRodrigo = await upsertUser({
+    organizationId: org.id,
+    fullName: "Dr. Rodrigo Mendes",
+    username: "rodrigo.mendes",
+    email: "medico.parceiro@clinicafaaz.com.br",
+    passwordHash,
+    role: "DOCTOR",
+    cargo: "MEDICO",
+    podeAcessarProntuario: true,
+    isClinical: true,
+    specialty: "Nutrologia & Medicina Funcional",
+    councilType: "CRM",
+    councilNumber: "89123/SP",
   });
   console.log(`✅ Médico Parceiro: ${drRodrigo.fullName} (${drRodrigo.cargo})`);
 
-  // 4. Usuário 3: Secretária - Patrícia Santos
-  const secretaria = await prisma.user.upsert({
-    where: { username: "patricia.santos" },
-    update: {
-      cargo: "SECRETARIA",
-      role: "RECEPTIONIST",
-      podeAcessarProntuario: false,
-      accountStatus: "ACTIVE",
-    },
-    create: {
-      organizationId: org.id,
-      fullName: "Patrícia Santos",
-      username: "patricia.santos",
-      email: "secretaria@clinicafaaz.com.br",
-      passwordHash,
-      role: "RECEPTIONIST",
-      cargo: "SECRETARIA",
-      podeAcessarProntuario: false,
-      isClinical: false,
-      specialty: "Recepção & Agendamentos",
-      accountStatus: "ACTIVE",
-      mustChangePassword: false,
-    },
+  const secretaria = await upsertUser({
+    organizationId: org.id,
+    fullName: "Patrícia Santos",
+    username: "patricia.santos",
+    email: "secretaria@clinicafaaz.com.br",
+    passwordHash,
+    role: "RECEPTIONIST",
+    cargo: "SECRETARIA",
+    podeAcessarProntuario: false,
+    isClinical: false,
+    specialty: "Recepção & Agendamentos",
   });
   console.log(`✅ Secretária: ${secretaria.fullName} (${secretaria.cargo})`);
 
-  // 5. Usuário 4: Administrador - Eduardo Lima
-  const administrador = await prisma.user.upsert({
-    where: { username: "eduardo.lima" },
-    update: {
-      cargo: "ADMINISTRADOR",
-      role: "ADMIN",
-      podeAcessarProntuario: false,
-      accountStatus: "ACTIVE",
-    },
-    create: {
-      organizationId: org.id,
-      fullName: "Eduardo Lima",
-      username: "eduardo.lima",
-      email: "admin@clinicafaaz.com.br",
-      passwordHash,
-      role: "ADMIN",
-      cargo: "ADMINISTRADOR",
-      podeAcessarProntuario: false,
-      isClinical: false,
-      specialty: "Gestão Financeira & RH",
-      accountStatus: "ACTIVE",
-      mustChangePassword: false,
-    },
+  const administrador = await upsertUser({
+    organizationId: org.id,
+    fullName: "Eduardo Lima",
+    username: "eduardo.lima",
+    email: "admin@clinicafaaz.com.br",
+    passwordHash,
+    role: "ADMIN",
+    cargo: "ADMINISTRADOR",
+    podeAcessarProntuario: false,
+    isClinical: false,
+    specialty: "Gestão Financeira & RH",
   });
   console.log(`✅ Administrador: ${administrador.fullName} (${administrador.cargo})`);
 
-  // 6. Pacientes de Teste para o App Mobile
-  const p1 = await prisma.patient.upsert({
-    where: { recordCode: "FAAZ-00001" },
-    update: {
-      cpf: "11122233344",
-      birthDate: new Date("1976-05-18"),
-      biologicalSex: "MALE",
-      convenio: "Particular",
-      heightCm: 178,
-      metaDiariaMl: 2500,
+  // Profissionais na tabela MEDICOS (Agenda)
+  const medicosAgenda = [
+    {
+      id: "00000000-0000-4000-8000-000000000001",
+      nome: "Dr. Carlos Fantini",
+      especialidade: "Endocrinologia & Nutrologia",
+      corHex: "#059669",
     },
-    create: {
-      organizationId: org.id,
-      recordCode: "FAAZ-00001",
-      fullName: "Carlos Eduardo Fantini",
-      cpf: "11122233344",
-      birthDate: new Date("1976-05-18"),
-      biologicalSex: "MALE",
-      convenio: "Particular",
-      heightCm: 178,
-      phoneWhatsapp: "(31) 98888-0001",
-      email: "carlos.paciente@gmail.com",
-      metaDiariaMl: 2500,
-      primaryDoctorId: drCarlos.id,
-      patientStatus: "ACTIVE",
-      clinicalFocus: "Emagrecimento & Longevidade Saudável",
+    {
+      id: "00000000-0000-4000-8000-000000000002",
+      nome: "Dr. Rodrigo Mendes",
+      especialidade: "Cirurgia Plástica",
+      corHex: "#2563eb",
     },
+    {
+      id: "00000000-0000-4000-8000-000000000003",
+      nome: "Dra. Ana Flávia",
+      especialidade: "Endocrinologia & Metabologia",
+      corHex: "#0f766e",
+    },
+  ];
+  for (const m of medicosAgenda) {
+    const existingMed = await medicoRepo.findOne({ where: { id: m.id } });
+    if (existingMed) {
+      existingMed.nome = m.nome;
+      existingMed.especialidade = m.especialidade;
+      existingMed.corHex = m.corHex;
+      await medicoRepo.save(existingMed);
+    } else {
+      await medicoRepo.save(medicoRepo.create(m));
+    }
+  }
+
+  // 6. Pacientes de Teste
+  const upsertPatient = async (data: {
+    recordCode: string;
+    fullName: string;
+    cpf: string;
+    birthDate: string;
+    biologicalSex: BiologicalSex;
+    convenio: string;
+    planoFaaz: boolean;
+    heightCm: number;
+    phoneWhatsapp: string;
+    email: string;
+    metaDiariaMl: number;
+    primaryDoctorId: string;
+    clinicalFocus: string;
+  }) => {
+    let p = await patientRepo.findOne({
+      where: { recordCode: data.recordCode },
+    });
+    if (p) {
+      Object.assign(p, data);
+      return patientRepo.save(p);
+    }
+    return patientRepo.save(
+      patientRepo.create({
+        organizationId: org.id,
+        ...data,
+        patientStatus: "ACTIVE",
+        activeModules: [],
+      }),
+    );
+  };
+
+  const p1 = await upsertPatient({
+    recordCode: "FAAZ-00001",
+    fullName: "Carlos Eduardo Fantini",
+    cpf: "11122233344",
+    birthDate: "1976-05-18",
+    biologicalSex: "MALE",
+    convenio: "Particular",
+    planoFaaz: false,
+    heightCm: 178,
+    phoneWhatsapp: "(31) 98888-0001",
+    email: "carlos.paciente@gmail.com",
+    metaDiariaMl: 2500,
+    primaryDoctorId: drCarlos.id,
+    clinicalFocus: "Emagrecimento & Longevidade Saudável",
   });
 
-  const p2 = await prisma.patient.upsert({
-    where: { recordCode: "FAAZ-00002" },
-    update: {
-      cpf: "22233344455",
-      birthDate: new Date("1991-08-24"),
-      biologicalSex: "FEMALE",
-      convenio: "Plano FAAZ",
-      heightCm: 164,
-      metaDiariaMl: 3000,
-    },
-    create: {
-      organizationId: org.id,
-      recordCode: "FAAZ-00002",
-      fullName: "Maria Luiza Silva",
-      cpf: "22233344455",
-      birthDate: new Date("1991-08-24"),
-      biologicalSex: "FEMALE",
-      convenio: "Plano FAAZ",
-      heightCm: 164,
-      phoneWhatsapp: "(31) 98888-0002",
-      email: "marialuiza@gmail.com",
-      metaDiariaMl: 3000,
-      primaryDoctorId: drCarlos.id,
-      patientStatus: "ACTIVE",
-      clinicalFocus: "Saúde Intestinal & Modulação Hormonal",
-    },
+  const p2 = await upsertPatient({
+    recordCode: "FAAZ-00002",
+    fullName: "Maria Luiza Silva",
+    cpf: "22233344455",
+    birthDate: "1991-08-24",
+    biologicalSex: "FEMALE",
+    convenio: "Plano FAAZ",
+    planoFaaz: true,
+    heightCm: 164,
+    phoneWhatsapp: "(31) 98888-0002",
+    email: "marialuiza@gmail.com",
+    metaDiariaMl: 3000,
+    primaryDoctorId: draAnaFlavia.id,
+    clinicalFocus: "Saúde Intestinal & Modulação Hormonal",
   });
 
-  console.log(`✅ Paciente 1: ${p1.fullName} - CPF: ${p1.cpf} - Meta: ${p1.metaDiariaMl}ml (ID: ${p1.id})`);
-  console.log(`✅ Paciente 2: ${p2.fullName} - CPF: ${p2.cpf} - Meta: ${p2.metaDiariaMl}ml (ID: ${p2.id})`);
+  console.log(`✅ Pacientes semeados: ${p1.fullName} e ${p2.fullName}`);
 
-  // 7. Prontuários Iniciais (Ficha Clínica Digital FAAZ)
-  await prisma.prontuarioPaciente.upsert({
-    where: { pacienteId: p1.id },
-    update: {},
-    create: {
-      pacienteId: p1.id,
-      pesoAtualKg: 84.5,
-      alturaCm: 178.0,
-      imc: 26.67,
-      objetivo: "Emagrecimento com preservação de massa magra e otimização metabólica.",
-      comorbidades: "Resistência insulínica leve, histórico familiar de DM2.",
-      alergias: "Dipirona e Frutos do mar.",
-      medicacoes: "Metformina 500mg (1x ao dia), Creatina 5g/dia, Vitamina D3 2000 UI.",
-      evolucao: "Paciente refere melhora na disposição matinal e aumento no consumo hídrico diário. Aderindo bem ao protocolo de hidratação e acompanhando ritmo intestinal pelo App Mobile FAAZ. Exames laboratoriais solicitados: Glicemia de jejum, HbA1c e Perfil Lipídico.",
+  // 7. Prontuários Iniciais
+  const ensureProntuario = async (
+    pacienteId: string,
+    dados: {
+      pesoAtualKg: number;
+      alturaCm: number;
+      imc: number;
+      objetivo: string;
+      comorbidades: string;
+      alergias: string;
+      medicacoes: string;
+      evolucao: string;
     },
+  ) => {
+    const existing = await prontuarioRepo.findOne({ where: { pacienteId } });
+    if (!existing) {
+      await prontuarioRepo.save(
+        prontuarioRepo.create({
+          pacienteId,
+          ...dados,
+        }),
+      );
+    }
+  };
+
+  await ensureProntuario(p1.id, {
+    pesoAtualKg: 84.5,
+    alturaCm: 178.0,
+    imc: 26.67,
+    objetivo: "Emagrecimento com preservação de massa magra e otimização metabólica.",
+    comorbidades: "Resistência insulínica leve, histórico familiar de DM2.",
+    alergias: "Dipirona e Frutos do mar.",
+    medicacoes: "Metformina 500mg (1x ao dia), Creatina 5g/dia, Vitamina D3 2000 UI.",
+    evolucao:
+      "Paciente refere melhora na disposição matinal e aumento no consumo hídrico diário.",
   });
 
-  await prisma.prontuarioPaciente.upsert({
-    where: { pacienteId: p2.id },
-    update: {},
-    create: {
-      pacienteId: p2.id,
-      pesoAtualKg: 62.0,
-      alturaCm: 164.0,
-      imc: 23.05,
-      objetivo: "Modulação da microbiota intestinal, redução de estufamento pós-prandial e controle de SOP.",
-      comorbidades: "Síndrome dos Ovários Policísticos (SOP), constipação intestinal funcional.",
-      alergias: "Lactose (intolerância moderada).",
-      medicacoes: "Inositol 2g/dia, Probióticos multiespécies, Ômega 3 1000mg.",
-      evolucao: "Paciente comparece para retorno clínico. Relata melhora após inclusão de fibras solúveis na dieta. Registros de Bristol no app demonstram transição para Tipo 4 na maioria dos dias. Manter plano atual e reavaliar em 30 dias.",
-    },
+  await ensureProntuario(p2.id, {
+    pesoAtualKg: 62.0,
+    alturaCm: 164.0,
+    imc: 23.05,
+    objetivo:
+      "Modulação da microbiota intestinal, redução de estufamento pós-prandial e controle de SOP.",
+    comorbidades:
+      "Síndrome dos Ovários Policísticos (SOP), constipação intestinal funcional.",
+    alergias: "Lactose (intolerância moderada).",
+    medicacoes: "Inositol 2g/dia, Probióticos multiespécies, Ômega 3 1000mg.",
+    evolucao:
+      "Paciente comparece para retorno clínico. Relata melhora após inclusão de fibras solúveis na dieta.",
   });
 
-  console.log("✅ Prontuários clínicos iniciais semeados com sucesso!");
-
-  // 8. Histórico Clínico Inicial (Linha do Tempo de Atendimentos)
-  const countHist = await prisma.evolucaoClinica.count({ where: { pacienteId: p1.id } });
+  // 8. Evoluções Clínicas Iniciais
+  const countHist = await evolucaoRepo.count({ where: { pacienteId: p1.id } });
   if (countHist === 0) {
-    const dataPassada = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
-    await prisma.evolucaoClinica.create({
-      data: {
+    await evolucaoRepo.save(
+      evolucaoRepo.create({
         pacienteId: p1.id,
-        dataAtendimento: dataPassada,
+        dataAtendimento: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
         pesoAtual: 86.2,
         alturaCm: 178.0,
         imc: 27.21,
-        queixaPrincipal: "Fadiga vespertina, ganho ponderal e queixas de constipação leve.",
-        condutaEvolucao: "Primeira consulta clínica. Solicitado painel metabólico completo (glicemia, HbA1c, insulina de jejum, lipidograma e TSH). Orientada meta hídrica de 2500ml/dia com registros no App Mobile FAAZ. Prescrita suplementação básica de Creatina 5g e Vitamina D3.",
+        queixaPrincipal:
+          "Fadiga vespertina, ganho ponderal e queixas de constipação leve.",
+        condutaEvolucao:
+          "Primeira consulta clínica. Orientada meta hídrica de 2500ml/dia.",
         medicoResponsavel: "Dr. Carlos Fantini",
-      },
-    });
+      }),
+    );
 
-    const dataHoje = new Date();
-    await prisma.evolucaoClinica.create({
-      data: {
+    await evolucaoRepo.save(
+      evolucaoRepo.create({
         pacienteId: p1.id,
-        dataAtendimento: dataHoje,
+        dataAtendimento: new Date(),
         pesoAtual: 84.5,
         alturaCm: 178.0,
         imc: 26.67,
-        queixaPrincipal: "Retorno para avaliação de exames laboratoriais e aderência hídrica.",
-        condutaEvolucao: "Paciente refere redução de 1.7kg no período com aumento significativo de energia. Aderência de 85% à hidratação diária pelo app. Bristol regularizado para Tipo 4. Iniciada metformina 500mg em dose noturna para otimização da sensibilidade insulínica. Retorno em 45 dias.",
+        queixaPrincipal:
+          "Retorno para avaliação de exames laboratoriais e aderência hídrica.",
+        condutaEvolucao:
+          "Paciente refere redução de 1.7kg no período com aumento significativo de energia.",
         medicoResponsavel: "Dr. Carlos Fantini",
-      },
-    });
+      }),
+    );
   }
 
-  const countHistP2 = await prisma.evolucaoClinica.count({ where: { pacienteId: p2.id } });
-  if (countHistP2 === 0) {
-    await prisma.evolucaoClinica.create({
-      data: {
-        pacienteId: p2.id,
-        dataAtendimento: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-        pesoAtual: 62.0,
-        alturaCm: 164.0,
-        imc: 23.05,
-        queixaPrincipal: "Estufamento abdominal crônico e irregularidade menstrual associada à SOP.",
-        condutaEvolucao: "Consulta inicial de nutrologia integrativa. Plano de modulação da microbiota instituído com probióticos e inositol 2g/dia. Orientada monitorização contínua de sintomas e escala de Bristol pelo App Mobile FAAZ.",
-        medicoResponsavel: "Dr. Rodrigo Mendes",
-      },
-    });
-  }
-
-  console.log("✅ Histórico clínico e atendimentos semeados com sucesso!");
-
-  // 9. Mega Seed TACO (Carga Massiva de Centenas de Alimentos da UNICAMP)
+  // 9. Tabela TACO e Alimentos Base
   await carregarTabelaTaco();
 
   const alimentosBase = [
@@ -367,276 +447,107 @@ async function main() {
 
   const alimentosMap: Record<string, string> = {};
   for (const a of alimentosBase) {
-    const al = await prisma.alimento.upsert({
-      where: { nome: a.nome },
-      update: a,
-      create: a,
-    });
+    let al = await alimentoRepo.findOne({ where: { nome: a.nome } });
+    if (al) {
+      Object.assign(al, a);
+      al = await alimentoRepo.save(al);
+    } else {
+      al = await alimentoRepo.save(alimentoRepo.create(a));
+    }
     alimentosMap[a.nome] = al.id;
   }
-  console.log("✅ Banco de alimentos cadastrado com sucesso!");
+  console.log("✅ Alimentos base validados!");
 
-  // 10. Plano Alimentar Inicial para Paciente 1 (Carlos Alberto) com Variações de Cardápio
-  let planoP1 = await prisma.planoAlimentar.findFirst({
+  // 10. Plano Alimentar Inicial para Paciente 1
+  const planoExistente = await planoRepo.findOne({
     where: { pacienteId: p1.id, ativo: true },
-    include: { variacoes: { include: { refeicoes: { include: { itens: true } } } } },
   });
 
-  if (!planoP1 || planoP1.variacoes.length === 0) {
-    if (planoP1) {
-      await prisma.planoAlimentar.delete({ where: { id: planoP1.id } });
-    }
-
-    planoP1 = await prisma.planoAlimentar.create({
-      data: {
+  if (!planoExistente) {
+    const novoPlano = await planoRepo.save(
+      planoRepo.create({
         pacienteId: p1.id,
         titulo: "Plano Metabólico & Sensibilidade Insulínica",
-        objetivo: "Equilíbrio glicêmico com aporte proteico adequado (1.8g/kg) e fibras solúveis.",
+        objetivo:
+          "Equilíbrio glicêmico com aporte proteico adequado (1.8g/kg) e fibras solúveis.",
         ativo: true,
-        variacoes: {
-          create: [
-            {
-              nome: "Opção 1 (Padrão)",
-              descricao: "Cardápio do dia a dia com foco em saciedade e baixo índice glicêmico",
-              ordem: 1,
-              refeicoes: {
-                create: [
-                  {
-                    nome: "Desjejum / Café da Manhã",
-                    horario: "07:30",
-                    ordem: 1,
-                    observacoes: "Mastigar devagar. Acompanhar com 300ml de água ou chá verde.",
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Ovo de Galinha Cozido"],
-                          quantidadeGramas: 100, // 2 ovos
-                          observacao: "2 unidades médias cozidas",
-                        },
-                        {
-                          alimentoId: alimentosMap["Aveia em Flocos"],
-                          quantidadeGramas: 30,
-                          observacao: "Flocos grossos",
-                        },
-                        {
-                          alimentoId: alimentosMap["Maçã Fuji com Casca"],
-                          quantidadeGramas: 120,
-                          observacao: "1 maçã pequena fatiada",
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    nome: "Almoço",
-                    horario: "12:30",
-                    ordem: 2,
-                    observacoes: "Prato colorido. Incluir folhas verdes escuras à vontade.",
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Arroz Branco Cozido"],
-                          quantidadeGramas: 120,
-                          observacao: "3 colheres de sopa",
-                        },
-                        {
-                          alimentoId: alimentosMap["Feijão Carioca Cozido"],
-                          quantidadeGramas: 100,
-                          observacao: "1 concha média",
-                        },
-                        {
-                          alimentoId: alimentosMap["Peito de Frango Grelhado"],
-                          quantidadeGramas: 150,
-                          observacao: "1 filé grande",
-                        },
-                        {
-                          alimentoId: alimentosMap["Azeite de Oliva Extra Virgem"],
-                          quantidadeGramas: 10,
-                          observacao: "1 colher de sobremesa sobre as folhas",
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    nome: "Lanche da Tarde",
-                    horario: "16:00",
-                    ordem: 3,
-                    observacoes: "Manter boa hidratação hídrica na janela da tarde.",
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Banana Prata"],
-                          quantidadeGramas: 80,
-                          observacao: "1 unidade pequena",
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    nome: "Jantar",
-                    horario: "19:30",
-                    ordem: 4,
-                    observacoes: "Refeição leve com foco proteico antes do repouso noturno.",
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Peito de Frango Grelhado"],
-                          quantidadeGramas: 150,
-                          observacao: "Grelhado com ervas finas",
-                        },
-                        {
-                          alimentoId: alimentosMap["Azeite de Oliva Extra Virgem"],
-                          quantidadeGramas: 5,
-                          observacao: "Azeite sobre legumes no vapor",
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-            {
-              nome: "Opção 2 (Variada)",
-              descricao: "Alternativa com peixe e tubérculos",
-              ordem: 2,
-              refeicoes: {
-                create: [
-                  {
-                    nome: "Desjejum / Café da Manhã",
-                    horario: "07:30",
-                    ordem: 1,
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Ovo de Galinha Cozido"],
-                          quantidadeGramas: 100,
-                        },
-                        {
-                          alimentoId: alimentosMap["Banana Prata"],
-                          quantidadeGramas: 100,
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    nome: "Almoço",
-                    horario: "12:30",
-                    ordem: 2,
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Arroz Branco Cozido"],
-                          quantidadeGramas: 100,
-                        },
-                        {
-                          alimentoId: alimentosMap["Feijão Carioca Cozido"],
-                          quantidadeGramas: 100,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-            {
-              nome: "Dia de Treino",
-              descricao: "Aporte energético e proteico ampliado para hipertrofia e recuperação",
-              ordem: 3,
-              refeicoes: {
-                create: [
-                  {
-                    nome: "Café da Manhã Pré-Treino",
-                    horario: "07:00",
-                    ordem: 1,
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Aveia em Flocos"],
-                          quantidadeGramas: 60,
-                        },
-                        {
-                          alimentoId: alimentosMap["Banana Prata"],
-                          quantidadeGramas: 100,
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    nome: "Almoço Pós-Treino",
-                    horario: "12:30",
-                    ordem: 2,
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Arroz Branco Cozido"],
-                          quantidadeGramas: 200,
-                        },
-                        {
-                          alimentoId: alimentosMap["Feijão Carioca Cozido"],
-                          quantidadeGramas: 120,
-                        },
-                        {
-                          alimentoId: alimentosMap["Peito de Frango Grelhado"],
-                          quantidadeGramas: 180,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-            {
-              nome: "Fim de Semana (Flexível)",
-              descricao: "Ajuste calórico para descanso e lazer",
-              ordem: 4,
-              refeicoes: {
-                create: [
-                  {
-                    nome: "Café da Manhã / Brunch",
-                    horario: "09:30",
-                    ordem: 1,
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Ovo de Galinha Cozido"],
-                          quantidadeGramas: 100,
-                        },
-                        {
-                          alimentoId: alimentosMap["Pão de Forma Integral"],
-                          quantidadeGramas: 50,
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    nome: "Almoço em Família",
-                    horario: "13:30",
-                    ordem: 2,
-                    itens: {
-                      create: [
-                        {
-                          alimentoId: alimentosMap["Arroz Branco Cozido"],
-                          quantidadeGramas: 150,
-                        },
-                        {
-                          alimentoId: alimentosMap["Feijão Carioca Cozido"],
-                          quantidadeGramas: 100,
-                        },
-                        {
-                          alimentoId: alimentosMap["Peito de Frango Grelhado"],
-                          quantidadeGramas: 150,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      },
-      include: { variacoes: { include: { refeicoes: { include: { itens: true } } } } },
-    });
-    console.log("✅ Plano Alimentar inicial com 4 Variações de Cardápio semeado com sucesso!");
+      }),
+    );
+
+    const varPadrao = await variacaoRepo.save(
+      variacaoRepo.create({
+        planoAlimentarId: novoPlano.id,
+        nome: "Opção 1 (Padrão)",
+        descricao:
+          "Cardápio do dia a dia com foco em saciedade e baixo índice glicêmico",
+        ordem: 1,
+        ativo: true,
+      }),
+    );
+
+    const desjejum = await refeicaoRepo.save(
+      refeicaoRepo.create({
+        variacaoDietaId: varPadrao.id,
+        nome: "Desjejum / Café da Manhã",
+        horario: "07:30",
+        ordem: 1,
+        observacoes: "Acompanhar com 300ml de água ou chá verde.",
+      }),
+    );
+
+    await itemRepo.save([
+      itemRepo.create({
+        refeicaoId: desjejum.id,
+        alimentoId: alimentosMap["Ovo de Galinha Cozido"],
+        quantidadeGramas: 100,
+        observacao: "2 unidades médias cozidas",
+      }),
+      itemRepo.create({
+        refeicaoId: desjejum.id,
+        alimentoId: alimentosMap["Aveia em Flocos"],
+        quantidadeGramas: 30,
+        observacao: "Flocos grossos",
+      }),
+      itemRepo.create({
+        refeicaoId: desjejum.id,
+        alimentoId: alimentosMap["Maçã Fuji com Casca"],
+        quantidadeGramas: 120,
+        observacao: "1 maçã pequena fatiada",
+      }),
+    ]);
+
+    const almoco = await refeicaoRepo.save(
+      refeicaoRepo.create({
+        variacaoDietaId: varPadrao.id,
+        nome: "Almoço",
+        horario: "12:30",
+        ordem: 2,
+        observacoes: "Incluir folhas verdes escuras à vontade.",
+      }),
+    );
+
+    await itemRepo.save([
+      itemRepo.create({
+        refeicaoId: almoco.id,
+        alimentoId: alimentosMap["Arroz Branco Cozido"],
+        quantidadeGramas: 120,
+        observacao: "3 colheres de sopa",
+      }),
+      itemRepo.create({
+        refeicaoId: almoco.id,
+        alimentoId: alimentosMap["Feijão Carioca Cozido"],
+        quantidadeGramas: 100,
+        observacao: "1 concha média",
+      }),
+      itemRepo.create({
+        refeicaoId: almoco.id,
+        alimentoId: alimentosMap["Peito de Frango Grelhado"],
+        quantidadeGramas: 150,
+        observacao: "1 filé grande",
+      }),
+    ]);
+
+    console.log("✅ Plano Alimentar inicial semeado com sucesso!");
   }
 }
 
@@ -646,5 +557,10 @@ main()
     process.exit(1);
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    try {
+      const ds = await getDataSource();
+      if (ds.isInitialized) await ds.destroy();
+    } catch {
+      // ignore
+    }
   });

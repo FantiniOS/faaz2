@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import { AgendamentoEntity } from "@/lib/db/entities";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
-const STATUS_VALIDOS = ["AGENDADO", "CONFIRMADO", "CANCELADO", "FINALIZADO"] as const;
+const STATUS_VALIDOS = [
+  "AGENDADO",
+  "CONFIRMADO",
+  "CANCELADO",
+  "FINALIZADO",
+] as const;
 const ESPECIALIDADES_VALIDAS = [
   "ENDOCRINOLOGIA",
   "CIRURGIA_PLASTICA",
@@ -10,20 +16,21 @@ const ESPECIALIDADES_VALIDAS = [
 
 export async function PATCH(
   request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await context.params;
     const body = await request.json();
 
-    const existente = await prisma.agendamento.findUnique({
+    const agendamentoRepo = await getRepository(AgendamentoEntity);
+    const existente = await agendamentoRepo.findOne({
       where: { id },
     });
 
     if (!existente) {
       return NextResponse.json(
         { success: false, error: "Agendamento não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -94,24 +101,40 @@ export async function PATCH(
     }
 
     if (body.observacao !== undefined) {
-      dataUpdate.observacao = body.observacao ? String(body.observacao).trim() : null;
+      dataUpdate.observacao = body.observacao
+        ? String(body.observacao).trim()
+        : null;
     }
 
-    const atualizado = await prisma.agendamento.update({
+    await agendamentoRepo.update({ id }, dataUpdate);
+
+    const atualizado = await agendamentoRepo.findOne({
       where: { id },
-      data: dataUpdate,
-      include: {
-        paciente: {
-          select: {
-            id: true,
-            recordCode: true,
-            fullName: true,
-            cpf: true,
-            phoneWhatsapp: true,
-            convenio: true,
-          },
-        },
+      relations: {
+        paciente: true,
         medico: true,
+      },
+      select: {
+        id: true,
+        pacienteId: true,
+        medicoId: true,
+        especialidade: true,
+        dataHora: true,
+        duracaoMinutos: true,
+        encaixe: true,
+        tipo: true,
+        status: true,
+        observacao: true,
+        createdAt: true,
+        updatedAt: true,
+        paciente: {
+          id: true,
+          recordCode: true,
+          fullName: true,
+          cpf: true,
+          phoneWhatsapp: true,
+          convenio: true,
+        },
       },
     });
 
@@ -123,31 +146,32 @@ export async function PATCH(
     console.error("[PATCH /api/agendamentos/[id]] Erro:", error);
     return NextResponse.json(
       { success: false, error: "Erro ao atualizar agendamento." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   return PATCH(request, context);
 }
 
 export async function DELETE(
   _request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await context.params;
-    await prisma.agendamento.delete({ where: { id } });
+    const agendamentoRepo = await getRepository(AgendamentoEntity);
+    await agendamentoRepo.delete({ id });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("[DELETE /api/agendamentos/[id]] Erro:", error);
     return NextResponse.json(
       { success: false, error: "Erro ao remover agendamento." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

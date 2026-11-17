@@ -1,7 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { Between, IsNull } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  CheckinHidratacaoEntity,
+  CheckinIntestinalEntity,
+  PatientEntity,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 
 const bristolLabels: Record<number, string> = {
@@ -17,11 +23,12 @@ const bristolLabels: Record<number, string> = {
 export async function GET(req: NextRequest) {
   try {
     const sessao = await getSessao();
+    const sessaoRole = (sessao as { role?: string } | null)?.role;
     if (
       sessao &&
       (sessao.cargo === "SECRETARIA" ||
-        (sessao as any).role === "SECRETARIA" ||
-        (sessao as any).role === "RECEPTIONIST")
+        sessaoRole === "SECRETARIA" ||
+        sessaoRole === "RECEPTIONIST")
     ) {
       return NextResponse.json(
         {
@@ -29,7 +36,7 @@ export async function GET(req: NextRequest) {
           motivo:
             "Secretárias não possuem autorização para acessar auditoria de check-ins clínicos.",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
     const { searchParams } = new URL(req.url);
@@ -39,17 +46,16 @@ export async function GET(req: NextRequest) {
         ? "hidrico"
         : "bristol";
 
-    // 1. Limites do dia atual (00:00:00 até 23:59:59)
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    // 2. Busca todos os pacientes ativos da clínica
-    const pacientesAtivos = await prisma.patient.findMany({
+    const patientRepo = await getRepository(PatientEntity);
+    const pacientesAtivos = await patientRepo.find({
       where: {
-        deletedAt: null,
+        deletedAt: IsNull(),
       },
       select: {
         id: true,
@@ -60,10 +66,10 @@ export async function GET(req: NextRequest) {
         convenio: true,
         metaDiariaMl: true,
       },
-      orderBy: { fullName: "asc" },
+      order: { fullName: "ASC" },
     });
 
-    const patientMap = new Map<string, typeof pacientesAtivos[0]>();
+    const patientMap = new Map<string, (typeof pacientesAtivos)[0]>();
     pacientesAtivos.forEach((p) => {
       patientMap.set(p.id, p);
       if (p.recordCode) patientMap.set(p.recordCode, p);
@@ -73,18 +79,22 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    // 3. Busca de acordo com o módulo
     if (modulo === "bristol") {
-      const checkins = await prisma.checkinIntestinal.findMany({
+      const bristolRepo = await getRepository(CheckinIntestinalEntity);
+      const checkins = await bristolRepo.find({
         where: {
-          data: { gte: startOfDay, lte: endOfDay },
+          data: Between(startOfDay, endOfDay),
         },
-        orderBy: { data: "desc" },
+        order: { data: "DESC" },
       });
 
       const cliquesHoje = checkins.map((c) => {
         let p = patientMap.get(c.pacienteId);
-        if (!p && (c.pacienteId === "carlos-faaz-001" || c.pacienteId.includes("carlos"))) {
+        if (
+          !p &&
+          (c.pacienteId === "carlos-faaz-001" ||
+            c.pacienteId.includes("carlos"))
+        ) {
           p = pacientesAtivos.find((pac) => pac.fullName.includes("Carlos"));
         }
 
@@ -112,10 +122,11 @@ export async function GET(req: NextRequest) {
         };
       });
 
-      // Pacientes ativos que AINDA NÃO registraram check-in hoje
       const idsQueClicaram = new Set(checkins.map((c) => c.pacienteId));
       const pendentesHoje = pacientesAtivos
-        .filter((p) => !idsQueClicaram.has(p.id) && !idsQueClicaram.has(p.cpf || ""))
+        .filter(
+          (p) => !idsQueClicaram.has(p.id) && !idsQueClicaram.has(p.cpf || ""),
+        )
         .map((p) => ({
           id: p.id,
           nome: p.fullName,
@@ -139,20 +150,24 @@ export async function GET(req: NextRequest) {
             "Cache-Control": "no-store, no-cache, must-revalidate",
             Pragma: "no-cache",
           },
-        }
+        },
       );
     } else {
-      // Módulo Hídrico
-      const checkins = await prisma.checkinHidratacao.findMany({
+      const hidraRepo = await getRepository(CheckinHidratacaoEntity);
+      const checkins = await hidraRepo.find({
         where: {
-          data: { gte: startOfDay, lte: endOfDay },
+          data: Between(startOfDay, endOfDay),
         },
-        orderBy: { data: "desc" },
+        order: { data: "DESC" },
       });
 
       const cliquesHoje = checkins.map((c) => {
         let p = patientMap.get(c.pacienteId);
-        if (!p && (c.pacienteId === "carlos-faaz-001" || c.pacienteId.includes("carlos"))) {
+        if (
+          !p &&
+          (c.pacienteId === "carlos-faaz-001" ||
+            c.pacienteId.includes("carlos"))
+        ) {
           p = pacientesAtivos.find((pac) => pac.fullName.includes("Carlos"));
         }
 
@@ -176,10 +191,11 @@ export async function GET(req: NextRequest) {
         };
       });
 
-      // Pacientes ativos que AINDA NÃO registraram hidratação hoje
       const idsQueClicaram = new Set(checkins.map((c) => c.pacienteId));
       const pendentesHoje = pacientesAtivos
-        .filter((p) => !idsQueClicaram.has(p.id) && !idsQueClicaram.has(p.cpf || ""))
+        .filter(
+          (p) => !idsQueClicaram.has(p.id) && !idsQueClicaram.has(p.cpf || ""),
+        )
         .map((p) => ({
           id: p.id,
           nome: p.fullName,
@@ -204,14 +220,15 @@ export async function GET(req: NextRequest) {
             "Cache-Control": "no-store, no-cache, must-revalidate",
             Pragma: "no-cache",
           },
-        }
+        },
       );
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[AUDITORIA_CHECKINS_GET_ERROR]", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao gerar auditoria diária.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao gerar auditoria diária.", details },
+      { status: 500 },
     );
   }
 }

@@ -1,34 +1,34 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { Raw } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import { AlimentoEntity } from "@/lib/db/entities";
 
 /**
  * GET /api/alimentos?q=termo
  * Rota oficial de busca no banco de alimentos (Tabela TACO / UNICAMP).
- * Case-insensitive ('insensitive') para suporte universal a CapsLock / Maiúsculas / Minúsculas.
+ * Case-insensitive via LOWER(NOME) LIKE no Oracle.
  */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    // Sanitização rigorosa do termo de busca (.trim())
     const termoDeBusca = (searchParams.get("q") || "").trim();
 
-    // Log de depuração requerido para rastreamento no terminal
     console.log("Buscando por:", termoDeBusca);
 
-    // Query principal com o modificador 'insensitive' no contains do Prisma
-    let resultados = await prisma.alimento.findMany({
+    const alimentoRepo = await getRepository(AlimentoEntity);
+
+    let resultados = await alimentoRepo.find({
       where: termoDeBusca
         ? {
-            nome: {
-              contains: termoDeBusca,
-              mode: "insensitive",
-            },
+            nome: Raw((alias) => `LOWER(${alias}) LIKE :q`, {
+              q: `%${termoDeBusca.toLowerCase()}%`,
+            }),
           }
         : {},
       take: 50,
-      orderBy: { nome: "asc" },
+      order: { nome: "ASC" },
       select: {
         id: true,
         nome: true,
@@ -43,21 +43,26 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Fallback resiliente caso o usuário digite múltiplas palavras (ex: "PEITO FRANGO" ou "BANANA PRATA")
-    // que na tabela TACO possam estar separadas por vírgula (ex: "Banana, prata, crua")
     if (resultados.length === 0 && termoDeBusca.includes(" ")) {
-      const tokens = termoDeBusca.split(/\s+/).filter(Boolean);
-      resultados = await prisma.alimento.findMany({
+      const tokens = termoDeBusca
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean);
+      const params: Record<string, string> = {};
+      tokens.forEach((tok, idx) => {
+        params[`t${idx}`] = `%${tok}%`;
+      });
+
+      resultados = await alimentoRepo.find({
         where: {
-          AND: tokens.map((token) => ({
-            nome: {
-              contains: token,
-              mode: "insensitive",
-            },
-          })),
+          nome: Raw(
+            (alias) =>
+              tokens.map((_, idx) => `LOWER(${alias}) LIKE :t${idx}`).join(" AND "),
+            params,
+          ),
         },
         take: 50,
-        orderBy: { nome: "asc" },
+        order: { nome: "ASC" },
         select: {
           id: true,
           nome: true,
@@ -73,7 +78,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Log de depuração pós-busca
     console.log("Resultados:", resultados.length);
 
     return NextResponse.json({
@@ -85,7 +89,7 @@ export async function GET(req: NextRequest) {
     console.error("Erro na busca de alimentos:", error);
     return NextResponse.json(
       { error: "Erro interno ao buscar banco de alimentos." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

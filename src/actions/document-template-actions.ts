@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { In, IsNull } from "typeorm";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import { DocumentTemplateEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import {
@@ -72,17 +74,18 @@ function toDTO(row: {
     content: row.content,
     category,
     documentTitle: row.documentTitle,
-    createdAt: row.createdAt.toISOString(),
+    createdAt: new Date(row.createdAt).toISOString(),
   };
 }
 
 async function ensureStarterTemplatesSeeded(): Promise<void> {
-  const total = await prisma.documentTemplate.count();
+  const repo = await getRepository(DocumentTemplateEntity);
+  const total = await repo.count();
   if (total > 0) return;
 
   const baseMs = Date.now();
-  await prisma.documentTemplate.createMany({
-    data: STARTER_DOCUMENT_TEMPLATES.map((tpl, idx) => ({
+  const entities = STARTER_DOCUMENT_TEMPLATES.map((tpl, idx) =>
+    repo.create({
       title: tpl.title,
       content: tpl.content,
       category: tpl.category,
@@ -90,15 +93,16 @@ async function ensureStarterTemplatesSeeded(): Promise<void> {
       organizationId: null,
       createdBy: null,
       createdAt: new Date(baseMs + idx * 10),
-    })),
-  });
+    }),
+  );
+  await repo.save(entities);
 }
 
 /**
  * Carrega todos os modelos salvos (opcionalmente filtrados por categoria) para o emissor de documentos.
  */
 export async function getDocumentTemplates(
-  category?: string
+  category?: string,
 ): Promise<GetDocumentTemplatesResult> {
   try {
     const sessao = await getSessao();
@@ -120,25 +124,23 @@ export async function getDocumentTemplates(
 
     await ensureStarterTemplatesSeeded();
 
-    let categoryFilter: { in: string[] } | undefined;
+    let aliases: string[] | undefined;
     if (category?.trim()) {
       const normalized = toTemplateCategory(category);
-      categoryFilter = { in: getCategoryQueryAliases(normalized) };
+      aliases = getCategoryQueryAliases(normalized);
     }
 
-    const rows = await prisma.documentTemplate.findMany({
-      where: {
-        ...(categoryFilter ? { category: categoryFilter } : {}),
-        ...(sessao.organizationId
-          ? {
-              OR: [
-                { organizationId: sessao.organizationId },
-                { organizationId: null },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    const repo = await getRepository(DocumentTemplateEntity);
+    const categoryClause = aliases ? { category: In(aliases) } : {};
+
+    const rows = await repo.find({
+      where: sessao.organizationId
+        ? [
+            { ...categoryClause, organizationId: sessao.organizationId },
+            { ...categoryClause, organizationId: IsNull() },
+          ]
+        : categoryClause,
+      order: { createdAt: "ASC", id: "ASC" },
     });
 
     return {
@@ -162,7 +164,7 @@ export async function getDocumentTemplates(
  * Persiste o texto clínico atual como novo DocumentTemplate na categoria ativa e revalida a rota.
  */
 export async function saveDocumentTemplate(
-  input: SaveDocumentTemplateInput
+  input: SaveDocumentTemplateInput,
 ): Promise<SaveDocumentTemplateResult> {
   try {
     const sessao = await getSessao();
@@ -192,16 +194,17 @@ export async function saveDocumentTemplate(
 
     await ensureStarterTemplatesSeeded();
 
-    const created = await prisma.documentTemplate.create({
-      data: {
+    const repo = await getRepository(DocumentTemplateEntity);
+    const created = await repo.save(
+      repo.create({
         title: parsed.data.title,
         content: parsed.data.content,
         category: canonicalCategory,
         documentTitle: parsed.data.documentTitle || null,
         organizationId: sessao.organizationId ?? null,
         createdBy: sessao.userId,
-      },
-    });
+      }),
+    );
 
     revalidatePath("/dashboard/pacientes");
 

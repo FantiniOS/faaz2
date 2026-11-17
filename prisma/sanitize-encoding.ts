@@ -1,14 +1,21 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { Raw } from "typeorm";
+import { getDataSource, getRepository } from "../src/lib/db/data-source";
+import {
+  AlimentoEntity,
+  PlanoAlimentarEntity,
+  VariacaoDietaEntity,
+} from "../src/lib/db/entities";
 
 async function sanitizeDatabaseEncoding() {
   console.log("========================================================");
   console.log("🛡️ SANITIZAÇÃO DE ENCODING UTF-8 NO BANCO DE DADOS");
   console.log("========================================================");
 
-  // 1. Sanitização em VariacaoDieta
-  const variacoes = await prisma.variacaoDieta.findMany();
+  const variacaoRepo = await getRepository(VariacaoDietaEntity);
+  const planoRepo = await getRepository(PlanoAlimentarEntity);
+  const alimentoRepo = await getRepository(AlimentoEntity);
+
+  const variacoes = await variacaoRepo.find();
   let varsCorrigidas = 0;
 
   for (const v of variacoes) {
@@ -16,7 +23,6 @@ async function sanitizeDatabaseEncoding() {
     let descNova = v.descricao;
     let mudou = false;
 
-    // Correção do termo Flexível / Fim de Semana
     if (
       nomeNovo.includes("Flex") ||
       nomeNovo.includes("Semana") ||
@@ -41,9 +47,8 @@ async function sanitizeDatabaseEncoding() {
       ) {
         descNova = descNova
           .replace(/cal[\uFFFD|r]rico/gi, "calórico")
-          .replace(/cal\uFFFDrico/gi, "calórico")
-          .replace(/calórico/gi, "calórico");
-        
+          .replace(/cal\uFFFDrico/gi, "calórico");
+
         if (descNova.toLowerCase().includes("descanso e lazer")) {
           descNova = "Ajuste calórico para descanso e lazer";
         }
@@ -52,20 +57,18 @@ async function sanitizeDatabaseEncoding() {
     }
 
     if (mudou) {
-      await prisma.variacaoDieta.update({
-        where: { id: v.id },
-        data: {
+      await variacaoRepo.update(
+        { id: v.id },
+        {
           nome: nomeNovo,
           descricao: descNova,
         },
-      });
+      );
       varsCorrigidas++;
-      console.log(`✅ VariacaoDieta atualizada [${v.id}]: "${v.nome}" -> "${nomeNovo}"`);
     }
   }
 
-  // 2. Sanitização em PlanoAlimentar
-  const planos = await prisma.planoAlimentar.findMany();
+  const planos = await planoRepo.find();
   let planosCorrigidos = 0;
   for (const p of planos) {
     let tituloNovo = p.titulo;
@@ -73,42 +76,40 @@ async function sanitizeDatabaseEncoding() {
     let mudou = false;
 
     if (tituloNovo && (tituloNovo.includes("\uFFFD") || tituloNovo.includes("Ã"))) {
-      tituloNovo = tituloNovo.replace(/Card\uFFFDpio/g, "Cardápio").replace(/Op\uFFFD\uFFFD\uFFFDo/g, "Opção");
+      tituloNovo = tituloNovo
+        .replace(/Card\uFFFDpio/g, "Cardápio")
+        .replace(/Op\uFFFD\uFFFD\uFFFDo/g, "Opção");
       mudou = true;
     }
 
     if (objNovo && (objNovo.includes("\uFFFD") || objNovo.includes("Ã"))) {
-      objNovo = objNovo.replace(/Equil\uFFFDbrio/g, "Equilíbrio").replace(/otimiza\uFFFD\uFFFDo/g, "otimização").replace(/metab\uFFFDlica/g, "metabólica");
+      objNovo = objNovo
+        .replace(/Equil\uFFFDbrio/g, "Equilíbrio")
+        .replace(/otimiza\uFFFD\uFFFDo/g, "otimização")
+        .replace(/metab\uFFFDlica/g, "metabólica");
       mudou = true;
     }
 
     if (mudou) {
-      await prisma.planoAlimentar.update({
-        where: { id: p.id },
-        data: { titulo: tituloNovo, objetivo: objNovo },
-      });
+      await planoRepo.update(
+        { id: p.id },
+        { titulo: tituloNovo, objetivo: objNovo },
+      );
       planosCorrigidos++;
-      console.log(`✅ PlanoAlimentar atualizado [${p.id}]: "${p.titulo}" -> "${tituloNovo}"`);
     }
   }
 
-  // 3. Sanitização em Alimentos
-  const alimentosCorrompidos = await prisma.alimento.findMany({
-    where: {
-      OR: [
-        { nome: { contains: "\uFFFD" } },
-        { categoria: { contains: "\uFFFD" } },
-      ],
-    },
+  const alimentosCorrompidos = await alimentoRepo.find({
+    where: [
+      { nome: Raw((alias) => `${alias} LIKE :bad`, { bad: "%\uFFFD%" }) },
+      { categoria: Raw((alias) => `${alias} LIKE :bad`, { bad: "%\uFFFD%" }) },
+    ],
   });
 
-  console.log(`📊 Alimentos com encoding corrompido encontrados: ${alimentosCorrompidos.length}`);
-
-  console.log("========================================================");
-  console.log(`🎉 Sanitização concluída com sucesso!`);
-  console.log(`- Variações de Dieta corrigidas: ${varsCorrigidas}`);
-  console.log(`- Planos Alimentares corrigidos: ${planosCorrigidos}`);
-  console.log("========================================================");
+  console.log(
+    `📊 Alimentos com encoding corrompido encontrados: ${alimentosCorrompidos.length}`,
+  );
+  console.log(`🎉 Sanitização concluída! Variações: ${varsCorrigidas}, Planos: ${planosCorrigidos}`);
 }
 
 sanitizeDatabaseEncoding()
@@ -117,5 +118,10 @@ sanitizeDatabaseEncoding()
     process.exit(1);
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    try {
+      const ds = await getDataSource();
+      if (ds.isInitialized) await ds.destroy();
+    } catch {
+      // ignore
+    }
   });

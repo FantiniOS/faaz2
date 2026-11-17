@@ -1,11 +1,16 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { Between, In } from "typeorm";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  CheckinIntestinalEntity,
+  PatientEntity,
+  type CheckinIntestinal,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 
-// Schema Zod com coerção e fallbacks seguros para check-ins mobile
 const checkinIntestinalSchema = z.object({
   pacienteId: z.string().optional().default("paciente-teste-faaz"),
   tipoBristol: z.coerce
@@ -28,7 +33,6 @@ export async function POST(req: NextRequest) {
   try {
     const json = await req.json();
 
-    // 1. Validação estrita via Zod com suporte a campos flexíveis
     const validationResult = checkinIntestinalSchema.safeParse(json);
 
     if (!validationResult.success) {
@@ -37,14 +41,13 @@ export async function POST(req: NextRequest) {
           error: "Falha de validação dos dados de check-in.",
           issues: validationResult.error.flatten(),
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const { pacienteId, tipoBristol, sintomas, data } = validationResult.data;
     let categoria = validationResult.data.categoria;
 
-    // 2. Classificação clínica de segurança se não enviada
     if (!categoria) {
       if (tipoBristol <= 2) {
         categoria = "constipacao";
@@ -60,16 +63,16 @@ export async function POST(req: NextRequest) {
         ? pacienteId.trim()
         : "paciente-teste-faaz";
 
-    // 3. Persistência no banco via Prisma (sem bloqueio de Foreign Key)
-    const checkin = await prisma.checkinIntestinal.create({
-      data: {
+    const repo = await getRepository(CheckinIntestinalEntity);
+    const checkin = await repo.save(
+      repo.create({
         pacienteId: finalPacienteId,
         tipoBristol,
         categoria,
         sintomas,
         data: data ? new Date(data) : new Date(),
-      },
-    });
+      }),
+    );
 
     return NextResponse.json(
       {
@@ -77,16 +80,17 @@ export async function POST(req: NextRequest) {
         message: "Check-in intestinal salvo com sucesso!",
         data: checkin,
       },
-      { status: 201 }
+      { status: 201 },
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[API_CHECKINS_INTESTINO_POST_ERROR]", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       {
         error: "Erro interno no servidor ao processar o check-in.",
-        details: error?.message || String(error),
+        details,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -94,11 +98,12 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const sessao = await getSessao();
+    const sessaoRole = (sessao as { role?: string } | null)?.role;
     if (
       sessao &&
       (sessao.cargo === "SECRETARIA" ||
-        (sessao as any).role === "SECRETARIA" ||
-        (sessao as any).role === "RECEPTIONIST")
+        sessaoRole === "SECRETARIA" ||
+        sessaoRole === "RECEPTIONIST")
     ) {
       return NextResponse.json(
         {
@@ -106,7 +111,7 @@ export async function GET(req: NextRequest) {
           motivo:
             "Secretárias não possuem autorização para acessar dados clínicos de saúde intestinal.",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
     const { searchParams } = new URL(req.url);
@@ -115,71 +120,77 @@ export async function GET(req: NextRequest) {
     const limitParam = searchParams.get("limit");
     const limit = limitParam ? parseInt(limitParam, 10) : 20;
 
-    // 1. Limites estritos de 24 horas usando o início do dia local às 00:00:00.000
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    // 2. Filtro de registros de hoje (se pacienteId vier na query, filtra por ele; senão traz todos da clínica)
-    const whereHoje: any = {
-      data: {
-        gte: startOfDay,
-        lte: endOfDay,
-      },
-    };
-    if (pacienteId && pacienteId.trim().length > 0) {
-      const cleanId = pacienteId.trim();
-      if (cleanId === "carlos-faaz-001") {
-        whereHoje.OR = [
-          { pacienteId: "carlos-faaz-001" },
-          { pacienteId: "92dab67a-1977-4690-ae23-7cc60499a0c5" },
-        ];
-      } else {
-        whereHoje.pacienteId = cleanId;
-      }
-    }
+    const cleanId = pacienteId?.trim() || "";
+    const targetIds = cleanId
+      ? cleanId === "carlos-faaz-001"
+        ? ["carlos-faaz-001", "92dab67a-1977-4690-ae23-7cc60499a0c5"]
+        : [cleanId]
+      : undefined;
 
-    const registrosHoje = await prisma.checkinIntestinal.findMany({
-      where: whereHoje,
-      orderBy: { data: "desc" },
+    const bristolRepo = await getRepository(CheckinIntestinalEntity);
+    const registrosHoje = await bristolRepo.find({
+      where: {
+        data: Between(startOfDay, endOfDay),
+        ...(targetIds ? { pacienteId: In(targetIds) } : {}),
+      },
+      order: { data: "DESC" },
     });
 
-    // 3. Resolução de nomes reais dos pacientes para exibição no Dashboard
-    const uniqueIds = Array.from(new Set(registrosHoje.map((r) => r.pacienteId)));
+    const uniqueIds = Array.from(
+      new Set(registrosHoje.map((r) => r.pacienteId)),
+    );
     const patientMap = new Map<string, string>();
 
     if (uniqueIds.length > 0) {
       try {
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const uuidRegex =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         const validUuids = uniqueIds.filter((id) => uuidRegex.test(id));
         const nonUuids = uniqueIds.filter((id) => !uuidRegex.test(id));
 
-        const patients = await prisma.patient.findMany({
-          where: {
-            OR: [
-              ...(validUuids.length > 0 ? [{ id: { in: validUuids } }] : []),
-              ...(nonUuids.length > 0 ? [{ recordCode: { in: nonUuids } }] : []),
-            ],
-          },
-          select: { id: true, recordCode: true, fullName: true, socialName: true },
-        });
+        const patientRepo = await getRepository(PatientEntity);
+        const whereConds = [
+          ...(validUuids.length > 0 ? [{ id: In(validUuids) }] : []),
+          ...(nonUuids.length > 0 ? [{ recordCode: In(nonUuids) }] : []),
+        ];
+        if (whereConds.length > 0) {
+          const patients = await patientRepo.find({
+            where: whereConds,
+            select: {
+              id: true,
+              recordCode: true,
+              fullName: true,
+              socialName: true,
+            },
+          });
 
-        patients.forEach((p) => {
-          const nome = p.socialName || p.fullName;
-          patientMap.set(p.id, nome);
-          if (p.recordCode) patientMap.set(p.recordCode, nome);
-        });
+          patients.forEach((p) => {
+            const nome = p.socialName || p.fullName;
+            patientMap.set(p.id, nome);
+            if (p.recordCode) patientMap.set(p.recordCode, nome);
+          });
+        }
       } catch (err) {
-        console.error("[API_CHECKINS_INTESTINO_GET] Erro ao buscar nomes de pacientes:", err);
+        console.error(
+          "[API_CHECKINS_INTESTINO_GET] Erro ao buscar nomes de pacientes:",
+          err,
+        );
       }
     }
 
     const registrosFormatados = registrosHoje.map((r) => {
       let nome = patientMap.get(r.pacienteId);
       if (!nome) {
-        if (r.pacienteId === "carlos-faaz-001" || r.pacienteId.toLowerCase().includes("carlos")) {
+        if (
+          r.pacienteId === "carlos-faaz-001" ||
+          r.pacienteId.toLowerCase().includes("carlos")
+        ) {
           nome = "Carlos Eduardo Fantini";
         } else {
           nome = "Paciente Mobile";
@@ -191,65 +202,60 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // 4. Busca de histórico amplo de dias anteriores caso explicitamente solicitado
-    let historicoGeral: any[] = [];
+    let historicoGeral: CheckinIntestinal[] = [];
     if (incluirHistorico) {
-      const whereHist: any = {};
-      if (pacienteId && pacienteId.trim().length > 0) {
-        const cleanId = pacienteId.trim();
-        if (cleanId === "carlos-faaz-001") {
-          whereHist.OR = [
-            { pacienteId: "carlos-faaz-001" },
-            { pacienteId: "92dab67a-1977-4690-ae23-7cc60499a0c5" },
-          ];
-        } else {
-          whereHist.pacienteId = cleanId;
-        }
-      }
-      historicoGeral = await prisma.checkinIntestinal.findMany({
-        where: whereHist,
-        orderBy: { data: "desc" },
+      historicoGeral = await bristolRepo.find({
+        where: targetIds ? { pacienteId: In(targetIds) } : {},
+        order: { data: "DESC" },
         take: Math.min(limit, 50),
       });
     }
 
-    // 5. Métricas analíticas do dia corrente
     const totalHoje = registrosFormatados.length;
     const temRegistroHoje = totalHoje > 0;
     const ultimoRegistroHoje = temRegistroHoje ? registrosFormatados[0] : null;
 
-    const countIdealHoje = registrosFormatados.filter((r) => r.categoria === "ideal").length;
-    const countConstipacaoHoje = registrosFormatados.filter((r) => r.categoria === "constipacao").length;
-    const countDiarreiaHoje = registrosFormatados.filter((r) => r.categoria === "diarreia").length;
+    const countIdealHoje = registrosFormatados.filter(
+      (r) => r.categoria === "ideal",
+    ).length;
+    const countConstipacaoHoje = registrosFormatados.filter(
+      (r) => r.categoria === "constipacao",
+    ).length;
+    const countDiarreiaHoje = registrosFormatados.filter(
+      (r) => r.categoria === "diarreia",
+    ).length;
 
-    return NextResponse.json({
-      success: true,
-      dataReferencia: new Date().toISOString().split("T")[0],
-      temRegistroHoje,
-      count: totalHoje,
-      countHoje: totalHoje,
-      ultimoRegistroHoje,
-      countIdealHoje,
-      countConstipacaoHoje,
-      countDiarreiaHoje,
-      // Array estrito do dia atual com nomes formatados
-      data: registrosFormatados,
-      registrosHoje: registrosFormatados,
-      historico: historicoGeral,
-    }, {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-        Pragma: "no-cache",
+    return NextResponse.json(
+      {
+        success: true,
+        dataReferencia: new Date().toISOString().split("T")[0],
+        temRegistroHoje,
+        count: totalHoje,
+        countHoje: totalHoje,
+        ultimoRegistroHoje,
+        countIdealHoje,
+        countConstipacaoHoje,
+        countDiarreiaHoje,
+        data: registrosFormatados,
+        registrosHoje: registrosFormatados,
+        historico: historicoGeral,
       },
-    });
-  } catch (error: any) {
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          Pragma: "no-cache",
+        },
+      },
+    );
+  } catch (error: unknown) {
     console.error("[API_CHECKINS_INTESTINO_GET_ERROR]", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       {
         error: "Erro ao buscar histórico de check-ins intestinais.",
-        details: error?.message || String(error),
+        details,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

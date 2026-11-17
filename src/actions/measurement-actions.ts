@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { IsNull } from "typeorm";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import { MeasurementEntity, PatientEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 
@@ -45,7 +47,7 @@ function parseOptionalFloat(
   raw: string | number | null | undefined,
   label: string,
   min: number,
-  max: number
+  max: number,
 ): number | null {
   if (raw === null || raw === undefined) return null;
   const trimmed = String(raw).trim().replace(",", ".");
@@ -62,11 +64,15 @@ function parseOptionalFloat(
 const BaseInputSchema = z.object({
   patientId: z.string().uuid("Identificador do paciente inválido."),
   measuredAt: z.string().optional(),
-  notes: z.string().max(255, "Observação deve ter no máximo 255 caracteres.").nullable().optional(),
+  notes: z
+    .string()
+    .max(255, "Observação deve ter no máximo 255 caracteres.")
+    .nullable()
+    .optional(),
 });
 
 export async function saveAnthropometricMeasurement(
-  input: SaveMeasurementInput
+  input: SaveMeasurementInput,
 ): Promise<SaveMeasurementResult> {
   try {
     const sessao = await getSessao();
@@ -80,7 +86,8 @@ export async function saveAnthropometricMeasurement(
     if (!podeAcessarDadosClinicos(sessao.cargo)) {
       return {
         success: false,
-        error: "Acesso negado. Apenas profissionais clínicos podem registrar medidas antropométricas.",
+        error:
+          "Acesso negado. Apenas profissionais clínicos podem registrar medidas antropométricas.",
       };
     }
 
@@ -101,7 +108,7 @@ export async function saveAnthropometricMeasurement(
       input.bodyFatPercentage,
       "% de Gordura Corporal",
       1,
-      80
+      80,
     );
     const waist = parseOptionalFloat(input.waist, "Cintura", 15, 300);
     const abdomen = parseOptionalFloat(input.abdomen, "Abdômen", 15, 300);
@@ -125,14 +132,16 @@ export async function saveAnthropometricMeasurement(
     if (!hasAnyMetric) {
       return {
         success: false,
-        error: "Preencha pelo menos uma medida corporal ou o % de gordura antes de salvar.",
+        error:
+          "Preencha pelo menos uma medida corporal ou o % de gordura antes de salvar.",
       };
     }
 
-    const patient = await prisma.patient.findFirst({
+    const patientRepo = await getRepository(PatientEntity);
+    const patient = await patientRepo.findOne({
       where: {
         id: parsedMeta.data.patientId,
-        deletedAt: null,
+        deletedAt: IsNull(),
         ...(sessao.organizationId
           ? { organizationId: sessao.organizationId }
           : {}),
@@ -152,15 +161,16 @@ export async function saveAnthropometricMeasurement(
       const candidate = new Date(
         parsedMeta.data.measuredAt.includes("T")
           ? parsedMeta.data.measuredAt
-          : `${parsedMeta.data.measuredAt}T12:00:00`
+          : `${parsedMeta.data.measuredAt}T12:00:00`,
       );
       if (!Number.isNaN(candidate.getTime())) {
         measuredAtDate = candidate;
       }
     }
 
-    const created = await prisma.measurement.create({
-      data: {
+    const measurementRepo = await getRepository(MeasurementEntity);
+    const created = await measurementRepo.save(
+      measurementRepo.create({
         patientId: patient.id,
         measuredAt: measuredAtDate,
         bodyFatPercentage,
@@ -173,8 +183,8 @@ export async function saveAnthropometricMeasurement(
         leftThigh,
         notes: parsedMeta.data.notes?.trim() || null,
         createdBy: sessao.userId,
-      },
-    });
+      }),
+    );
 
     revalidatePath("/dashboard/pacientes");
 
@@ -183,7 +193,7 @@ export async function saveAnthropometricMeasurement(
       measurement: {
         id: created.id,
         patientId: created.patientId,
-        measuredAt: created.measuredAt.toISOString(),
+        measuredAt: new Date(created.measuredAt).toISOString(),
         bodyFatPercentage: created.bodyFatPercentage ?? null,
         waist: created.waist ?? null,
         abdomen: created.abdomen ?? null,

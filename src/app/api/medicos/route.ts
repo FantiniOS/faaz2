@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import { MedicoEntity } from "@/lib/db/entities";
 
 const DEFAULT_MEDICOS = [
   {
@@ -18,25 +19,26 @@ const DEFAULT_MEDICOS = [
 
 export async function GET() {
   try {
-    let medicos = await prisma.medico.findMany({
-      orderBy: { createdAt: "asc" },
+    const medicoRepo = await getRepository(MedicoEntity);
+    let medicos = await medicoRepo.find({
+      order: { createdAt: "ASC" },
     });
 
     // Auto-seed caso o banco esteja vazio para garantir zero atrito
     if (medicos.length === 0) {
       for (const m of DEFAULT_MEDICOS) {
-        await prisma.medico.upsert({
-          where: { id: m.id },
-          update: {
-            nome: m.nome,
-            especialidade: m.especialidade,
-            corHex: m.corHex,
-          },
-          create: m,
-        });
+        const existing = await medicoRepo.findOne({ where: { id: m.id } });
+        if (existing) {
+          existing.nome = m.nome;
+          existing.especialidade = m.especialidade;
+          existing.corHex = m.corHex;
+          await medicoRepo.save(existing);
+        } else {
+          await medicoRepo.save(medicoRepo.create(m));
+        }
       }
-      medicos = await prisma.medico.findMany({
-        orderBy: { createdAt: "asc" },
+      medicos = await medicoRepo.find({
+        order: { createdAt: "ASC" },
       });
     }
 
@@ -49,13 +51,13 @@ export async function GET() {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
         },
-      }
+      },
     );
   } catch (error) {
     console.error("[GET /api/medicos] Erro:", error);
     return NextResponse.json(
       { success: false, error: "Erro ao listar médicos." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -72,24 +74,25 @@ export async function POST(request: NextRequest) {
     if (!nome) {
       return NextResponse.json(
         { success: false, error: "Informe o nome do médico." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const medico = await prisma.medico.create({
-      data: {
+    const medicoRepo = await getRepository(MedicoEntity);
+    const medico = await medicoRepo.save(
+      medicoRepo.create({
         nome,
         especialidade,
         corHex,
-      },
-    });
+      }),
+    );
 
     return NextResponse.json({ success: true, medico }, { status: 201 });
   } catch (error) {
     console.error("[POST /api/medicos] Erro:", error);
     return NextResponse.json(
       { success: false, error: "Erro ao cadastrar médico." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

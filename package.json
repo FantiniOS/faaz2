@@ -12,16 +12,18 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@prisma/client": "^6.5.0",
     "@react-pdf/renderer": "^4.9.0",
     "bcryptjs": "^3.0.3",
     "cmdk": "^1.1.1",
     "jose": "^6.2.15",
     "lucide-react": "^1.66.0",
     "next": "16.4.6",
+    "oracledb": "^7.0.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^1.1.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -32,11 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
-    "prisma": "^6.5.0",
     "tailwindcss": "^4",
     "typescript": "^5"
-  },
-  "prisma": {
-    "seed": "jiti prisma/seed.ts"
   }
 }

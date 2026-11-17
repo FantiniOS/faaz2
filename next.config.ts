@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   devIndicators: false,
+  // Driver Oracle (node-oracledb, modo Thin) e TypeORM carregam drivers via require dinâmico.
+  // Mantê-los fora do bundle do servidor evita erros de resolução no Turbopack e na Vercel.
+  serverExternalPackages: ["oracledb", "typeorm"],
   experimental: {
     agentUpgrade: "security",
   },

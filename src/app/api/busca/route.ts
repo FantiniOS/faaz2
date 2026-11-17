@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { IsNull, Raw } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import { PatientEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +9,7 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/busca?q={termo}
  * Busca global de pacientes por Nome, Telefone/WhatsApp ou CPF
- * Resposta ultrarrápida (< 15ms) limitada a 10 registros
+ * Resposta limitada a 10 registros
  */
 export async function GET(request: Request) {
   try {
@@ -15,7 +17,7 @@ export async function GET(request: Request) {
     if (!sessao) {
       return NextResponse.json(
         { error: "Não autenticado.", autenticado: false },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -26,25 +28,34 @@ export async function GET(request: Request) {
       return NextResponse.json({ pacientes: [] });
     }
 
+    const pattern = `%${q.toLowerCase()}%`;
     const digitsOnly = q.replace(/\D/g, "");
+    const digitsPattern = `%${digitsOnly}%`;
 
-    const pacientes = await prisma.patient.findMany({
-      where: {
-        deletedAt: null,
-        OR: [
-          { fullName: { contains: q, mode: "insensitive" as const } },
-          { socialName: { contains: q, mode: "insensitive" as const } },
-          { recordCode: { contains: q, mode: "insensitive" as const } },
-          { phoneWhatsapp: { contains: q, mode: "insensitive" as const } },
-          { cpf: { contains: q, mode: "insensitive" as const } },
-          ...(digitsOnly.length >= 2
-            ? [
-                { cpf: { contains: digitsOnly, mode: "insensitive" as const } },
-                { phoneWhatsapp: { contains: digitsOnly, mode: "insensitive" as const } },
-              ]
-            : []),
-        ],
-      },
+    const patientRepo = await getRepository(PatientEntity);
+
+    const containsCaseInsensitive = (paramName: string, paramValue: string) =>
+      Raw((alias) => `LOWER(${alias}) LIKE :${paramName}`, {
+        [paramName]: paramValue,
+      });
+
+    const pacientes = await patientRepo.find({
+      where: [
+        { deletedAt: IsNull(), fullName: containsCaseInsensitive("q1", pattern) },
+        { deletedAt: IsNull(), socialName: containsCaseInsensitive("q2", pattern) },
+        { deletedAt: IsNull(), recordCode: containsCaseInsensitive("q3", pattern) },
+        { deletedAt: IsNull(), phoneWhatsapp: containsCaseInsensitive("q4", pattern) },
+        { deletedAt: IsNull(), cpf: containsCaseInsensitive("q5", pattern) },
+        ...(digitsOnly.length >= 2
+          ? [
+              { deletedAt: IsNull(), cpf: containsCaseInsensitive("qd1", digitsPattern) },
+              {
+                deletedAt: IsNull(),
+                phoneWhatsapp: containsCaseInsensitive("qd2", digitsPattern),
+              },
+            ]
+          : []),
+      ],
       select: {
         id: true,
         recordCode: true,
@@ -59,7 +70,7 @@ export async function GET(request: Request) {
         patientStatus: true,
       },
       take: 10,
-      orderBy: { fullName: "asc" },
+      order: { fullName: "ASC" },
     });
 
     const formatados = pacientes.map((p) => ({
@@ -79,11 +90,11 @@ export async function GET(request: Request) {
       pacientes: formatados,
       total: formatados.length,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[BUSCA_GLOBAL] Erro:", error);
     return NextResponse.json(
       { error: "Erro ao processar busca de pacientes." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

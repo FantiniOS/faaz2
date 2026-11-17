@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import prisma from "@/lib/prisma";
+import { IsNull, Not } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  UserEntity,
+  type AccountStatus,
+  type Cargo as DbCargo,
+  type User,
+  type UserRole,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeGerenciarEquipe } from "@/lib/auth-rbac";
 
@@ -13,16 +21,20 @@ export async function GET() {
     const sessao = await getSessao();
     if (!sessao || !podeGerenciarEquipe(sessao.cargo)) {
       return NextResponse.json(
-        { error: "Acesso negado. Apenas o Dono da Clínica e Administradores podem gerenciar a equipe." },
-        { status: 403 }
+        {
+          error:
+            "Acesso negado. Apenas o Dono da Clínica e Administradores podem gerenciar a equipe.",
+        },
+        { status: 403 },
       );
     }
 
-    const equipe = await prisma.user.findMany({
+    const userRepo = await getRepository(UserEntity);
+    const equipe = await userRepo.find({
       where: {
         organizationId: sessao.organizationId,
-        deletedAt: null,
-        role: { not: "PATIENT" },
+        deletedAt: IsNull(),
+        role: Not("PATIENT"),
       },
       select: {
         id: true,
@@ -38,11 +50,11 @@ export async function GET() {
         lastLoginAt: true,
         createdAt: true,
       },
-      orderBy: { fullName: "asc" },
+      order: { fullName: "ASC" },
     });
 
     return NextResponse.json({ equipe });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[EQUIPE/GET] Erro:", error);
     return NextResponse.json({ error: "Erro ao listar equipe." }, { status: 500 });
   }
@@ -57,8 +69,11 @@ export async function POST(request: Request) {
     const sessao = await getSessao();
     if (!sessao || !podeGerenciarEquipe(sessao.cargo)) {
       return NextResponse.json(
-        { error: "Acesso negado. Apenas o Dono da Clínica e Administradores podem cadastrar membros." },
-        { status: 403 }
+        {
+          error:
+            "Acesso negado. Apenas o Dono da Clínica e Administradores podem cadastrar membros.",
+        },
+        { status: 403 },
       );
     }
 
@@ -67,105 +82,117 @@ export async function POST(request: Request) {
 
     if (!nome || !username || !cargo || !senha) {
       return NextResponse.json(
-        { error: "Nome completo, Nome de Usuário (username), cargo e senha inicial são obrigatórios." },
-        { status: 400 }
+        {
+          error:
+            "Nome completo, Nome de Usuário (username), cargo e senha inicial são obrigatórios.",
+        },
+        { status: 400 },
       );
     }
 
-    const normalizedUsername = username.toLowerCase().trim().replace(/[^a-z0-9._-]/g, "");
+    const normalizedUsername = username
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9._-]/g, "");
     if (!normalizedUsername || normalizedUsername.length < 3) {
       return NextResponse.json(
         { error: "O nome de usuário deve conter pelo menos 3 caracteres alfanuméricos." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Validar cargo permitido
-    const cargosValidos = ["DONO_CLINICA", "MEDICO", "SECRETARIA", "ADMINISTRADOR"];
+    const cargosValidos: DbCargo[] = [
+      "DONO_CLINICA",
+      "MEDICO",
+      "SECRETARIA",
+      "ADMINISTRADOR",
+    ];
     if (!cargosValidos.includes(cargo)) {
       return NextResponse.json(
         { error: `Cargo inválido. Valores válidos: ${cargosValidos.join(", ")}` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
+    const userRepo = await getRepository(UserEntity);
+
     // Verificar se username já existe
-    const usernameExistente = await prisma.user.findFirst({
-      where: { username: normalizedUsername, deletedAt: null },
+    const usernameExistente = await userRepo.findOne({
+      where: { username: normalizedUsername, deletedAt: IsNull() },
     });
     if (usernameExistente) {
       return NextResponse.json(
         { error: "Este nome de usuário (username) já está cadastrado." },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
     // Verificar se e-mail já existe (caso informado)
     let normalizedEmail: string | null = null;
     if (email && email.trim()) {
-      normalizedEmail = email.toLowerCase().trim();
-      const emailExistente = await prisma.user.findFirst({
-        where: { email: normalizedEmail, deletedAt: null },
+      const cleanEmail = String(email).toLowerCase().trim();
+      normalizedEmail = cleanEmail;
+      const emailExistente = await userRepo.findOne({
+        where: { email: cleanEmail, deletedAt: IsNull() },
       });
       if (emailExistente) {
         return NextResponse.json(
           { error: "Este e-mail já está cadastrado no sistema." },
-          { status: 409 }
+          { status: 409 },
         );
       }
     }
 
-    // Hash da senha
     const passwordHash = await bcrypt.hash(senha, 12);
 
-    // Mapear cargo para UserRole
-    const roleMap: Record<string, string> = {
+    const roleMap: Record<DbCargo, UserRole> = {
       DONO_CLINICA: "CLINIC_ADMIN",
       MEDICO: "DOCTOR",
       SECRETARIA: "RECEPTIONIST",
       ADMINISTRADOR: "ADMIN",
     };
 
-    // Determinar acesso a prontuário
     const podeAcessarProntuario = cargo === "DONO_CLINICA" || cargo === "MEDICO";
 
-    const novoMembro = await prisma.user.create({
-      data: {
+    const salvo = await userRepo.save(
+      userRepo.create({
         organizationId: sessao.organizationId!,
         fullName: nome.trim(),
         username: normalizedUsername,
         email: normalizedEmail,
         passwordHash,
-        role: roleMap[cargo] as any,
-        cargo: cargo as any,
+        role: roleMap[cargo as DbCargo],
+        cargo: cargo as DbCargo,
         podeAcessarProntuario,
         isClinical: podeAcessarProntuario,
+        mfaEnabled: false,
         specialty: especialidade || null,
         councilType: crm ? "CRM" : null,
         councilNumber: crm || null,
         accountStatus: "ACTIVE",
         mustChangePassword: true,
         createdBy: sessao.userId,
-      },
-      select: {
-        id: true,
-        fullName: true,
-        username: true,
-        email: true,
-        cargo: true,
-        role: true,
-        accountStatus: true,
-        createdAt: true,
-      },
-    });
-
-    return NextResponse.json(
-      { sucesso: true, membro: novoMembro },
-      { status: 201 }
+      }),
     );
-  } catch (error: any) {
+
+    const novoMembro = {
+      id: salvo.id,
+      fullName: salvo.fullName,
+      username: salvo.username,
+      email: salvo.email,
+      cargo: salvo.cargo,
+      role: salvo.role,
+      accountStatus: salvo.accountStatus,
+      createdAt: salvo.createdAt,
+    };
+
+    return NextResponse.json({ sucesso: true, membro: novoMembro }, { status: 201 });
+  } catch (error: unknown) {
     console.error("[EQUIPE/POST] Erro:", error);
-    return NextResponse.json({ error: "Erro ao cadastrar membro da equipe." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Erro ao cadastrar membro da equipe." },
+      { status: 500 },
+    );
   }
 }
 
@@ -177,10 +204,7 @@ export async function PATCH(request: Request) {
   try {
     const sessao = await getSessao();
     if (!sessao || !podeGerenciarEquipe(sessao.cargo)) {
-      return NextResponse.json(
-        { error: "Acesso negado." },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
     }
 
     const body = await request.json();
@@ -190,19 +214,29 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "ID do membro é obrigatório." }, { status: 400 });
     }
 
-    const updateData: any = {};
+    const updateData: {
+      fullName?: string;
+      cargo?: DbCargo;
+      podeAcessarProntuario?: boolean;
+      accountStatus?: AccountStatus;
+      specialty?: string | null;
+      updatedBy: string;
+    } = {
+      updatedBy: sessao.userId,
+    };
     if (nome) updateData.fullName = nome.trim();
     if (cargo) {
-      updateData.cargo = cargo;
+      updateData.cargo = cargo as DbCargo;
       updateData.podeAcessarProntuario = cargo === "DONO_CLINICA" || cargo === "MEDICO";
     }
-    if (status) updateData.accountStatus = status;
+    if (status) updateData.accountStatus = status as AccountStatus;
     if (especialidade !== undefined) updateData.specialty = especialidade;
-    updateData.updatedBy = sessao.userId;
 
-    const atualizado = await prisma.user.update({
+    const userRepo = await getRepository(UserEntity);
+    await userRepo.update({ id }, updateData);
+
+    const atualizado = await userRepo.findOne({
       where: { id },
-      data: updateData,
       select: {
         id: true,
         fullName: true,
@@ -213,7 +247,7 @@ export async function PATCH(request: Request) {
     });
 
     return NextResponse.json({ sucesso: true, membro: atualizado });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[EQUIPE/PATCH] Erro:", error);
     return NextResponse.json({ error: "Erro ao atualizar membro." }, { status: 500 });
   }

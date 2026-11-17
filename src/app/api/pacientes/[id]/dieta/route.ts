@@ -1,7 +1,16 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { getRepository, withTransaction } from "@/lib/db/data-source";
+import {
+  AlimentoEntity,
+  DietSubstitutionEntity,
+  ItemRefeicaoEntity,
+  PatientEntity,
+  PlanoAlimentarEntity,
+  RefeicaoEntity,
+  VariacaoDietaEntity,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 
@@ -16,158 +25,163 @@ const REFEICOES_BASE = [
   { nome: "Jantar", horario: "19:30", ordem: 4 },
 ];
 
+async function carregarPlanoCompleto(pacienteId: string) {
+  const planoRepo = await getRepository(PlanoAlimentarEntity);
+  return planoRepo.findOne({
+    where: { pacienteId, ativo: true },
+    relations: {
+      variacoes: {
+        refeicoes: {
+          itens: {
+            alimento: true,
+            substituicoes: {
+              substituteFood: true,
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
 /**
  * GET /api/pacientes/[id]/dieta
  * Retorna o plano alimentar ativo com todas as Variações de Cardápio e suas Refeições.
  */
-export async function GET(req: NextRequest, { params }: RouteParams) {
+export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const sessao = await getSessao();
 
-    // Validação de RBAC Clínico
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         {
           error: "Acesso negado. A aba Dieta é restrita ao corpo médico.",
           bloqueado: true,
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
-    const paciente = await prisma.patient.findUnique({
+    const patientRepo = await getRepository(PatientEntity);
+    const paciente = await patientRepo.findOne({
       where: { id },
-      select: {
-        id: true,
-        fullName: true,
-        primaryDoctor: {
-          select: {
-            fullName: true,
-            specialty: true,
-          },
-        },
-      },
+      relations: { primaryDoctor: true },
     });
 
     if (!paciente) {
       return NextResponse.json(
         { error: "Paciente não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    // Busca plano alimentar ativo com variações, refeições e itens
-    let plano = await prisma.planoAlimentar.findFirst({
-      where: { pacienteId: id, ativo: true },
-      include: {
-        variacoes: {
-          orderBy: [{ createdAt: "asc" }, { ordem: "asc" }, { id: "asc" }],
-          include: {
-            refeicoes: {
-              orderBy: { ordem: "asc" },
-              include: {
-                itens: {
-                  include: {
-                    alimento: true,
-                    substituicoes: {
-                      orderBy: { createdAt: "desc" },
-                      take: 1,
-                      include: { substituteFood: true },
-                    },
-                  },
-                  orderBy: { createdAt: "asc" },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    let plano = await carregarPlanoCompleto(id);
 
-    // Se não existir plano, cria um com Variação Padrão
     if (!plano) {
-      plano = await prisma.planoAlimentar.create({
-        data: {
-          pacienteId: id,
-          titulo: "Plano Alimentar Individualizado",
-          objetivo: "Equilíbrio de macronutrientes e otimização metabólica.",
-          ativo: true,
-          variacoes: {
-            create: [
-              {
-                nome: "Opção 1 (Padrão)",
-                descricao: "Cardápio principal do plano alimentar",
-                ordem: 1,
-                refeicoes: {
-                  create: REFEICOES_BASE,
-                },
-              },
-              {
-                nome: "Opção 2 (Variada)",
-                descricao: "Alternativas para variação da rotina",
-                ordem: 2,
-                refeicoes: {
-                  create: REFEICOES_BASE,
-                },
-              },
-            ],
+      await withTransaction(async (manager) => {
+        const planoRepo = manager.getRepository(PlanoAlimentarEntity);
+        const variacaoRepo = manager.getRepository(VariacaoDietaEntity);
+        const refeicaoRepo = manager.getRepository(RefeicaoEntity);
+
+        const novoPlano = await planoRepo.save(
+          planoRepo.create({
+            pacienteId: id,
+            titulo: "Plano Alimentar Individualizado",
+            objetivo: "Equilíbrio de macronutrientes e otimização metabólica.",
+            ativo: true,
+          }),
+        );
+
+        const opcoesIniciais = [
+          {
+            nome: "Opção 1 (Padrão)",
+            descricao: "Cardápio principal do plano alimentar",
+            ordem: 1,
           },
-        },
-        include: {
-          variacoes: {
-            orderBy: [{ createdAt: "asc" }, { ordem: "asc" }, { id: "asc" }],
-            include: {
-              refeicoes: {
-                orderBy: { ordem: "asc" },
-                include: {
-                  itens: {
-                    include: {
-                      alimento: true,
-                      substituicoes: {
-                        orderBy: { createdAt: "desc" },
-                        take: 1,
-                        include: { substituteFood: true },
-                      },
-                    },
-                  },
-                },
-              },
-            },
+          {
+            nome: "Opção 2 (Variada)",
+            descricao: "Alternativas para variação da rotina",
+            ordem: 2,
           },
-        },
+        ];
+
+        for (const op of opcoesIniciais) {
+          const variacao = await variacaoRepo.save(
+            variacaoRepo.create({
+              planoAlimentarId: novoPlano.id,
+              nome: op.nome,
+              descricao: op.descricao,
+              ordem: op.ordem,
+              ativo: true,
+            }),
+          );
+
+          for (const ref of REFEICOES_BASE) {
+            await refeicaoRepo.save(
+              refeicaoRepo.create({
+                variacaoDietaId: variacao.id,
+                nome: ref.nome,
+                horario: ref.horario,
+                ordem: ref.ordem,
+              }),
+            );
+          }
+        }
       });
+
+      plano = await carregarPlanoCompleto(id);
     }
 
-    // Enriquece os dados com totais calculados (calorias, pontos e macros)
-    const variacoesComTotais = (plano.variacoes || []).map((variacao) => {
+    if (!plano) {
+      return NextResponse.json(
+        { error: "Erro ao inicializar plano alimentar." },
+        { status: 500 },
+      );
+    }
+
+    const variacoesOrdenadas = [...(plano.variacoes || [])].sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() ||
+        a.ordem - b.ordem ||
+        a.id.localeCompare(b.id),
+    );
+
+    const variacoesComTotais = variacoesOrdenadas.map((variacao) => {
       let totalCalorias = 0;
       let totalProteinas = 0;
       let totalCarboidratos = 0;
       let totalGorduras = 0;
       let totalFibras = 0;
 
-      const refeicoesComTotais = (variacao.refeicoes || []).map((refeicao) => {
+      const refeicoesOrdenadas = [...(variacao.refeicoes || [])].sort(
+        (a, b) => a.ordem - b.ordem,
+      );
+
+      const refeicoesComTotais = refeicoesOrdenadas.map((refeicao) => {
         let mealCal = 0;
         let mealProt = 0;
         let mealCarb = 0;
         let mealFat = 0;
         let mealFib = 0;
 
-        const itensFormatados = (refeicao.itens || []).map((item) => {
-          const alimento = item.alimento || {};
+        const itensOrdenados = [...(refeicao.itens || [])].sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
+
+        const itensFormatados = itensOrdenados.map((item) => {
+          const alimento = item.alimento;
           const qtd = Number(item.quantidadeGramas) || 0;
           const fator = qtd > 0 ? qtd / 100 : 1;
 
-          // Valores base por 100g (Tabela TACO / Prisma)
-          const basePortion = Number((alimento as any).porcaoBase ?? (alimento as any).basePortion) || 100;
-          const baseKcal = Number((alimento as any).calorias ?? (alimento as any).calories) || 0;
-          const baseProt = Number((alimento as any).proteinas ?? (alimento as any).proteins ?? (alimento as any).protein) || 0;
-          const baseCarb = Number((alimento as any).carboidratos ?? (alimento as any).carbohydrates ?? (alimento as any).carbohydrate) || 0;
-          const baseFat = Number((alimento as any).gorduras ?? (alimento as any).fats ?? (alimento as any).lipid) || 0;
-          const baseFib = Number((alimento as any).fibras ?? (alimento as any).fiber) || 0;
+          const basePortion = Number(alimento?.porcaoBase) || 100;
+          const baseKcal = Number(alimento?.calorias) || 0;
+          const baseProt = Number(alimento?.proteinas) || 0;
+          const baseCarb = Number(alimento?.carboidratos) || 0;
+          const baseFat = Number(alimento?.gorduras) || 0;
+          const baseFib = Number(alimento?.fibras) || 0;
 
-          // Valores calculados proporcionais para a porção
           const cal = Math.round(baseKcal * fator);
           const prot = parseFloat(((baseProt / 100) * qtd).toFixed(1));
           const carb = parseFloat(((baseCarb / 100) * qtd).toFixed(1));
@@ -180,7 +194,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           mealFat += fat;
           mealFib += fib;
 
-          const subRecente = (item as any).substituicoes?.[0] || null;
+          const subsOrdenadas = [...(item.substituicoes || [])].sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          );
+          const subRecente = subsOrdenadas[0] || null;
 
           return {
             id: item.id,
@@ -188,17 +206,15 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             observacao: item.observacao,
             alimento: {
               ...alimento,
-              id: alimento.id || "",
-              nome: (alimento as any).nome || (alimento as any).name || "Alimento",
-              categoria: (alimento as any).categoria || (alimento as any).category || "Geral",
+              id: alimento?.id || "",
+              nome: alimento?.nome || "Alimento",
+              categoria: alimento?.categoria || "Geral",
               porcaoBase: basePortion,
-              // Valores base per 100g para cálculos no frontend
               calorias: baseKcal,
               proteinas: baseProt,
               carboidratos: baseCarb,
               gorduras: baseFat,
               fibras: baseFib,
-              // Aliases TACO / Inglês para máxima compatibilidade
               protein: baseProt,
               proteins: baseProt,
               carbohydrate: baseCarb,
@@ -207,14 +223,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               lipids: baseFat,
               fats: baseFat,
               calories: baseKcal,
-              // Valores proporcionais da porção prescrita
               caloriasPorcao: cal,
               proteinasPorcao: prot,
               carboidratosPorcao: carb,
               gordurasPorcao: fat,
               fibrasPorcao: fib,
             },
-            substituicoes: (item as any).substituicoes || [],
+            substituicoes: subsOrdenadas,
             substituicao: subRecente
               ? {
                   id: subRecente.id,
@@ -288,7 +303,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         id: paciente.id,
         nome: paciente.fullName,
         medico: paciente.primaryDoctor?.fullName || "Dr. Carlos Fantini",
-        especialidade: paciente.primaryDoctor?.specialty || "Endocrinologia & Nutrologia",
+        especialidade:
+          paciente.primaryDoctor?.specialty || "Endocrinologia & Nutrologia",
       },
       plano: {
         ...plano,
@@ -299,17 +315,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Erro ao carregar dieta:", error);
     return NextResponse.json(
       { error: "Erro interno ao carregar dados da dieta." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 /**
  * POST /api/pacientes/[id]/dieta
- * - Ação 1: Adicionar alimento a uma refeição
- *   Body: { acao: 'adicionar_item', refeicaoId, alimentoId, quantidadeGramas, observacao? }
- * - Ação 2: Criar nova variação de dieta
- *   Body: { acao: 'criar_variacao', planoAlimentarId, nome, descricao?, clonarDeVariacaoId? }
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
@@ -319,76 +331,118 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         { error: "Acesso negado. Ação restrita a médicos." },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     const body = await req.json();
-    const acao = body.acao || (body.refeicaoId ? "adicionar_item" : "criar_variacao");
+    const acao =
+      body.acao || (body.refeicaoId ? "adicionar_item" : "criar_variacao");
 
     // 1. CRIAR NOVA VARIAÇÃO DE DIETA
     if (acao === "criar_variacao") {
-      const { planoAlimentarId, nome = "Nova Opção", descricao, clonarDeVariacaoId } = body;
+      const {
+        planoAlimentarId,
+        nome = "Nova Opção",
+        descricao,
+        clonarDeVariacaoId,
+      } = body;
 
       if (!planoAlimentarId) {
         return NextResponse.json(
           { error: "planoAlimentarId é obrigatório." },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
-      const ultimaOrdem = await prisma.variacaoDieta.aggregate({
-        where: { planoAlimentarId },
-        _max: { ordem: true },
-      });
-      const proximaOrdem = (ultimaOrdem._max.ordem ?? 0) + 1;
+      const novaVariacao = await withTransaction(async (manager) => {
+        const variacaoRepo = manager.getRepository(VariacaoDietaEntity);
+        const refeicaoRepo = manager.getRepository(RefeicaoEntity);
+        const itemRepo = manager.getRepository(ItemRefeicaoEntity);
 
-      let refeicoesParaCriar: any[] = REFEICOES_BASE;
-
-      // Se clonar de uma variação existente, copia refeições e itens
-      if (clonarDeVariacaoId) {
-        const varOrigem = await prisma.variacaoDieta.findUnique({
-          where: { id: clonarDeVariacaoId },
-          include: { refeicoes: { include: { itens: true } } },
+        const existentes = await variacaoRepo.find({
+          where: { planoAlimentarId },
+          select: { id: true, ordem: true },
         });
+        const maxOrdem = existentes.reduce(
+          (max, v) => (v.ordem > max ? v.ordem : max),
+          0,
+        );
+        const proximaOrdem = maxOrdem + 1;
 
-        if (varOrigem && varOrigem.refeicoes.length > 0) {
-          refeicoesParaCriar = varOrigem.refeicoes.map((ref) => ({
-            nome: ref.nome,
-            horario: ref.horario,
-            ordem: ref.ordem,
-            observacoes: ref.observacoes,
-            itens: {
-              create: ref.itens.map((it) => ({
-                alimentoId: it.alimentoId,
-                quantidadeGramas: it.quantidadeGramas,
-                observacao: it.observacao,
-              })),
-            },
-          }));
+        const criada = await variacaoRepo.save(
+          variacaoRepo.create({
+            planoAlimentarId,
+            nome: String(nome).trim().toUpperCase(),
+            descricao: descricao ? String(descricao).trim().toUpperCase() : null,
+            ordem: proximaOrdem,
+            ativo: true,
+          }),
+        );
+
+        if (clonarDeVariacaoId) {
+          const varOrigem = await variacaoRepo.findOne({
+            where: { id: clonarDeVariacaoId },
+            relations: { refeicoes: { itens: true } },
+          });
+
+          if (varOrigem && varOrigem.refeicoes && varOrigem.refeicoes.length > 0) {
+            for (const ref of varOrigem.refeicoes) {
+              const novaRef = await refeicaoRepo.save(
+                refeicaoRepo.create({
+                  variacaoDietaId: criada.id,
+                  nome: ref.nome,
+                  horario: ref.horario,
+                  ordem: ref.ordem,
+                  observacoes: ref.observacoes,
+                }),
+              );
+              for (const it of ref.itens || []) {
+                await itemRepo.save(
+                  itemRepo.create({
+                    refeicaoId: novaRef.id,
+                    alimentoId: it.alimentoId,
+                    quantidadeGramas: it.quantidadeGramas,
+                    observacao: it.observacao,
+                  }),
+                );
+              }
+            }
+          } else {
+            for (const ref of REFEICOES_BASE) {
+              await refeicaoRepo.save(
+                refeicaoRepo.create({
+                  variacaoDietaId: criada.id,
+                  nome: ref.nome,
+                  horario: ref.horario,
+                  ordem: ref.ordem,
+                }),
+              );
+            }
+          }
+        } else {
+          for (const ref of REFEICOES_BASE) {
+            await refeicaoRepo.save(
+              refeicaoRepo.create({
+                variacaoDietaId: criada.id,
+                nome: ref.nome,
+                horario: ref.horario,
+                ordem: ref.ordem,
+              }),
+            );
+          }
         }
-      }
 
-      const novaVariacao = await prisma.variacaoDieta.create({
-        data: {
-          planoAlimentarId,
-          nome: String(nome).trim().toUpperCase(),
-          descricao: descricao ? String(descricao).trim().toUpperCase() : null,
-          ordem: proximaOrdem,
-          refeicoes: {
-            create: refeicoesParaCriar,
-          },
-        },
-        include: {
-          refeicoes: {
-            orderBy: { ordem: "asc" },
-            include: {
+        return variacaoRepo.findOne({
+          where: { id: criada.id },
+          relations: {
+            refeicoes: {
               itens: {
-                include: { alimento: true },
+                alimento: true,
               },
             },
           },
-        },
+        });
       });
 
       return NextResponse.json({
@@ -417,9 +471,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       if (!prescribedDietItemId || (!substituteFoodName && !substituteFoodId)) {
         return NextResponse.json(
           { error: "prescribedDietItemId e substituteFoodName são obrigatórios." },
-          { status: 400 }
+          { status: 400 },
         );
       }
+
+      const alimentoRepo = await getRepository(AlimentoEntity);
+      const subRepo = await getRepository(DietSubstitutionEntity);
 
       let nomeSub = substituteFoodName;
       let finalCal = Number(calories ?? calorias) || 0;
@@ -428,21 +485,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       let finalFat = Number(fats ?? gorduras) || 0;
 
       if (substituteFoodId && (!nomeSub || finalCal === 0)) {
-        const alimDb = await prisma.alimento.findUnique({
+        const alimDb = await alimentoRepo.findOne({
           where: { id: substituteFoodId },
         });
         if (alimDb) {
           if (!nomeSub) nomeSub = alimDb.nome;
-          const fator = (Number(quantidadeGramas) || 100) / (alimDb.porcaoBase || 100);
+          const fator =
+            (Number(quantidadeGramas) || 100) / (alimDb.porcaoBase || 100);
           if (finalCal === 0) finalCal = Math.round(alimDb.calorias * fator);
-          if (finalProt === 0) finalProt = parseFloat((alimDb.proteinas * fator).toFixed(1));
-          if (finalCarb === 0) finalCarb = parseFloat((alimDb.carboidratos * fator).toFixed(1));
-          if (finalFat === 0) finalFat = parseFloat((alimDb.gorduras * fator).toFixed(1));
+          if (finalProt === 0)
+            finalProt = parseFloat((alimDb.proteinas * fator).toFixed(1));
+          if (finalCarb === 0)
+            finalCarb = parseFloat((alimDb.carboidratos * fator).toFixed(1));
+          if (finalFat === 0)
+            finalFat = parseFloat((alimDb.gorduras * fator).toFixed(1));
         }
       }
 
-      const novaSub = await prisma.dietSubstitution.create({
-        data: {
+      const criada = await subRepo.save(
+        subRepo.create({
           patientId: id,
           prescribedDietItemId,
           substituteFoodId: substituteFoodId || null,
@@ -452,10 +513,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           proteins: finalProt,
           carbohydrates: finalCarb,
           fats: finalFat,
-        },
-        include: {
+        }),
+      );
+
+      const novaSub = await subRepo.findOne({
+        where: { id: criada.id },
+        relations: {
           substituteFood: true,
-          prescribedDietItem: { include: { alimento: true } },
+          prescribedDietItem: { alimento: true },
         },
       });
 
@@ -465,34 +530,37 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // 2. ADICIONAR ITEM À REFEIÇÃO
+    // 3. ADICIONAR ITEM À REFEIÇÃO
     const { refeicaoId, alimentoId, quantidadeGramas = 100, observacao } = body;
 
     if (!refeicaoId || !alimentoId) {
       return NextResponse.json(
         { error: "refeicaoId e alimentoId são obrigatórios." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const novoItem = await prisma.itemRefeicao.create({
-      data: {
+    const itemRepo = await getRepository(ItemRefeicaoEntity);
+    const salvo = await itemRepo.save(
+      itemRepo.create({
         refeicaoId,
         alimentoId,
         quantidadeGramas: Number(quantidadeGramas) || 100,
         observacao: observacao ? String(observacao).trim().toUpperCase() : null,
-      },
-      include: {
-        alimento: true,
-      },
+      }),
+    );
+
+    const novoItem = await itemRepo.findOneOrFail({
+      where: { id: salvo.id },
+      relations: { alimento: true },
     });
 
     const alim = novoItem.alimento;
-    const baseProt = Number((alim as any)?.proteinas ?? (alim as any)?.proteins ?? (alim as any)?.protein) || 0;
-    const baseCarb = Number((alim as any)?.carboidratos ?? (alim as any)?.carbohydrates ?? (alim as any)?.carbohydrate) || 0;
-    const baseFat = Number((alim as any)?.gorduras ?? (alim as any)?.fats ?? (alim as any)?.lipid) || 0;
-    const baseKcal = Number((alim as any)?.calorias ?? (alim as any)?.calories) || 0;
-    const basePortion = Number((alim as any)?.porcaoBase ?? (alim as any)?.basePortion) || 100;
+    const baseProt = Number(alim?.proteinas) || 0;
+    const baseCarb = Number(alim?.carboidratos) || 0;
+    const baseFat = Number(alim?.gorduras) || 0;
+    const baseKcal = Number(alim?.calorias) || 0;
+    const basePortion = Number(alim?.porcaoBase) || 100;
 
     const itemFormatado = {
       ...novoItem,
@@ -522,7 +590,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     console.error("Erro no POST dieta:", error);
     return NextResponse.json(
       { error: "Erro ao processar requisição da dieta." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -539,64 +607,73 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         { error: "Acesso negado. Ação restrita a médicos." },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     const body = await req.json();
-    const acao = body.acao || (body.itemId ? "atualizar_item" : "atualizar_variacao");
+    const acao =
+      body.acao || (body.itemId ? "atualizar_item" : "atualizar_variacao");
 
     if (acao === "atualizar_variacao") {
       const { variacaoId, nome, descricao } = body;
       if (!variacaoId) {
-        return NextResponse.json({ error: "variacaoId obrigatório." }, { status: 400 });
+        return NextResponse.json(
+          { error: "variacaoId obrigatório." },
+          { status: 400 },
+        );
       }
 
       const trimmedNome = typeof nome === "string" ? nome.trim() : "";
       if (nome !== undefined && !trimmedNome) {
         return NextResponse.json(
           { error: "O título da variação não pode ficar vazio." },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
-      const existingVariacao = await prisma.variacaoDieta.findFirst({
+      const variacaoRepo = await getRepository(VariacaoDietaEntity);
+      const existingVariacao = await variacaoRepo.findOne({
         where: {
           id: variacaoId,
           planoAlimentar: { pacienteId: id },
         },
-        select: { id: true },
+        relations: { planoAlimentar: true },
       });
 
       if (!existingVariacao) {
         return NextResponse.json(
           { error: "Variação não encontrada para este paciente." },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
-      const varAtualizada = await prisma.variacaoDieta.update({
-        where: { id: existingVariacao.id },
-        data: {
-          ...(trimmedNome && { nome: trimmedNome.slice(0, 100) }),
-          ...(descricao !== undefined && {
-            descricao: descricao ? String(descricao).trim().slice(0, 255) : null,
-          }),
-        },
-      });
+      if (trimmedNome) {
+        existingVariacao.nome = trimmedNome.slice(0, 100);
+      }
+      if (descricao !== undefined) {
+        existingVariacao.descricao = descricao
+          ? String(descricao).trim().slice(0, 255)
+          : null;
+      }
+
+      const varAtualizada = await variacaoRepo.save(existingVariacao);
 
       return NextResponse.json({ sucesso: true, variacao: varAtualizada });
     }
 
-    // Atualiza item
     const { itemId, quantidadeGramas, observacao } = body;
     if (!itemId) {
-      return NextResponse.json({ error: "itemId obrigatório." }, { status: 400 });
+      return NextResponse.json(
+        { error: "itemId obrigatório." },
+        { status: 400 },
+      );
     }
 
-    const itemAtualizado = await prisma.itemRefeicao.update({
-      where: { id: itemId },
-      data: {
+    const itemRepo = await getRepository(ItemRefeicaoEntity);
+    await itemRepo.update(
+      { id: itemId },
+      {
         ...(quantidadeGramas !== undefined && {
           quantidadeGramas: Math.max(0, Number(quantidadeGramas)),
         }),
@@ -604,9 +681,11 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
           observacao: observacao ? String(observacao).trim().toUpperCase() : null,
         }),
       },
-      include: {
-        alimento: true,
-      },
+    );
+
+    const itemAtualizado = await itemRepo.findOne({
+      where: { id: itemId },
+      relations: { alimento: true },
     });
 
     return NextResponse.json({
@@ -617,7 +696,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     console.error("Erro no PUT dieta:", error);
     return NextResponse.json(
       { error: "Erro ao atualizar dieta." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -633,7 +712,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         { error: "Acesso negado. Ação restrita a médicos." },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -642,54 +721,55 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     const variacaoId = searchParams.get("variacaoId");
 
     if (variacaoId) {
-      const variacao = await prisma.variacaoDieta.findFirst({
+      const variacaoRepo = await getRepository(VariacaoDietaEntity);
+      const variacao = await variacaoRepo.findOne({
         where: {
           id: variacaoId,
           planoAlimentar: { pacienteId: id },
         },
-        select: { id: true, planoAlimentarId: true },
+        relations: { planoAlimentar: true },
       });
 
       if (!variacao) {
         return NextResponse.json(
           { error: "Variação não encontrada para este paciente." },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
-      const totalVariacoes = await prisma.variacaoDieta.count({
+      const totalVariacoes = await variacaoRepo.count({
         where: { planoAlimentarId: variacao.planoAlimentarId },
       });
 
       if (totalVariacoes <= 1) {
         return NextResponse.json(
           { error: "O paciente deve possuir pelo menos uma variação de dieta." },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
-      await prisma.variacaoDieta.delete({
-        where: { id: variacao.id },
+      await variacaoRepo.delete({ id: variacao.id });
+      return NextResponse.json({
+        sucesso: true,
+        removidoVariacaoId: variacao.id,
       });
-      return NextResponse.json({ sucesso: true, removidoVariacaoId: variacao.id });
     }
 
     if (itemId) {
-      await prisma.itemRefeicao.delete({
-        where: { id: itemId },
-      });
+      const itemRepo = await getRepository(ItemRefeicaoEntity);
+      await itemRepo.delete({ id: itemId });
       return NextResponse.json({ sucesso: true, removidoId: itemId });
     }
 
     return NextResponse.json(
       { error: "itemId ou variacaoId são obrigatórios." },
-      { status: 400 }
+      { status: 400 },
     );
   } catch (error) {
     console.error("Erro no DELETE dieta:", error);
     return NextResponse.json(
       { error: "Erro ao remover item/variação." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

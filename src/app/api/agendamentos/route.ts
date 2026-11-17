@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { Between } from "typeorm";
+import { getRepository, withTransaction } from "@/lib/db/data-source";
+import {
+  AgendamentoEntity,
+  MedicoEntity,
+  OrganizationEntity,
+  PatientEntity,
+} from "@/lib/db/entities";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
-const STATUS_VALIDOS = ["AGENDADO", "CONFIRMADO", "CANCELADO", "FINALIZADO"] as const;
+const STATUS_VALIDOS = [
+  "AGENDADO",
+  "CONFIRMADO",
+  "CANCELADO",
+  "FINALIZADO",
+] as const;
 const ESPECIALIDADES_VALIDAS = [
   "ENDOCRINOLOGIA",
   "CIRURGIA_PLASTICA",
@@ -49,9 +61,9 @@ function formatStatusLegivel(status: string): string {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const dataParam = searchParams.get("data"); // formato YYYY-MM-DD
-    const inicioParam = searchParams.get("inicio"); // formato YYYY-MM-DD
-    const fimParam = searchParams.get("fim"); // formato YYYY-MM-DD
+    const dataParam = searchParams.get("data");
+    const inicioParam = searchParams.get("inicio");
+    const fimParam = searchParams.get("fim");
     const medicoIdParam = searchParams.get("medicoId");
     const especialidadeParam = searchParams.get("especialidade");
 
@@ -81,7 +93,7 @@ export async function GET(request: NextRequest) {
         0,
         0,
         0,
-        0
+        0,
       );
       fimPeriodo = new Date(
         agora.getFullYear(),
@@ -90,33 +102,31 @@ export async function GET(request: NextRequest) {
         23,
         59,
         59,
-        999
+        999,
       );
     }
 
-    const registros = await prisma.agendamento.findMany({
+    const agendamentoRepo = await getRepository(AgendamentoEntity);
+    const registros = await agendamentoRepo.find({
       where: {
-        dataHora: {
-          gte: inicioPeriodo,
-          lte: fimPeriodo,
-        },
+        dataHora: Between(inicioPeriodo, fimPeriodo),
         ...(medicoIdParam && medicoIdParam !== "TODOS"
           ? { medicoId: medicoIdParam }
           : {}),
         ...(especialidadeParam &&
         especialidadeParam !== "TODAS" &&
         (ESPECIALIDADES_VALIDAS as readonly string[]).includes(
-          especialidadeParam.toUpperCase()
+          especialidadeParam.toUpperCase(),
         )
           ? { especialidade: especialidadeParam.toUpperCase() }
           : {}),
       },
-      include: {
+      relations: {
         paciente: true,
         medico: true,
       },
-      orderBy: {
-        dataHora: "asc",
+      order: {
+        dataHora: "ASC",
       },
     });
 
@@ -147,7 +157,7 @@ export async function GET(request: NextRequest) {
             ? "CIRURGIA_PLASTICA"
             : "ENDOCRINOLOGIA",
         especialidadeLegivel: formatEspecialidadeLegivel(item.especialidade),
-        dataHora: item.dataHora.toISOString(),
+        dataHora: new Date(item.dataHora).toISOString(),
         data: dataIso,
         horario,
         duracaoMinutos: item.duracaoMinutos || 30,
@@ -177,13 +187,13 @@ export async function GET(request: NextRequest) {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
         },
-      }
+      },
     );
   } catch (error) {
     console.error("[GET /api/agendamentos] Erro:", error);
     return NextResponse.json(
       { success: false, error: "Erro ao carregar agendamentos do dia." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -218,7 +228,7 @@ export async function POST(request: NextRequest) {
           error:
             "Selecione um paciente existente ou informe o nome para cadastro expresso.",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -232,30 +242,34 @@ export async function POST(request: NextRequest) {
     } else {
       return NextResponse.json(
         { success: false, error: "Informe a data e o horário do agendamento." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (isNaN(dataHoraDate.getTime())) {
       return NextResponse.json(
         { success: false, error: "Data ou horário inválido." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const defaultTipo = !pacienteId && nomeNovo ? "PRIMEIRA_CONSULTA" : "RETORNO";
     const tipoNormalizado = String(tipo || defaultTipo).toUpperCase();
-    const tipoFinal = (TIPOS_VALIDOS as readonly string[]).includes(tipoNormalizado)
+    const tipoFinal = (TIPOS_VALIDOS as readonly string[]).includes(
+      tipoNormalizado,
+    )
       ? tipoNormalizado
       : defaultTipo;
 
     const statusNormalizado = String(status || "AGENDADO").toUpperCase();
-    const statusFinal = (STATUS_VALIDOS as readonly string[]).includes(statusNormalizado)
+    const statusFinal = (STATUS_VALIDOS as readonly string[]).includes(
+      statusNormalizado,
+    )
       ? statusNormalizado
       : "AGENDADO";
 
     const especialidadeNormalizada = String(
-      especialidade || "ENDOCRINOLOGIA"
+      especialidade || "ENDOCRINOLOGIA",
     ).toUpperCase();
     const especialidadeFinal = (
       ESPECIALIDADES_VALIDAS as readonly string[]
@@ -265,10 +279,15 @@ export async function POST(request: NextRequest) {
 
     const duracaoValida = Math.min(
       Math.max(Number(duracaoMinutos) || 30, 10),
-      240
+      240,
     );
 
-    const resultado = await prisma.$transaction(async (tx) => {
+    const resultado = await withTransaction(async (manager) => {
+      const orgRepo = manager.getRepository(OrganizationEntity);
+      const patientRepo = manager.getRepository(PatientEntity);
+      const medicoRepo = manager.getRepository(MedicoEntity);
+      const agendamentoRepo = manager.getRepository(AgendamentoEntity);
+
       let targetPacienteId = pacienteId ? String(pacienteId) : "";
       let pacienteRecemCriado: {
         id: string;
@@ -279,25 +298,29 @@ export async function POST(request: NextRequest) {
         telefoneWhatsapp: string;
       } | null = null;
 
-      // Cenário B: Cadastro Expresso de Novo Paciente na transação
       if (!targetPacienteId && nomeNovo) {
-        let org = await tx.organization.findFirst();
+        const orgs = await orgRepo.find({ take: 1 });
+        let org = orgs[0];
         if (!org) {
-          org = await tx.organization.create({
-            data: {
+          org = await orgRepo.save(
+            orgRepo.create({
               slug: "clinica-faaz",
               legalName: "Clínica FAAZ Medicina Integrativa Ltda",
               tradeName: "Clínica FAAZ",
               taxId: "00.000.000/0001-00",
-            },
-          });
+              primaryColorHex: "#059669",
+              enabledModules: {},
+              rolePermissions: {},
+              status: "ACTIVE",
+            }),
+          );
         }
 
-        const totalPacientes = await tx.patient.count({
+        const totalPacientes = await patientRepo.count({
           where: { organizationId: org.id },
         });
         let candidateCode = `FAAZ-${String(totalPacientes + 1).padStart(5, "0")}`;
-        const existingCode = await tx.patient.findUnique({
+        const existingCode = await patientRepo.findOne({
           where: { recordCode: candidateCode },
           select: { id: true },
         });
@@ -305,16 +328,19 @@ export async function POST(request: NextRequest) {
           candidateCode = `FAAZ-${String(totalPacientes + 1).padStart(4, "0")}-${Date.now().toString().slice(-3)}`;
         }
 
-        const criadoPaciente = await tx.patient.create({
-          data: {
+        const criadoPaciente = await patientRepo.save(
+          patientRepo.create({
             organizationId: org.id,
             recordCode: candidateCode,
             fullName: nomeNovo,
             phoneWhatsapp: telefoneNovo,
             convenio: "Particular",
+            planoFaaz: false,
+            metaDiariaMl: 2500,
             patientStatus: "ACTIVE",
-          },
-        });
+            activeModules: [],
+          }),
+        );
 
         targetPacienteId = criadoPaciente.id;
         pacienteRecemCriado = {
@@ -327,29 +353,29 @@ export async function POST(request: NextRequest) {
         };
       }
 
-      // Resolve médico responsável (com fallback automático para Dr. Carlos Fantini)
       let targetMedicoId = medicoId ? String(medicoId).trim() : "";
       if (!targetMedicoId) {
-        const firstMedico = await tx.medico.findFirst({
-          orderBy: { createdAt: "asc" },
+        const medicos = await medicoRepo.find({
+          order: { createdAt: "ASC" },
+          take: 1,
         });
-        if (firstMedico) {
-          targetMedicoId = firstMedico.id;
+        if (medicos[0]) {
+          targetMedicoId = medicos[0].id;
         } else {
-          const defaultMedico = await tx.medico.create({
-            data: {
+          const defaultMedico = await medicoRepo.save(
+            medicoRepo.create({
               id: "00000000-0000-4000-8000-000000000001",
               nome: "Dr. Carlos Fantini",
               especialidade: "Endocrinologia & Nutrologia",
               corHex: "#059669",
-            },
-          });
+            }),
+          );
           targetMedicoId = defaultMedico.id;
         }
       }
 
-      const agendamentoCriado = await tx.agendamento.create({
-        data: {
+      const salvo = await agendamentoRepo.save(
+        agendamentoRepo.create({
           pacienteId: targetPacienteId,
           medicoId: targetMedicoId,
           especialidade: especialidadeFinal,
@@ -359,8 +385,12 @@ export async function POST(request: NextRequest) {
           tipo: tipoFinal,
           status: statusFinal,
           observacao: observacao ? String(observacao).trim() : null,
-        },
-        include: {
+        }),
+      );
+
+      const agendamentoCriado = await agendamentoRepo.findOneOrFail({
+        where: { id: salvo.id },
+        relations: {
           paciente: true,
           medico: true,
         },
@@ -397,10 +427,8 @@ export async function POST(request: NextRequest) {
             criado.especialidade === "CIRURGIA_PLASTICA"
               ? "CIRURGIA_PLASTICA"
               : "ENDOCRINOLOGIA",
-          especialidadeLegivel: formatEspecialidadeLegivel(
-            criado.especialidade
-          ),
-          dataHora: criado.dataHora.toISOString(),
+          especialidadeLegivel: formatEspecialidadeLegivel(criado.especialidade),
+          dataHora: new Date(criado.dataHora).toISOString(),
           data: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
           horario: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
           duracaoMinutos: criado.duracaoMinutos || 30,
@@ -412,13 +440,13 @@ export async function POST(request: NextRequest) {
           observacao: criado.observacao || "",
         },
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error) {
     console.error("[POST /api/agendamentos] Erro:", error);
     return NextResponse.json(
       { success: false, error: "Erro ao criar novo agendamento." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessao } from "@/lib/auth-session";
-import { prisma } from "@/lib/prisma";
+import { getRepository } from "@/lib/db/data-source";
+import { UserEntity } from "@/lib/db/entities";
 
 export async function GET() {
   try {
@@ -9,7 +10,7 @@ export async function GET() {
     if (!sessao) {
       return NextResponse.json(
         { error: "Não autenticado.", autenticado: false },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -19,22 +20,24 @@ export async function GET() {
       councilType: string | null;
       councilNumber: string | null;
       specialty: string | null;
-      organization: { tradeName: string } | null;
+      organization?: { tradeName: string } | null;
     } | null = null;
 
     try {
-      profileDetails = await prisma.user.findUnique({
+      const userRepo = await getRepository(UserEntity);
+      profileDetails = await userRepo.findOne({
         where: { id: sessao.userId },
+        relations: { organization: true },
         select: {
+          id: true,
           title: true,
           fullName: true,
           councilType: true,
           councilNumber: true,
           specialty: true,
           organization: {
-            select: {
-              tradeName: true,
-            },
+            id: true,
+            tradeName: true,
           },
         },
       });
@@ -58,7 +61,7 @@ export async function GET() {
     console.error("[AUTH/ME] Erro:", error);
     return NextResponse.json(
       { error: "Erro ao verificar sessão." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

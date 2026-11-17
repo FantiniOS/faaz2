@@ -1,13 +1,12 @@
-import { PrismaClient } from "@prisma/client";
 import fs from "fs";
 import path from "path";
-
-const prisma = new PrismaClient();
+import { getDataSource, getRepository } from "../src/lib/db/data-source";
+import { AlimentoEntity, FoodEntity } from "../src/lib/db/entities";
 
 const TACO_RAW_URL =
   "https://raw.githubusercontent.com/marcelosanto/tabela_taco/main/tabela_alimentos.json";
 
-function parseNumeroTaco(val: any): number {
+function parseNumeroTaco(val: unknown): number {
   if (val === null || val === undefined) return 0;
   if (typeof val === "number") return isNaN(val) ? 0 : Number(val.toFixed(2));
   const str = String(val).trim().replace(",", ".");
@@ -24,7 +23,6 @@ function parseNumeroTaco(val: any): number {
   return isNaN(num) ? 0 : Number(num.toFixed(2));
 }
 
-// Suplementos e itens clínicos complementares que médicos prescrevem rotineiramente
 const SUPLEMENTOS_CLINICOS = [
   {
     nome: "Whey Protein Isolado 90% (em pó)",
@@ -83,41 +81,62 @@ const SUPLEMENTOS_CLINICOS = [
   },
 ];
 
-export async function carregarTabelaTaco() {
+interface RawTacoItem {
+  id?: string | number;
+  description?: string;
+  category?: string;
+  energy_kcal?: unknown;
+  protein_g?: unknown;
+  carbohydrate_g?: unknown;
+  lipid_g?: unknown;
+  fiber_g?: unknown;
+}
+
+export async function carregarTabelaTaco(): Promise<number> {
   console.log("========================================================");
   console.log("🥗 MEGA SEED TACO: CARGA MASSIVA DA TABELA OFICIAL TACO");
   console.log("========================================================");
 
-  let dadosBrutos: any[] = [];
+  let dadosBrutos: RawTacoItem[] = [];
 
-  // 1. Carrega backup local (rápido e offline) ou busca via GitHub se não existir
   const localPath = path.join(process.cwd(), "prisma", "data", "taco.json");
   if (fs.existsSync(localPath)) {
     try {
       const fileData = fs.readFileSync(localPath, "utf-8");
-      dadosBrutos = JSON.parse(fileData);
-      console.log(`📂 Base oficial TACO local carregada com sucesso: ${dadosBrutos.length} alimentos.`);
-    } catch (readErr: any) {
-      console.warn(`⚠️ Erro ao ler backup local: ${readErr.message}`);
+      dadosBrutos = JSON.parse(fileData) as RawTacoItem[];
+      console.log(
+        `📂 Base oficial TACO local carregada com sucesso: ${dadosBrutos.length} alimentos.`,
+      );
+    } catch (readErr: unknown) {
+      const msg = readErr instanceof Error ? readErr.message : String(readErr);
+      console.warn(`⚠️ Erro ao ler backup local: ${msg}`);
     }
   }
 
   if (!dadosBrutos.length) {
     try {
-      console.log(`🌐 Buscando base oficial TACO via GitHub: ${TACO_RAW_URL}...`);
-      const res = await fetch(TACO_RAW_URL, { signal: AbortSignal.timeout(10000) });
+      console.log(
+        `🌐 Buscando base oficial TACO via GitHub: ${TACO_RAW_URL}...`,
+      );
+      const res = await fetch(TACO_RAW_URL, {
+        signal: AbortSignal.timeout(10000),
+      });
       if (res.ok) {
-        dadosBrutos = await res.json();
-        console.log(`📥 Download concluído com sucesso: ${dadosBrutos.length} alimentos.`);
+        dadosBrutos = (await res.json()) as RawTacoItem[];
+        console.log(
+          `📥 Download concluído com sucesso: ${dadosBrutos.length} alimentos.`,
+        );
       } else {
         throw new Error(`Status HTTP ${res.status}`);
       }
-    } catch (err: any) {
-      throw new Error(`Falha ao obter dados TACO (local e online): ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Falha ao obter dados TACO (local e online): ${msg}`,
+      );
     }
   }
 
-  // 2. Normalização e Tratamento dos Dados
   const nomesRegistrados = new Set<string>();
   const alimentosFormatados: {
     nome: string;
@@ -135,10 +154,8 @@ export async function carregarTabelaTaco() {
     let nome = String(item.description || "").trim();
     if (!nome) continue;
 
-    // Capitalização limpa da primeira letra
     nome = nome.charAt(0).toUpperCase() + nome.slice(1);
 
-    // Evita duplicatas com sufixo descritivo
     if (nomesRegistrados.has(nome)) {
       const cat = item.category ? ` (${item.category})` : ` [${item.id}]`;
       nome = `${nome}${cat}`;
@@ -165,7 +182,6 @@ export async function carregarTabelaTaco() {
     });
   }
 
-  // Adiciona suplementos clínicos
   for (const sup of SUPLEMENTOS_CLINICOS) {
     if (!nomesRegistrados.has(sup.nome)) {
       nomesRegistrados.add(sup.nome);
@@ -173,49 +189,51 @@ export async function carregarTabelaTaco() {
     }
   }
 
-  console.log(`⚡ Preparados ${alimentosFormatados.length} alimentos para inserção massiva.`);
+  console.log(
+    `⚡ Preparados ${alimentosFormatados.length} alimentos para inserção no Oracle.`,
+  );
 
-  // 3. Inserção Massiva com createMany (skipDuplicates: true)
-  const BATCH_SIZE = 100;
+  const alimentoRepo = await getRepository(AlimentoEntity);
+  const foodRepo = await getRepository(FoodEntity);
+
+  const existentes = await alimentoRepo.find({ select: { nome: true } });
+  const jaNoBanco = new Set(existentes.map((e) => e.nome));
+
   let totalInseridos = 0;
+  for (const item of alimentosFormatados) {
+    if (jaNoBanco.has(item.nome)) continue;
+    await alimentoRepo.save(alimentoRepo.create(item));
+    totalInseridos++;
 
-  for (let i = 0; i < alimentosFormatados.length; i += BATCH_SIZE) {
-    const lote = alimentosFormatados.slice(i, i + BATCH_SIZE);
-    const res = await prisma.alimento.createMany({
-      data: lote,
-      skipDuplicates: true,
-    });
-    totalInseridos += res.count;
-
-    // Sincroniza também a tabela legada/secundária Food se existir
     try {
-      const foodLote = lote.map((item) => ({
-        name: item.nome,
-        category: item.categoria,
-        basePortion: item.porcaoBase,
-        calories: item.calorias,
-        proteins: item.proteinas,
-        carbohydrates: item.carboidratos,
-        fats: item.gorduras,
-        fiber: item.fibras,
-      }));
-      await prisma.food.createMany({
-        data: foodLote,
-        skipDuplicates: true,
-      });
+      await foodRepo.save(
+        foodRepo.create({
+          name: item.nome,
+          category: item.categoria,
+          basePortion: item.porcaoBase,
+          calories: item.calorias,
+          proteins: item.proteinas,
+          carbohydrates: item.carboidratos,
+          fats: item.gorduras,
+          fiber: item.fibras,
+        }),
+      );
     } catch {
-      // Ignora se o modelo Food não estiver em uso ou com restrição
+      // Ignora se já existir em FOODS
     }
   }
 
-  const totalNoBanco = await prisma.alimento.count();
-  console.log(`✅ Carga massiva concluída: ${totalInseridos} novos registros inseridos.`);
-  console.log(`📊 Total de alimentos disponíveis na base da Clínica FAAZ: ${totalNoBanco}.`);
+  const totalNoBanco = await alimentoRepo.count();
+  console.log(
+    `✅ Carga massiva concluída: ${totalInseridos} novos registros inseridos.`,
+  );
+  console.log(
+    `📊 Total de alimentos disponíveis na base da Clínica FAAZ: ${totalNoBanco}.`,
+  );
 
   return totalNoBanco;
 }
 
-// Execução direta via CLI: npx jiti prisma/seed-taco.ts
 if (require.main === module || process.argv[1]?.includes("seed-taco")) {
   carregarTabelaTaco()
     .catch((e) => {
@@ -223,6 +241,11 @@ if (require.main === module || process.argv[1]?.includes("seed-taco")) {
       process.exit(1);
     })
     .finally(async () => {
-      await prisma.$disconnect();
+      try {
+        const ds = await getDataSource();
+        if (ds.isInitialized) await ds.destroy();
+      } catch {
+        // ignore
+      }
     });
 }

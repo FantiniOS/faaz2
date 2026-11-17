@@ -1,7 +1,9 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { MoreThanOrEqual } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import { PatientEntity, WorkoutLogEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos, podeCadastrarPacientes } from "@/lib/auth-rbac";
 
@@ -11,21 +13,26 @@ interface RouteParams {
 
 /**
  * GET /api/pacientes/[id]/treinos
- * Retorna as diretrizes de treino do paciente e as métricas de adesão dos últimos 30 dias
  */
-export async function GET(req: NextRequest, { params }: RouteParams) {
+export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const sessao = await getSessao();
 
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
-        { error: "Acesso negado. Apenas profissionais clínicos podem visualizar as diretrizes." },
-        { status: 403 }
+        {
+          error:
+            "Acesso negado. Apenas profissionais clínicos podem visualizar as diretrizes.",
+        },
+        { status: 403 },
       );
     }
 
-    const paciente = await prisma.patient.findUnique({
+    const patientRepo = await getRepository(PatientEntity);
+    const workoutRepo = await getRepository(WorkoutLogEntity);
+
+    const paciente = await patientRepo.findOne({
       where: { id },
       select: {
         id: true,
@@ -40,37 +47,41 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!paciente) {
       return NextResponse.json(
         { error: "Paciente não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    // Calcula adesão dos últimos 30 dias no WorkoutLog
     const trintaDiasAtras = new Date();
     trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
     trintaDiasAtras.setHours(0, 0, 0, 0);
 
-    const checkins30Dias = await prisma.workoutLog.findMany({
+    const checkins30Dias = await workoutRepo.find({
       where: {
         patientId: id,
-        date: { gte: trintaDiasAtras },
+        date: MoreThanOrEqual(trintaDiasAtras),
       },
-      orderBy: { date: "desc" },
+      order: { date: "DESC" },
     });
 
-    // Agrupa por dias distintos
     const mapDias = new Map<string, Date>();
     checkins30Dias.forEach((c) => {
-      const diaKey = c.date.toISOString().slice(0, 10);
+      const dt = new Date(c.date);
+      const diaKey = dt.toISOString().slice(0, 10);
       if (!mapDias.has(diaKey)) {
-        mapDias.set(diaKey, c.date);
+        mapDias.set(diaKey, dt);
       }
     });
 
     const diasAtivosCount = mapDias.size;
     const frequenciaSemanal = paciente.workoutFrequency ?? 3;
-    // Meta esperada em 30 dias (~4.28 semanas)
-    const metaEsperada30Dias = Math.max(1, Math.round((frequenciaSemanal / 7) * 30));
-    const porcentagemAdesao = Math.min(100, Math.round((diasAtivosCount / metaEsperada30Dias) * 100));
+    const metaEsperada30Dias = Math.max(
+      1,
+      Math.round((frequenciaSemanal / 7) * 30),
+    );
+    const porcentagemAdesao = Math.min(
+      100,
+      Math.round((diasAtivosCount / metaEsperada30Dias) * 100),
+    );
 
     return NextResponse.json({
       sucesso: true,
@@ -96,19 +107,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         })),
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[PACIENTES_TREINOS_GET] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao consultar diretrizes de treinos.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao consultar diretrizes de treinos.", details },
+      { status: 500 },
     );
   }
 }
 
-/**
- * PUT / PATCH /api/pacientes/[id]/treinos
- * Atualiza as diretrizes de atividade física do paciente prescritas pela médica
- */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   return handleSalvarDiretrizes(req, params);
 }
@@ -119,7 +127,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
 async function handleSalvarDiretrizes(
   req: NextRequest,
-  paramsPromise: Promise<{ id: string }>
+  paramsPromise: Promise<{ id: string }>,
 ) {
   try {
     const { id } = await paramsPromise;
@@ -128,7 +136,7 @@ async function handleSalvarDiretrizes(
     if (sessao && !podeCadastrarPacientes(sessao.cargo)) {
       return NextResponse.json(
         { error: "Acesso negado para alteração de diretrizes médicas." },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -150,9 +158,11 @@ async function handleSalvarDiretrizes(
         ? Math.max(5, parseInt(String(workoutDuration), 10) || 45)
         : undefined;
 
-    const pacienteAtualizado = await prisma.patient.update({
-      where: { id },
-      data: {
+    const patientRepo = await getRepository(PatientEntity);
+
+    await patientRepo.update(
+      { id },
+      {
         ...(workoutType !== undefined
           ? { workoutType: workoutType ? String(workoutType).trim() : null }
           : {}),
@@ -166,6 +176,10 @@ async function handleSalvarDiretrizes(
             }
           : {}),
       },
+    );
+
+    const pacienteAtualizado = await patientRepo.findOne({
+      where: { id },
       select: {
         id: true,
         fullName: true,
@@ -180,17 +194,18 @@ async function handleSalvarDiretrizes(
       sucesso: true,
       mensagem: "Diretrizes de treino atualizadas com sucesso!",
       diretrizes: {
-        workoutType: pacienteAtualizado.workoutType,
-        workoutFrequency: pacienteAtualizado.workoutFrequency,
-        workoutDuration: pacienteAtualizado.workoutDuration,
-        workoutRestrictions: pacienteAtualizado.workoutRestrictions,
+        workoutType: pacienteAtualizado?.workoutType ?? null,
+        workoutFrequency: pacienteAtualizado?.workoutFrequency ?? null,
+        workoutDuration: pacienteAtualizado?.workoutDuration ?? null,
+        workoutRestrictions: pacienteAtualizado?.workoutRestrictions ?? null,
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[PACIENTES_TREINOS_UPDATE] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao salvar diretrizes de treinos.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao salvar diretrizes de treinos.", details },
+      { status: 500 },
     );
   }
 }

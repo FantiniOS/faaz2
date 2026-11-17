@@ -1,32 +1,42 @@
 export const dynamic = "force-dynamic";
 
-import prisma from "@/lib/prisma";
 import { notFound } from "next/navigation";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  CheckInSonoEntity,
+  PatientEntity,
+  ProntuarioPacienteEntity,
+} from "@/lib/db/entities";
 import { PacienteProntuarioView } from "./PacienteProntuarioView";
 
 interface PacienteDetailPageProps {
   params: Promise<{ id: string }>;
 }
 
-export default async function PacienteDetailPage(props: PacienteDetailPageProps) {
+export default async function PacienteDetailPage(
+  props: PacienteDetailPageProps,
+) {
   const { id } = await props.params;
 
-  const paciente = await prisma.patient.findUnique({
+  const patientRepo = await getRepository(PatientEntity);
+  const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+  const sonoRepo = await getRepository(CheckInSonoEntity);
+
+  const paciente = await patientRepo.findOne({
     where: { id },
-    include: {
-      prontuario: true,
-    },
   });
 
   if (!paciente || paciente.deletedAt) {
     notFound();
   }
 
-  // 4. Query no banco buscando o último registro de sono EXCLUSIVO deste paciente
-  const ultimoRegistroSono = await prisma.checkInSono.findFirst({
-    where: { pacienteId: id },
-    orderBy: { data: "desc" },
-  });
+  const [prontuario, ultimoRegistroSono] = await Promise.all([
+    prontuarioRepo.findOne({ where: { pacienteId: id } }),
+    sonoRepo.findOne({
+      where: { pacienteId: id },
+      order: { data: "DESC" },
+    }),
+  ]);
 
   return (
     <PacienteProntuarioView
@@ -36,16 +46,17 @@ export default async function PacienteDetailPage(props: PacienteDetailPageProps)
         recordCode: paciente.recordCode,
         cpf: paciente.cpf || "",
         status: paciente.patientStatus,
-        pesoAtual: paciente.prontuario?.pesoAtualKg
-          ? Number(paciente.prontuario.pesoAtualKg)
-          : null,
-        alturaCm: paciente.prontuario?.alturaCm
-          ? Number(paciente.prontuario.alturaCm)
-          : null,
+        pesoAtual:
+          prontuario?.pesoAtualKg != null
+            ? Number(prontuario.pesoAtualKg)
+            : null,
+        alturaCm:
+          prontuario?.alturaCm != null ? Number(prontuario.alturaCm) : null,
         metaDiariaMl: paciente.metaDiariaMl,
         planoFaaz: paciente.planoFaaz,
         avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
-        treatmentObjective: paciente.treatmentObjective || paciente.clinicalFocus || null,
+        treatmentObjective:
+          paciente.treatmentObjective || paciente.clinicalFocus || null,
       }}
       ultimoSono={
         ultimoRegistroSono
@@ -54,7 +65,7 @@ export default async function PacienteDetailPage(props: PacienteDetailPageProps)
               horas: ultimoRegistroSono.horas,
               qualidade: ultimoRegistroSono.qualidade,
               observacao: ultimoRegistroSono.observacao,
-              data: ultimoRegistroSono.data.toISOString(),
+              data: new Date(ultimoRegistroSono.data).toISOString(),
             }
           : null
       }

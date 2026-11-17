@@ -1,7 +1,15 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { In } from "typeorm";
+import { getRepository, withTransaction } from "@/lib/db/data-source";
+import {
+  CheckinHidratacaoEntity,
+  CheckinIntestinalEntity,
+  PatientEntity,
+  type BiologicalSex,
+  type PatientStatus,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeCadastrarPacientes, podeExcluirPacientes } from "@/lib/auth-rbac";
 
@@ -9,45 +17,45 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
+function isUniqueConstraintError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("ORA-00001") || msg.includes("UQ_PATIENTS");
+}
+
 /**
  * GET /api/pacientes/[id] — Retorna os dados de um paciente específico
  */
-export async function GET(req: NextRequest, { params }: RouteParams) {
+export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const sessao = await getSessao();
     if (sessao && !podeCadastrarPacientes(sessao.cargo)) {
-      return NextResponse.json(
-        { error: "Acesso negado." },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
     }
 
-    const paciente = await prisma.patient.findUnique({
+    const patientRepo = await getRepository(PatientEntity);
+    const paciente = await patientRepo.findOne({
       where: { id },
     });
 
     if (!paciente || paciente.deletedAt) {
       return NextResponse.json(
         { error: "Paciente não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     return NextResponse.json({ paciente });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[PACIENTES/[ID]/GET] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao buscar paciente.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao buscar paciente.", details },
+      { status: 500 },
     );
   }
 }
 
-/**
- * PUT/PATCH /api/pacientes/[id] — Alterar dados do paciente
- * Acesso: SECRETARIA, MEDICO, ADMINISTRADOR, DONO_CLINICA
- */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   return handleUpdate(req, params);
 }
@@ -56,14 +64,17 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
   return handleUpdate(req, params);
 }
 
-async function handleUpdate(req: NextRequest, paramsPromise: Promise<{ id: string }>) {
+async function handleUpdate(
+  req: NextRequest,
+  paramsPromise: Promise<{ id: string }>,
+) {
   try {
     const { id } = await paramsPromise;
     const sessao = await getSessao();
     if (sessao && !podeCadastrarPacientes(sessao.cargo)) {
       return NextResponse.json(
         { error: "Acesso negado para alteração de pacientes." },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -102,56 +113,107 @@ async function handleUpdate(req: NextRequest, paramsPromise: Promise<{ id: strin
       workoutRestrictions,
     } = body;
 
-    const cleanCpf = cpf ? String(cpf).replace(/\D/g, "") : undefined;
+    const cleanCpf = cpf !== undefined ? String(cpf).replace(/\D/g, "") : undefined;
 
-    const pacienteAtualizado = await prisma.patient.update({
-      where: { id },
-      data: {
-        ...(nome ? { fullName: nome.trim().toUpperCase() } : {}),
+    const biologicalSex: BiologicalSex | undefined =
+      sexo !== undefined
+        ? sexo === "Masculino" || sexo === "MALE"
+          ? "MALE"
+          : sexo === "Feminino" || sexo === "FEMALE"
+            ? "FEMALE"
+            : "OTHER"
+        : undefined;
+
+    const patientStatus: PatientStatus | undefined =
+      status !== undefined
+        ? status === "Inativo"
+          ? "INACTIVE"
+          : "ACTIVE"
+        : undefined;
+
+    const patientRepo = await getRepository(PatientEntity);
+
+    await patientRepo.update(
+      { id },
+      {
+        ...(nome ? { fullName: String(nome).trim().toUpperCase() } : {}),
         ...(cleanCpf !== undefined ? { cpf: cleanCpf || null } : {}),
-        ...(rg !== undefined ? { rg: rg ? rg.trim().toUpperCase() : null } : {}),
-        ...(dataNascimento !== undefined
-          ? { birthDate: dataNascimento ? new Date(dataNascimento) : null }
+        ...(rg !== undefined
+          ? { rg: rg ? String(rg).trim().toUpperCase() : null }
           : {}),
-        ...(sexo !== undefined
+        ...(dataNascimento !== undefined
           ? {
-              biologicalSex:
-                sexo === "Masculino" || sexo === "MALE"
-                  ? "MALE"
-                  : sexo === "Feminino" || sexo === "FEMALE"
-                  ? "FEMALE"
-                  : "OTHER",
+              birthDate: dataNascimento
+                ? String(dataNascimento).split("T")[0]
+                : null,
             }
           : {}),
-        ...(estadoCivil !== undefined ? { estadoCivil: estadoCivil || null } : {}),
-        ...(profissao !== undefined ? { profissao: profissao ? profissao.trim().toUpperCase() : null } : {}),
-        ...(convenio !== undefined ? { convenio: convenio || "Particular" } : {}),
-        ...(planoFaaz !== undefined ? { planoFaaz: Boolean(planoFaaz) } : {}),
-        ...(status !== undefined
-          ? { patientStatus: status === "Inativo" ? "INACTIVE" : "ACTIVE" }
+        ...(biologicalSex !== undefined ? { biologicalSex } : {}),
+        ...(estadoCivil !== undefined
+          ? { estadoCivil: estadoCivil || null }
           : {}),
+        ...(profissao !== undefined
+          ? {
+              profissao: profissao
+                ? String(profissao).trim().toUpperCase()
+                : null,
+            }
+          : {}),
+        ...(convenio !== undefined
+          ? { convenio: convenio || "Particular" }
+          : {}),
+        ...(planoFaaz !== undefined ? { planoFaaz: Boolean(planoFaaz) } : {}),
+        ...(patientStatus !== undefined ? { patientStatus } : {}),
         ...(telefoneWhatsapp !== undefined
-          ? { phoneWhatsapp: telefoneWhatsapp.trim() }
+          ? { phoneWhatsapp: String(telefoneWhatsapp).trim() }
           : {}),
         ...(telefoneSecundario !== undefined
           ? { telefoneSecundario: telefoneSecundario || null }
           : {}),
-        ...(email !== undefined ? { email: email ? email.trim() : null } : {}),
+        ...(email !== undefined
+          ? { email: email ? String(email).trim() : null }
+          : {}),
         ...(contatoEmergenciaNome !== undefined
-          ? { contatoEmergenciaNome: contatoEmergenciaNome ? contatoEmergenciaNome.trim().toUpperCase() : null }
+          ? {
+              contatoEmergenciaNome: contatoEmergenciaNome
+                ? String(contatoEmergenciaNome).trim().toUpperCase()
+                : null,
+            }
           : {}),
         ...(contatoEmergenciaTelefone !== undefined
           ? { contatoEmergenciaTelefone: contatoEmergenciaTelefone || null }
           : {}),
         ...(cep !== undefined ? { zipCode: cep || null } : {}),
-        ...(logradouro !== undefined ? { street: logradouro ? logradouro.trim().toUpperCase() : null } : {}),
+        ...(logradouro !== undefined
+          ? {
+              street: logradouro
+                ? String(logradouro).trim().toUpperCase()
+                : null,
+            }
+          : {}),
         ...(numero !== undefined ? { number: numero || null } : {}),
-        ...(complemento !== undefined ? { complement: complemento ? complemento.trim().toUpperCase() : null } : {}),
-        ...(bairro !== undefined ? { neighborhood: bairro ? bairro.trim().toUpperCase() : null } : {}),
-        ...(cidade !== undefined ? { city: cidade ? cidade.trim().toUpperCase() : null } : {}),
-        ...(estado !== undefined ? { state: estado ? estado.trim().toUpperCase() : null } : {}),
+        ...(complemento !== undefined
+          ? {
+              complement: complemento
+                ? String(complemento).trim().toUpperCase()
+                : null,
+            }
+          : {}),
+        ...(bairro !== undefined
+          ? {
+              neighborhood: bairro
+                ? String(bairro).trim().toUpperCase()
+                : null,
+            }
+          : {}),
+        ...(cidade !== undefined
+          ? { city: cidade ? String(cidade).trim().toUpperCase() : null }
+          : {}),
+        ...(estado !== undefined
+          ? { state: estado ? String(estado).trim().toUpperCase() : null }
+          : {}),
         ...(metaHidricaMl !== undefined
-          ? { metaDiariaMl: parseInt(metaHidricaMl) || 2500 }
+          ? { metaDiariaMl: parseInt(String(metaHidricaMl), 10) || 2500 }
           : {}),
         ...(avatarUrl !== undefined
           ? { avatarUrl: avatarUrl || null, photoUrl: avatarUrl || null }
@@ -161,72 +223,94 @@ async function handleUpdate(req: NextRequest, paramsPromise: Promise<{ id: strin
           : {}),
         ...(treatmentObjective !== undefined
           ? {
-              treatmentObjective: treatmentObjective ? String(treatmentObjective).trim() : null,
-              clinicalFocus: treatmentObjective ? String(treatmentObjective).trim() : null,
+              treatmentObjective: treatmentObjective
+                ? String(treatmentObjective).trim()
+                : null,
+              clinicalFocus: treatmentObjective
+                ? String(treatmentObjective).trim()
+                : null,
             }
           : clinicalFocus !== undefined
-          ? {
-              clinicalFocus: clinicalFocus ? String(clinicalFocus).trim() : null,
-              treatmentObjective: clinicalFocus ? String(clinicalFocus).trim() : null,
-            }
-          : {}),
+            ? {
+                clinicalFocus: clinicalFocus
+                  ? String(clinicalFocus).trim()
+                  : null,
+                treatmentObjective: clinicalFocus
+                  ? String(clinicalFocus).trim()
+                  : null,
+              }
+            : {}),
         ...(workoutType !== undefined
           ? { workoutType: workoutType ? String(workoutType).trim() : null }
           : {}),
         ...(workoutFrequency !== undefined
-          ? { workoutFrequency: workoutFrequency ? parseInt(String(workoutFrequency), 10) : null }
+          ? {
+              workoutFrequency: workoutFrequency
+                ? parseInt(String(workoutFrequency), 10)
+                : null,
+            }
           : {}),
         ...(workoutDuration !== undefined
-          ? { workoutDuration: workoutDuration ? parseInt(String(workoutDuration), 10) : null }
+          ? {
+              workoutDuration: workoutDuration
+                ? parseInt(String(workoutDuration), 10)
+                : null,
+            }
           : {}),
         ...(workoutRestrictions !== undefined
-          ? { workoutRestrictions: workoutRestrictions ? String(workoutRestrictions).trim() : null }
+          ? {
+              workoutRestrictions: workoutRestrictions
+                ? String(workoutRestrictions).trim()
+                : null,
+            }
           : {}),
       },
-    });
+    );
+
+    const pacienteAtualizado = await patientRepo.findOne({ where: { id } });
 
     return NextResponse.json({
       sucesso: true,
       mensagem: "Paciente alterado com sucesso!",
       paciente: pacienteAtualizado,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[PACIENTES/[ID]/UPDATE] Erro:", error);
-    if (error.code === "P2002") {
+    if (isUniqueConstraintError(error)) {
       return NextResponse.json(
         { error: "CPF já cadastrado para outro paciente." },
-        { status: 409 }
+        { status: 409 },
       );
     }
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao atualizar paciente.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao atualizar paciente.", details },
+      { status: 500 },
     );
   }
 }
 
 /**
  * DELETE /api/pacientes/[id] — Excluir paciente
- * Regra de Segurança (RBAC): SOMENTE DONO_CLINICA ou ADMINISTRADOR.
- * SECRETARIA ou MEDICO retornam 403 Forbidden.
  */
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
+export async function DELETE(_req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const sessao = await getSessao();
 
-    // Trava estrita de autorização RBAC
     if (!sessao || !podeExcluirPacientes(sessao.cargo)) {
       return NextResponse.json(
         {
-          error: "Apenas o Dono da Clínica ou Administrador podem excluir pacientes.",
+          error:
+            "Apenas o Dono da Clínica ou Administrador podem excluir pacientes.",
           cargoAtual: sessao?.cargo || "NÃO_AUTENTICADO",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
-    const paciente = await prisma.patient.findUnique({
+    const patientRepo = await getRepository(PatientEntity);
+    const paciente = await patientRepo.findOne({
       where: { id },
       select: { id: true, cpf: true, recordCode: true, fullName: true },
     });
@@ -234,36 +318,35 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (!paciente) {
       return NextResponse.json(
         { error: "Paciente não encontrado." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    // Exclusão em cascata: remove checkins vinculados para não violar chaves estrangeiras
     const idsVinculados = [paciente.id];
-    if (paciente.cpf) idsVinculados.push(paciente.cpf, paciente.cpf.replace(/\D/g, ""));
+    if (paciente.cpf)
+      idsVinculados.push(paciente.cpf, paciente.cpf.replace(/\D/g, ""));
     if (paciente.recordCode) idsVinculados.push(paciente.recordCode);
 
-    await prisma.$transaction([
-      prisma.checkinIntestinal.deleteMany({
-        where: { pacienteId: { in: idsVinculados } },
-      }),
-      prisma.checkinHidratacao.deleteMany({
-        where: { pacienteId: { in: idsVinculados } },
-      }),
-      prisma.patient.delete({
-        where: { id },
-      }),
-    ]);
+    await withTransaction(async (manager) => {
+      await manager.getRepository(CheckinIntestinalEntity).delete({
+        pacienteId: In(idsVinculados),
+      });
+      await manager.getRepository(CheckinHidratacaoEntity).delete({
+        pacienteId: In(idsVinculados),
+      });
+      await manager.getRepository(PatientEntity).delete({ id });
+    });
 
     return NextResponse.json({
       sucesso: true,
       mensagem: `Paciente '${paciente.fullName}' excluído com sucesso!`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[PACIENTES/[ID]/DELETE] Erro:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erro ao excluir paciente.", details: error?.message },
-      { status: 500 }
+      { error: "Erro ao excluir paciente.", details },
+      { status: 500 },
     );
   }
 }
