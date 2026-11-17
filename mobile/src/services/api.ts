@@ -41,13 +41,10 @@ export function getAuthPatientId(): string | null {
 }
 
 /**
- * IP e Porta fixos do servidor de desenvolvimento Next.js na rede local.
- * Garante que qualquer celular/dispositivo conectado via Wi-Fi no Expo (porta 8081)
- * alcance diretamente o backend na porta 3000 da máquina.
+ * URL oficial de produção na Vercel (conectada ao Oracle Autonomous Database).
  */
-export const SERVER_HOST_IP = "192.168.100.57";
-export const SERVER_PORT = "3000";
-export const FIXED_API_URL = `http://${SERVER_HOST_IP}:${SERVER_PORT}/api`;
+export const PRODUCTION_API_URL = "https://faaz2.vercel.app/api";
+export const FIXED_API_URL = PRODUCTION_API_URL;
 
 /**
  * Obtém a URL base da API do Next.js de acordo com o ambiente e plataforma
@@ -58,7 +55,7 @@ export function getBaseApiUrl(): string {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, "");
   }
 
-  // 2. Apontamento estrito: IP do Diretor na rede local (Next.js porta 3000)
+  // 2. Fallback direto para o backend de produção na Vercel
   return FIXED_API_URL;
 }
 
@@ -115,7 +112,7 @@ async function httpRequest<T = any>(
     Object.assign(headers, options.headers);
   }
 
-  const timeoutMs = options.timeoutMs || 8000;
+  const timeoutMs = options.timeoutMs || 15000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -173,7 +170,7 @@ async function httpRequest<T = any>(
     }
     if (err.message === "Failed to fetch" || err.message?.includes("Network request failed")) {
       const netError = new Error(
-        `Não foi possível alcançar ${fullUrl}. Verifique se o celular está na mesma rede Wi-Fi e se a porta 3000 está acessível.`
+        `Não foi possível alcançar ${fullUrl}. Verifique a conexão com a internet do dispositivo.`
       );
       throw netError;
     }
