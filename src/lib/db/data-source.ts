@@ -22,6 +22,19 @@ export const ORACLE_ADB_DEFAULTS = {
 } as const;
 
 function readConfig() {
+  // Garante carregamento do .env quando executado fora do Next.js (ex.: npx jiti prisma/seed.ts)
+  if (
+    !process.env.DATABASE_PASSWORD &&
+    !process.env.ORACLE_PASSWORD &&
+    typeof process.loadEnvFile === "function"
+  ) {
+    try {
+      process.loadEnvFile();
+    } catch {
+      // Ignora se .env não existir no ambiente (ex.: Vercel Serverless)
+    }
+  }
+
   const host = process.env.ORACLE_HOST?.trim() || ORACLE_ADB_DEFAULTS.host;
   const port = Number(process.env.ORACLE_PORT ?? ORACLE_ADB_DEFAULTS.port);
   const serviceName =
