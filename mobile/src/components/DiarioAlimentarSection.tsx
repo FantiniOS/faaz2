@@ -191,6 +191,7 @@ export function DiarioAlimentarSection() {
                           <FoodThumbnail
                             nome={item.nome}
                             categoria={item.categoria}
+                            imageUrl={item.thumbnailUrl}
                             size={32}
                           />
                           <View style={styles.foodItemTexts}>
@@ -241,7 +242,11 @@ export function DiarioAlimentarSection() {
                               </Text>
                             </View>
                             <View style={styles.inlineSubRow}>
-                              <FoodThumbnail nome={sub.substituteFoodName} size={26} />
+                              <FoodThumbnail
+                                nome={sub.substituteFoodName}
+                                imageUrl={sub.substituteThumbnailUrl}
+                                size={26}
+                              />
                               <View style={styles.foodItemTexts}>
                                 <Text style={styles.inlineSubName} numberOfLines={1}>
                                   {sub.substituteFoodName}
@@ -273,6 +278,7 @@ export function DiarioAlimentarSection() {
                       <FoodThumbnail
                         nome={extra.nome}
                         categoria={extra.categoria}
+                        imageUrl={extra.thumbnailUrl}
                         size={30}
                       />
                       <View style={styles.foodItemTexts}>

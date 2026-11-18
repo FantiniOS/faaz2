@@ -10,6 +10,20 @@ import { AlimentoEntity } from "@/lib/db/entities";
  * Rota oficial de busca no banco de alimentos (Tabela TACO / UNICAMP).
  * Case-insensitive via LOWER(NOME) LIKE no Oracle.
  */
+const ALIMENTO_SELECT = {
+  id: true,
+  nome: true,
+  porcaoBase: true,
+  calorias: true,
+  proteinas: true,
+  carboidratos: true,
+  gorduras: true,
+  fibras: true,
+  categoria: true,
+  fonte: true,
+  thumbnailUrl: true,
+} as const;
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -29,18 +43,7 @@ export async function GET(req: NextRequest) {
         : {},
       take: 50,
       order: { nome: "ASC" },
-      select: {
-        id: true,
-        nome: true,
-        porcaoBase: true,
-        calorias: true,
-        proteinas: true,
-        carboidratos: true,
-        gorduras: true,
-        fibras: true,
-        categoria: true,
-        fonte: true,
-      },
+      select: ALIMENTO_SELECT,
     });
 
     if (resultados.length === 0 && termoDeBusca.includes(" ")) {
@@ -63,18 +66,7 @@ export async function GET(req: NextRequest) {
         },
         take: 50,
         order: { nome: "ASC" },
-        select: {
-          id: true,
-          nome: true,
-          porcaoBase: true,
-          calorias: true,
-          proteinas: true,
-          carboidratos: true,
-          gorduras: true,
-          fibras: true,
-          categoria: true,
-          fonte: true,
-        },
+        select: ALIMENTO_SELECT,
       });
     }
 

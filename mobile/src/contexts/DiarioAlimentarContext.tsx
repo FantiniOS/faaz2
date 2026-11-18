@@ -14,6 +14,7 @@ export interface ItemAlimentoDiario {
   id: string;
   nome: string;
   categoria?: string | null;
+  thumbnailUrl?: string | null;
   quantidadeGramas: number;
   calorias: number;
   proteinas: number;
@@ -23,6 +24,7 @@ export interface ItemAlimentoDiario {
   substituicao?: {
     id: string;
     substituteFoodName: string;
+    substituteThumbnailUrl?: string | null;
     quantityGrams: number;
     calories: number;
     proteins?: number | null;
@@ -64,6 +66,7 @@ export interface DiarioAlimentarContextData {
       carboidratos?: number;
       gorduras?: number;
       categoria?: string | null;
+      thumbnailUrl?: string | null;
     },
     gramas: number
   ) => void;
@@ -191,6 +194,7 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
           id: it.id || `${refId}-it-${itIdx}`,
           nome: alim.nome || "Alimento",
           categoria: alim.categoria || "Geral",
+          thumbnailUrl: alim.thumbnailUrl ?? null,
           quantidadeGramas: qtd,
           calorias: calTot,
           proteinas: Number(alim.proteinas) || 0,
@@ -201,6 +205,8 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
             ? {
                 id: sub.id,
                 substituteFoodName: sub.substituteFoodName,
+                substituteThumbnailUrl:
+                  sub.substituteThumbnailUrl ?? sub.substituteFood?.thumbnailUrl ?? null,
                 quantityGrams: sub.quantityGrams,
                 calories: sub.calories,
                 proteins: sub.proteins,
@@ -249,6 +255,7 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
         carboidratos?: number;
         gorduras?: number;
         categoria?: string | null;
+        thumbnailUrl?: string | null;
       },
       gramas: number
     ) => {
@@ -262,6 +269,7 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
         id: `extra-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
         nome: alimento.nome,
         categoria: alimento.categoria || "Geral",
+        thumbnailUrl: alimento.thumbnailUrl ?? null,
         quantidadeGramas: qtd,
         calorias: calCalculada,
         proteinas: protCalculada,

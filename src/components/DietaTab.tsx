@@ -33,6 +33,8 @@ export interface DietSubstitutionState {
   prescribedDietItemId: string;
   substituteFoodId?: string | null;
   substituteFoodName: string;
+  substituteThumbnailUrl?: string | null;
+  substituteFood?: { thumbnailUrl?: string | null } | null;
   quantityGrams: number;
   calories: number;
   proteins?: number | null;
@@ -898,7 +900,11 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                               <FoodThumbnail
                                 nome={item.alimento.nome}
                                 categoria={item.alimento.categoria}
-                                imageUrl={item.alimento.imageUrl || item.alimento.fotoUrl}
+                                imageUrl={
+                                  item.alimento.thumbnailUrl ||
+                                  item.alimento.imageUrl ||
+                                  item.alimento.fotoUrl
+                                }
                                 className={`w-10 h-10 shrink-0 ${hasSub ? "grayscale opacity-75" : ""}`}
                               />
                               <div className="min-w-0">
@@ -993,6 +999,10 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                                 <div className="flex items-center gap-2.5 flex-1 min-w-[200px]">
                                   <FoodThumbnail
                                     nome={sub.substituteFoodName}
+                                    imageUrl={
+                                      sub.substituteThumbnailUrl ||
+                                      sub.substituteFood?.thumbnailUrl
+                                    }
                                     className="w-9 h-9 shrink-0 ring-1 ring-emerald-300 shadow-2xs"
                                   />
                                   <div className="min-w-0">

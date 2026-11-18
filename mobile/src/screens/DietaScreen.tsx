@@ -40,6 +40,7 @@ export interface AlimentoItem {
   id?: string;
   nome?: string;
   categoria?: string;
+  thumbnailUrl?: string | null;
   caloriasPorcao?: number;
   calorias?: number;
   proteinasPorcao?: number;
@@ -57,6 +58,8 @@ export interface DietSubstitutionItem {
   prescribedDietItemId: string;
   substituteFoodId?: string | null;
   substituteFoodName: string;
+  substituteThumbnailUrl?: string | null;
+  substituteFood?: { thumbnailUrl?: string | null } | null;
   quantityGrams: number;
   calories: number;
   proteins?: number | null;
@@ -833,6 +836,13 @@ export function DietaScreen({
                                   hasSub && styles.foodRowSubstituted,
                                 ]}
                               >
+                                <FoodThumbnail
+                                  nome={alim?.nome || "Alimento Prescrito"}
+                                  categoria={alim?.categoria}
+                                  imageUrl={alim?.thumbnailUrl}
+                                  size={34}
+                                  style={{ marginRight: 10 }}
+                                />
                                 <View style={styles.foodInfoCol}>
                                   <Text
                                     style={[
@@ -926,7 +936,14 @@ export function DietaScreen({
                                   </View>
 
                                   <View style={styles.substituteContentRow}>
-                                    <FoodThumbnail nome={sub.substituteFoodName} size={30} />
+                                    <FoodThumbnail
+                                      nome={sub.substituteFoodName}
+                                      imageUrl={
+                                        sub.substituteThumbnailUrl ??
+                                        sub.substituteFood?.thumbnailUrl
+                                      }
+                                      size={30}
+                                    />
                                     <View style={styles.substituteTextCol}>
                                       <Text style={styles.substituteFoodName} numberOfLines={1}>
                                         {sub.substituteFoodName}
@@ -963,6 +980,7 @@ export function DietaScreen({
                             <FoodThumbnail
                               nome={extra.nome}
                               categoria={extra.categoria}
+                              imageUrl={extra.thumbnailUrl}
                               size={26}
                             />
                             <View style={styles.foodInfoCol}>

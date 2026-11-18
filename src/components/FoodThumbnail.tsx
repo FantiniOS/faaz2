@@ -230,26 +230,31 @@ export function FoodThumbnail({
   imageUrl,
   className = "",
 }: FoodThumbnailProps) {
-  const [hasError, setHasError] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const visual = getFoodVisual(nome, categoria);
+  const hasError = Boolean(imageUrl && failedUrl === imageUrl);
 
-  const containerClasses = `w-10 h-10 rounded-md bg-slate-50 ${visual.bg} border border-slate-200/80 shadow-2xs flex-shrink-0 flex items-center justify-center text-2xl select-none ${className}`;
+  const baseClasses = `w-10 h-10 rounded-md border shadow-2xs flex-shrink-0 flex items-center justify-center select-none overflow-hidden ${className}`;
 
   if (imageUrl && !hasError) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element -- WebP 100x100 pré-otimizado (~2 KB), servido estaticamente sem cota do Next/Vercel Image
       <img
         src={imageUrl}
         alt={nome}
-        onError={() => setHasError(true)}
-        className={`${containerClasses} object-cover`}
+        width={100}
+        height={100}
+        onError={() => setFailedUrl(imageUrl)}
+        className={`${baseClasses} bg-white border-slate-200/80 object-cover`}
         loading="lazy"
+        decoding="async"
       />
     );
   }
 
   return (
     <div
-      className={containerClasses}
+      className={`${baseClasses} ${visual.bg} border-slate-200/80 text-2xl`}
       title={categoria ? `${nome} (${categoria})` : nome}
     >
       <span className="text-2xl leading-none select-none" role="img" aria-label={categoria || nome}>

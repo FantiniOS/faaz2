@@ -15,6 +15,7 @@ export interface AlimentoOption {
   fibras?: number | null;
   categoria?: string | null;
   fonte?: string | null;
+  thumbnailUrl?: string | null;
   imageUrl?: string | null;
   fotoUrl?: string | null;
   // Aliases TACO e inglês para resiliência de mapeamento
@@ -134,7 +135,11 @@ export function AlimentoCombobox({
               <FoodThumbnail
                 nome={selectedAlimento.nome}
                 categoria={selectedAlimento.categoria}
-                imageUrl={selectedAlimento.imageUrl || selectedAlimento.fotoUrl}
+                imageUrl={
+                  selectedAlimento.thumbnailUrl ||
+                  selectedAlimento.imageUrl ||
+                  selectedAlimento.fotoUrl
+                }
                 className="w-8 h-8 rounded-md"
               />
               <div className="flex flex-col truncate">
@@ -229,7 +234,7 @@ export function AlimentoCombobox({
                         <FoodThumbnail
                           nome={item.nome}
                           categoria={item.categoria}
-                          imageUrl={item.imageUrl || item.fotoUrl}
+                          imageUrl={item.thumbnailUrl || item.imageUrl || item.fotoUrl}
                         />
                         <div className="flex flex-col text-left truncate">
                           <span className="font-bold text-xs text-slate-800 group-hover:text-teal-950 truncate">

@@ -36,6 +36,14 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        // Miniaturas WebP imutáveis (nome por SHA-256) servidas sem otimização do Next/Vercel
+        source: "/food-thumbnails/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
     ];
   },
 };

@@ -157,6 +157,7 @@ export async function GET(req: NextRequest) {
               id: alimento?.id || "",
               nome: alimento?.nome || "Alimento",
               categoria: alimento?.categoria || "Geral",
+              thumbnailUrl: alimento?.thumbnailUrl ?? null,
               caloriasPorcao: cal,
               proteinasPorcao: prot,
               carboidratosPorcao: carb,

@@ -25,6 +25,8 @@ export interface Alimento {
   fibras: number | null;
   categoria: string | null;
   fonte: string | null;
+  /** Caminho público do WebP 100x100 (ex.: /food-thumbnails/<sha256>.webp). NULL => fallback emoji. */
+  thumbnailUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
 
@@ -46,6 +48,7 @@ export const AlimentoEntity = new EntitySchema<Alimento>({
     fibras: { ...float("FIBRAS", true), default: 0 },
     categoria: { ...varchar("CATEGORIA", 100, true), default: "Geral" },
     fonte: { ...varchar("FONTE", 50, true), default: "TACO" },
+    thumbnailUrl: varchar("THUMBNAILURL", 500, true),
     createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
     updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
   },

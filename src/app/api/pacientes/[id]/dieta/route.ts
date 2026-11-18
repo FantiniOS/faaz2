@@ -236,6 +236,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                   prescribedDietItemId: subRecente.prescribedDietItemId,
                   substituteFoodId: subRecente.substituteFoodId,
                   substituteFoodName: subRecente.substituteFoodName,
+                  substituteThumbnailUrl: subRecente.substituteFood?.thumbnailUrl ?? null,
                   quantityGrams: subRecente.quantityGrams,
                   calories: subRecente.calories,
                   proteins: subRecente.proteins,

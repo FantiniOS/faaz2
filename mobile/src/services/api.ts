@@ -59,6 +59,28 @@ export function getBaseApiUrl(): string {
   return FIXED_API_URL;
 }
 
+/**
+ * URL raiz do servidor web/estáticos (remove o sufixo /api da base da API).
+ * Pode ser sobrescrita por EXPO_PUBLIC_ASSETS_URL caso os estáticos fiquem em outro host.
+ */
+export function getServerBaseUrl(): string {
+  const raw = process.env.EXPO_PUBLIC_ASSETS_URL || getBaseApiUrl();
+  return raw.replace(/\/+$/, "").replace(/\/api$/, "");
+}
+
+/**
+ * Converte caminhos relativos salvos no Oracle (ex.: /food-thumbnails/abc.webp)
+ * em URL absoluta usando a variável de ambiente configurada no app mobile.
+ */
+export function resolveAssetUrl(pathOrUrl?: string | null): string | null {
+  if (!pathOrUrl) return null;
+  const trimmed = pathOrUrl.trim();
+  if (!trimmed) return null;
+  if (/^(https?:|data:|file:)/i.test(trimmed)) return trimmed;
+  const cleanPath = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${getServerBaseUrl()}${cleanPath}`;
+}
+
 export interface RequestOptions extends Omit<RequestInit, "body"> {
   params?: Record<string, string | number | boolean | undefined | null>;
   timeoutMs?: number;

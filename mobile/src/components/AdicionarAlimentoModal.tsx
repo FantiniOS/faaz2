@@ -25,6 +25,7 @@ export interface AlimentoBuscaOption {
   gorduras: number;
   categoria?: string | null;
   fonte?: string | null;
+  thumbnailUrl?: string | null;
 }
 
 interface AdicionarAlimentoModalProps {
@@ -164,6 +165,7 @@ export function AdicionarAlimentoModal({
                 <FoodThumbnail
                   nome={alimentoSelecionado.nome}
                   categoria={alimentoSelecionado.categoria}
+                  imageUrl={alimentoSelecionado.thumbnailUrl}
                   size={46}
                 />
                 <View style={styles.selectedFoodTexts}>
@@ -276,6 +278,7 @@ export function AdicionarAlimentoModal({
                       <FoodThumbnail
                         nome={item.nome}
                         categoria={item.categoria}
+                        imageUrl={item.thumbnailUrl}
                         size={40}
                       />
                       <View style={styles.foodRowTexts}>
