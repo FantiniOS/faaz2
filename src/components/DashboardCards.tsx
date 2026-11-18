@@ -34,30 +34,14 @@ import {
 } from "recharts";
 import { DashboardWidgetConfig, ChartDataItem, AlertItem } from "@/mocks/dashboard";
 import { GlicemiaLiveSummary } from "@/components/AlertasGlicemicosModal";
-
-// Dados simulados complementares para gráficos de linha e área
-const sleepData = [
-  { dia: "Seg", horas: 6.2 },
-  { dia: "Ter", horas: 6.8 },
-  { dia: "Qua", horas: 6.0 },
-  { dia: "Qui", horas: 7.1 },
-  { dia: "Sex", horas: 6.4 },
-  { dia: "Sáb", horas: 7.2 },
-  { dia: "Dom", horas: 6.5 },
-];
-
-const weightData = [
-  { semana: "S1", peso: 84.5 },
-  { semana: "S2", peso: 83.8 },
-  { semana: "S3", peso: 82.9 },
-  { semana: "S4", peso: 82.1 },
-];
+import type { MetricaPesoEliminadoData } from "@/lib/metrica-peso-eliminado";
 
 export interface SortableWidgetProps {
   widget: DashboardWidgetConfig;
   intestinoData?: BristolLiveSummary | null;
   hidratacaoData?: HidratacaoConsolidada | null;
   glicemiaData?: GlicemiaLiveSummary | null;
+  metricaPesoData?: MetricaPesoEliminadoData | null;
   onOpenDetails?: (widgetId: string) => void;
 }
 
@@ -66,6 +50,7 @@ export function SortableWidgetCard({
   intestinoData,
   hidratacaoData,
   glicemiaData,
+  metricaPesoData,
   onOpenDetails,
 }: SortableWidgetProps) {
   const {
@@ -98,6 +83,7 @@ export function SortableWidgetCard({
         intestinoData={intestinoData}
         hidratacaoData={hidratacaoData}
         glicemiaData={glicemiaData}
+        metricaPesoData={metricaPesoData}
         onOpenDetails={onOpenDetails}
       />
     </div>
@@ -110,6 +96,7 @@ export interface WidgetCardProps {
   intestinoData?: BristolLiveSummary | null;
   hidratacaoData?: HidratacaoConsolidada | null;
   glicemiaData?: GlicemiaLiveSummary | null;
+  metricaPesoData?: MetricaPesoEliminadoData | null;
   onOpenDetails?: (widgetId: string) => void;
 }
 
@@ -119,6 +106,7 @@ export function WidgetCard({
   intestinoData,
   hidratacaoData,
   glicemiaData,
+  metricaPesoData,
   onOpenDetails,
 }: WidgetCardProps) {
   const [mounted, setMounted] = useState(false);
@@ -139,10 +127,12 @@ export function WidgetCard({
             </h3>
             {(widget.id === "alertas-glicemicos" ||
               widget.id === "escala-bristol" ||
-              widget.id === "aderencia-hidrica") && (
+              widget.id === "aderencia-hidrica" ||
+              widget.id === "risco-evasao" ||
+              widget.id === "engajamento-app") && (
               <span
                 className="relative flex h-2 w-2"
-                title="Sincronização em tempo real (polling 5s via mobile)"
+                title="Sincronização em tempo real com Oracle"
               >
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
@@ -168,7 +158,8 @@ export function WidgetCard({
           mounted,
           intestinoData,
           hidratacaoData,
-          glicemiaData
+          glicemiaData,
+          metricaPesoData
         )}
       </div>
 
@@ -542,6 +533,15 @@ export interface HidratacaoConsolidada {
   pacientesAtivosProtocolo: number;
   pacientesQueRegistraramHoje: number;
   totalRegistrosHoje: number;
+  engajamentoApp?: {
+    percentual: number;
+    pacientesEngajados7d: number;
+    totalPacientesAtivos: number;
+  };
+  riscoEvasao?: {
+    pacientesEmRisco: number;
+    totalPacientesAtivos: number;
+  };
 }
 
 // Componente DINÂMICO em tempo real para o card de Aderência Hídrica no grid
@@ -553,12 +553,12 @@ function LiveHidratacaoCardContent({
   liveData?: HidratacaoConsolidada | null;
 }) {
   const [data, setData] = useState<HidratacaoConsolidada>({
-    totalConsumidoHojeL: 12.0,
-    metaTotalHojeL: 30.0,
-    percentualAderencia: 40,
-    pacientesAtivosProtocolo: 12,
-    pacientesQueRegistraramHoje: 4,
-    totalRegistrosHoje: 6,
+    totalConsumidoHojeL: 0,
+    metaTotalHojeL: 0,
+    percentualAderencia: 0,
+    pacientesAtivosProtocolo: 0,
+    pacientesQueRegistraramHoje: 0,
+    totalRegistrosHoje: 0,
   });
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [justUpdated, setJustUpdated] = useState<boolean>(false);
@@ -588,11 +588,13 @@ function LiveHidratacaoCardContent({
         prevTotalRef.current = json.totalConsumidoHojeL;
         setData({
           totalConsumidoHojeL: json.totalConsumidoHojeL,
-          metaTotalHojeL: json.metaTotalHojeL || 30.0,
+          metaTotalHojeL: json.metaTotalHojeL ?? 0,
           percentualAderencia: json.percentualAderencia ?? 0,
-          pacientesAtivosProtocolo: json.pacientesAtivosProtocolo || 12,
-          pacientesQueRegistraramHoje: json.pacientesQueRegistraramHoje || 0,
-          totalRegistrosHoje: json.totalRegistrosHoje || 0,
+          pacientesAtivosProtocolo: json.pacientesAtivosProtocolo ?? 0,
+          pacientesQueRegistraramHoje: json.pacientesQueRegistraramHoje ?? 0,
+          totalRegistrosHoje: json.totalRegistrosHoje ?? 0,
+          engajamentoApp: json.engajamentoApp,
+          riscoEvasao: json.riscoEvasao,
         });
       }
     } catch (err) {
@@ -774,389 +776,173 @@ function renderWidgetContent(
   mounted: boolean,
   intestinoData?: BristolLiveSummary | null,
   hidratacaoData?: HidratacaoConsolidada | null,
-  glicemiaData?: GlicemiaLiveSummary | null
+  glicemiaData?: GlicemiaLiveSummary | null,
+  metricaPesoData?: MetricaPesoEliminadoData | null
 ) {
   switch (widget.tipo) {
     /* 1. GAUGE / ADERÊNCIA HÍDRICA */
     case "gauge": {
-      // Se for o card de Aderência Hídrica, conecta à API e renderiza em tempo real com polling de 5s
-      if (widget.id === "aderencia-hidrica") {
-        return (
-          <LiveHidratacaoCardContent
-            mounted={mounted}
-            liveData={hidratacaoData}
-          />
-        );
-      }
-
-      const percentage = Number(widget.valor) || 85;
       return (
-        <div className="space-y-3">
-          <div className="flex items-baseline justify-between">
-            <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-extrabold text-slate-900 tracking-tight">
-                {percentage}%
-              </span>
-              <span className="text-xs text-slate-400 font-medium">alvo diário</span>
-            </div>
-            {widget.tendencia && (
-              <span className="inline-flex items-center gap-0.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                <ArrowUpRight className="w-3 h-3" />
-                {widget.tendencia}
-              </span>
-            )}
-          </div>
-
-          {/* Barra de progresso circular simulada / linear gauge */}
-          <div className="space-y-1.5">
-            <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-cyan-500 to-emerald-500 h-2.5 rounded-full transition-all duration-500"
-                style={{ width: `${percentage}%` }}
-              />
-            </div>
-            <div className="flex justify-between text-[11px] text-slate-400 font-medium">
-              <span>0L</span>
-              <span className="text-emerald-600 font-semibold">2.1L / 2.5L</span>
-              <span>3L+</span>
-            </div>
-          </div>
-        </div>
+        <LiveHidratacaoCardContent
+          mounted={mounted}
+          liveData={hidratacaoData}
+        />
       );
     }
 
     /* 2. BAR / SAÚDE INTESTINAL (BRISTOL) */
     case "bar": {
-      // Se for o card de Escala de Bristol, conecta à API e renderiza em tempo real com polling de 5s
-      if (widget.id === "escala-bristol") {
-        return (
-          <LiveBristolCardContent
-            mounted={mounted}
-            liveData={intestinoData}
-          />
-        );
-      }
-
-      const chartData = (widget.dados as ChartDataItem[]) || [];
-      const colors = ["#10b981", "#f59e0b", "#f43f5e"];
-
       return (
-        <div className="w-full h-28">
-          {mounted ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 10, right: 0, left: -25, bottom: 0 }}>
-                <XAxis
-                  dataKey="nome"
-                  tick={{ fontSize: 10, fill: "#64748b" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 9, fill: "#94a3b8" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  cursor={{ fill: "#f8fafc" }}
-                  contentStyle={{
-                    backgroundColor: "#1e293b",
-                    borderRadius: "8px",
-                    border: "none",
-                    color: "#fff",
-                    fontSize: "11px",
-                  }}
-                  formatter={(val: any) => [`${val}%`, "Frequência"]}
-                />
-                <Bar dataKey="valor" radius={[6, 6, 0, 0]}>
-                  {chartData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
-          )}
-        </div>
+        <LiveBristolCardContent
+          mounted={mounted}
+          liveData={intestinoData}
+        />
       );
     }
 
-    /* 3. TREND / ENGAJAMENTO NO APP */
+    /* 3. TREND / ENGAJAMENTO NO APP (Cálculo Real 7d / Total Ativos) */
     case "trend": {
+      const engajamento = hidratacaoData?.engajamentoApp;
+      const percentual = engajamento ? engajamento.percentual : 0;
+      const engajados = engajamento ? engajamento.pacientesEngajados7d : 0;
+      const totalAtivos = engajamento ? engajamento.totalPacientesAtivos : 0;
+
       return (
         <div className="space-y-3">
           <div className="flex items-baseline justify-between">
             <span className="text-3xl font-extrabold text-slate-900 tracking-tight">
-              {widget.valor}
+              {percentual}%
             </span>
-            {widget.tendencia && (
-              <span className="inline-flex items-center gap-0.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                <ArrowUpRight className="w-3 h-3" />
-                {widget.tendencia}
-              </span>
-            )}
+            <span className="inline-flex items-center gap-1 text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full">
+              {engajados}/{totalAtivos} ativos (7d)
+            </span>
+          </div>
+          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${Math.min(100, percentual)}%` }}
+            />
           </div>
           <p className="text-xs text-slate-500 font-medium">
-            Pacientes ativos nos últimos 7 dias completando diários metabólicos.
+            Proporção real de pacientes ativos com check-in alimentar ou hídrico nos últimos 7 dias.
           </p>
         </div>
       );
     }
 
-    /* 4. LINE / QUALIDADE DO SONO */
-    case "line": {
-      return (
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-extrabold text-slate-900 tracking-tight">
-                {widget.valor}
-              </span>
-              <span className="text-xs text-slate-400 font-medium">média semanal</span>
-            </div>
-            <span className="text-[11px] font-semibold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-md">
-              Meta: 8.0h
-            </span>
-          </div>
-
-          <div className="w-full h-20">
-            {mounted ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={sleepData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                  <XAxis
-                    dataKey="dia"
-                    tick={{ fontSize: 9, fill: "#94a3b8" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    domain={[5, 9]}
-                    tick={{ fontSize: 9, fill: "#94a3b8" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#1e293b",
-                      borderRadius: "8px",
-                      border: "none",
-                      color: "#fff",
-                      fontSize: "11px",
-                    }}
-                    formatter={(val: any) => [`${val}h`, "Sono"]}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="horas"
-                    stroke="#8b5cf6"
-                    strokeWidth={2.5}
-                    dot={{ r: 2.5, fill: "#8b5cf6" }}
-                    activeDot={{ r: 4 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    /* 5. AREA / EVOLUÇÃO DE PESO */
+    /* 4. AREA / EVOLUÇÃO DE PESO (MÉDIA REAL) */
     case "area": {
+      const mediaPerda = metricaPesoData?.mediaPerdaKg ?? 0;
+      const pacientesComPerda = metricaPesoData?.pacientesComPerda ?? 0;
+      const totalAtivos = metricaPesoData?.totalPacientesAtivos ?? 0;
+
       return (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-baseline justify-between">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-extrabold text-emerald-600 tracking-tight">
-                {widget.valor}
+              <span className="text-3xl font-extrabold text-emerald-600 tracking-tight">
+                {mediaPerda > 0 ? `-${mediaPerda.toFixed(1)}kg` : "0.0kg"}
               </span>
-              <span className="text-xs text-slate-400 font-medium">nos últimos 30d</span>
+              <span className="text-xs text-slate-400 font-medium">média por paciente</span>
             </div>
-            <span className="inline-flex items-center gap-0.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
-              <ArrowDownRight className="w-3 h-3" /> Redução
+            <span className="inline-flex items-center gap-0.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+              <ArrowDownRight className="w-3 h-3" /> {pacientesComPerda}/{totalAtivos} pac.
             </span>
           </div>
 
-          <div className="w-full h-20">
-            {mounted ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={weightData} margin={{ top: 5, right: 5, left: -30, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="weightGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="semana"
-                    tick={{ fontSize: 9, fill: "#94a3b8" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    domain={["dataMin - 1", "dataMax + 1"]}
-                    tick={{ fontSize: 9, fill: "#94a3b8" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#1e293b",
-                      borderRadius: "8px",
-                      border: "none",
-                      color: "#fff",
-                      fontSize: "11px",
-                    }}
-                    formatter={(val: any) => [`${val} kg`, "Peso Médio"]}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="peso"
-                    stroke="#10b981"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#weightGrad)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
-            )}
-          </div>
+          <p className="text-xs text-slate-500 font-medium">
+            {pacientesComPerda > 0
+              ? `Média calculada sobre ${pacientesComPerda} paciente(s) com perda ponderal registrada no mês.`
+              : "Aguardando registros de evolução ponderal no mês corrente."}
+          </p>
         </div>
       );
     }
 
-    /* 6. ALERT-LIST / ALERTAS GLICÊMICOS */
+    /* 5. ALERT-LIST / ALERTAS GLICÊMICOS */
     case "alert-list": {
-      if (widget.id === "alertas-glicemicos" && glicemiaData) {
-        const alertasCriticos = glicemiaData.alertasHoje || [];
-        const totalAlertas = glicemiaData.totalAlertasHoje ?? alertasCriticos.length;
+      const alertasCriticos = glicemiaData?.alertasHoje || [];
+      const totalAlertas = glicemiaData?.totalAlertasHoje ?? alertasCriticos.length;
 
-        return (
-          <div className="space-y-2">
-            {/* Destaque do volume de Alertas críticos no dia (< 70 ou > 180 mg/dL) */}
-            <div className="flex items-center justify-between px-1 pb-0.5">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-black text-rose-600 tracking-tight leading-none">
-                  {totalAlertas}
-                </span>
-                <span className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
-                  {totalAlertas === 1 ? "Alerta Crítico" : "Alertas Críticos"}
-                </span>
-              </div>
-              <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-full">
-                &lt; 70 ou &gt; 180 mg/dL
+      return (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1 pb-0.5">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-2xl font-black text-rose-600 tracking-tight leading-none">
+                {totalAlertas}
+              </span>
+              <span className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
+                {totalAlertas === 1 ? "Alerta Crítico" : "Alertas Críticos"}
               </span>
             </div>
+            <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-full">
+              &lt; 70 ou &gt; 180 mg/dL
+            </span>
+          </div>
 
-            {alertasCriticos.length > 0 ? (
-              alertasCriticos.slice(0, 2).map((alerta) => (
-                <div
-                  key={alerta.id}
-                  className="bg-rose-50/80 border border-rose-100 rounded-xl p-2.5 flex items-center justify-between text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
-                    <div className="min-w-0">
-                      <span className="font-bold text-slate-800 block truncate">
-                        {alerta.pacienteNome}
+          {alertasCriticos.length > 0 ? (
+            alertasCriticos.slice(0, 2).map((alerta) => (
+              <div
+                key={alerta.id}
+                className="bg-rose-50/80 border border-rose-100 rounded-xl p-2.5 flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-800 block truncate">
+                      {alerta.pacienteNome}
+                    </span>
+                    <div className="flex items-center gap-1 text-[10px] text-slate-500 truncate">
+                      <Clock className="w-2.5 h-2.5 shrink-0" />
+                      <span>
+                        {alerta.momentoLegivel} • {alerta.horario}
                       </span>
-                      <div className="flex items-center gap-1 text-[10px] text-slate-500 truncate">
-                        <Clock className="w-2.5 h-2.5 shrink-0" />
-                        <span>
-                          {alerta.momentoLegivel} • {alerta.horario}
-                        </span>
-                      </div>
                     </div>
                   </div>
-
-                  <span className="font-extrabold text-rose-700 bg-white border border-rose-200 px-2 py-0.5 rounded-md shadow-2xs shrink-0 ml-2">
-                    {alerta.valor} mg/dL
-                  </span>
                 </div>
-              ))
-            ) : (
-              <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-3 text-center">
-                <span className="text-xs font-bold text-emerald-800 block">
-                  Nenhum alerta crítico hoje
-                </span>
-                <span className="text-[10px] text-emerald-600 font-medium">
-                  Todos os check-ins entre 70 e 180 mg/dL
+
+                <span className="font-extrabold text-rose-700 bg-white border border-rose-200 px-2 py-0.5 rounded-md shadow-2xs shrink-0 ml-2">
+                  {alerta.valor} mg/dL
                 </span>
               </div>
-            )}
-          </div>
-        );
-      }
-
-      const alerts = (widget.dados as AlertItem[]) || [];
-      return (
-        <div className="space-y-2">
-          {alerts.map((alerta, idx) => (
-            <div
-              key={idx}
-              className="bg-rose-50/80 border border-rose-100 rounded-xl p-2.5 flex items-center justify-between text-xs"
-            >
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                <div>
-                  <span className="font-bold text-slate-800 block">
-                    {alerta.paciente}
-                  </span>
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                    <Clock className="w-2.5 h-2.5" />
-                    <span>{alerta.tempo}</span>
-                  </div>
-                </div>
-              </div>
-
-              <span className="font-extrabold text-rose-700 bg-white border border-rose-200 px-2 py-0.5 rounded-md shadow-2xs">
-                {alerta.valor}
+            ))
+          ) : (
+            <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-3 text-center">
+              <span className="text-xs font-bold text-emerald-800 block">
+                Nenhum alerta crítico hoje
+              </span>
+              <span className="text-[10px] text-emerald-600 font-medium">
+                Todos os check-ins entre 70 e 180 mg/dL
               </span>
             </div>
-          ))}
+          )}
         </div>
       );
     }
 
-    /* 7. TAGS / SINTOMAS FREQUENTES */
-    case "tags": {
-      const tags = (widget.dados as string[]) || [];
-      return (
-        <div className="flex flex-wrap gap-1.5 py-1">
-          {tags.map((tag, idx) => (
-            <span
-              key={idx}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-50 border border-slate-200/80 text-slate-700 hover:bg-slate-100 transition-colors"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-              {tag}
-            </span>
-          ))}
-        </div>
-      );
-    }
-
-    /* 8. ALERT-NUMBER / RISCO DE EVASÃO */
+    /* 6. ALERT-NUMBER / RISCO DE EVASÃO (Query Real > 7 dias sem check-in) */
     case "alert-number": {
+      const emRisco = hidratacaoData?.riscoEvasao?.pacientesEmRisco ?? 0;
+      const totalAtivos = hidratacaoData?.riscoEvasao?.totalPacientesAtivos ?? 0;
+
       return (
         <div className="space-y-2">
-          <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-black text-rose-600 tracking-tight">
-              {widget.valor}
-            </span>
-            <span className="text-xs font-semibold text-rose-700 uppercase tracking-wide">
-              Pacientes em risco
+          <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline gap-2">
+              <span className="text-4xl font-black text-rose-600 tracking-tight">
+                {emRisco}
+              </span>
+              <span className="text-xs font-semibold text-rose-700 uppercase tracking-wide">
+                {emRisco === 1 ? "Paciente em risco" : "Pacientes em risco"}
+              </span>
+            </div>
+            <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+              de {totalAtivos} ativos
             </span>
           </div>
-          {widget.subtexto && (
-            <p className="text-xs text-slate-500 font-medium">
-              {widget.subtexto}
-            </p>
-          )}
+          <p className="text-xs text-slate-500 font-medium">
+            Pacientes ativos sem check-in registrado nos últimos 7 dias.
+          </p>
         </div>
       );
     }

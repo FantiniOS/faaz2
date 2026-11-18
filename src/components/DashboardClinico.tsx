@@ -182,11 +182,20 @@ export function DashboardClinico({ user }: DashboardClinicoProps) {
         if (json.success && typeof json.totalConsumidoHojeL === "number") {
           const nextHidratacao: HidratacaoConsolidada = {
             totalConsumidoHojeL: json.totalConsumidoHojeL,
-            metaTotalHojeL: json.metaTotalHojeL || 30.0,
+            metaTotalHojeL: json.metaTotalHojeL ?? 0,
             percentualAderencia: json.percentualAderencia ?? 0,
-            pacientesAtivosProtocolo: json.pacientesAtivosProtocolo || 12,
-            pacientesQueRegistraramHoje: json.pacientesQueRegistraramHoje || 0,
-            totalRegistrosHoje: json.totalRegistrosHoje || 0,
+            pacientesAtivosProtocolo: json.pacientesAtivosProtocolo ?? 0,
+            pacientesQueRegistraramHoje: json.pacientesQueRegistraramHoje ?? 0,
+            totalRegistrosHoje: json.totalRegistrosHoje ?? 0,
+            engajamentoApp: json.engajamentoApp ?? {
+              percentual: 0,
+              pacientesEngajados7d: 0,
+              totalPacientesAtivos: json.pacientesAtivosProtocolo ?? 0,
+            },
+            riscoEvasao: json.riscoEvasao ?? {
+              pacientesEmRisco: 0,
+              totalPacientesAtivos: json.pacientesAtivosProtocolo ?? 0,
+            },
           };
           const sig = JSON.stringify(nextHidratacao);
           if (sig !== lastHidratacaoSigRef.current) {
@@ -239,11 +248,17 @@ export function DashboardClinico({ user }: DashboardClinicoProps) {
   useEffect(() => {
     setIsMounted(true);
     try {
+      const ghostIds = new Set(["qualidade-sono", "sintomas-frequentes"]);
       const saved = localStorage.getItem("faaz_dashboard_layout_v2");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setWidgets(parsed);
+          const filtered = parsed.filter(
+            (w: DashboardWidgetConfig) => w && !ghostIds.has(w.id)
+          );
+          if (filtered.length > 0) {
+            setWidgets(filtered);
+          }
         }
       }
     } catch (e) {
@@ -405,9 +420,9 @@ export function DashboardClinico({ user }: DashboardClinicoProps) {
           onRefresh={fetchLiveData}
         />
 
-        {/* ÁREA DE CONTEÚDO COM DND-KIT OU FALLBACK SSR ESTÁTICO */}
+        {/* ÁREA DE CONTEÚDO COM DND-KIT (GRID 3x2 HARMÔNICO SEM CARDS FANTASMAS) */}
         {!isMounted ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {widgets.map((widget) => (
               <WidgetCard
                 key={widget.id}
@@ -415,6 +430,7 @@ export function DashboardClinico({ user }: DashboardClinicoProps) {
                 intestinoData={intestinoData}
                 hidratacaoData={hidratacaoData}
                 glicemiaData={glicemiaData}
+                metricaPesoData={metricaPesoData}
                 onOpenDetails={handleOpenDetails}
               />
             ))}
@@ -430,7 +446,7 @@ export function DashboardClinico({ user }: DashboardClinicoProps) {
               items={widgets.map((w) => w.id)}
               strategy={rectSortingStrategy}
             >
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {widgets.map((widget) => (
                   <SortableWidgetCard
                     key={widget.id}
@@ -438,6 +454,7 @@ export function DashboardClinico({ user }: DashboardClinicoProps) {
                     intestinoData={intestinoData}
                     hidratacaoData={hidratacaoData}
                     glicemiaData={glicemiaData}
+                    metricaPesoData={metricaPesoData}
                     onOpenDetails={handleOpenDetails}
                   />
                 ))}
