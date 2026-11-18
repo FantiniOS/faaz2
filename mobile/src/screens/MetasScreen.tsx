@@ -48,42 +48,52 @@ export function MetasScreen({
   const realPacienteId = pacienteId || authPaciente?.id;
   const nomeExibicao = (pacienteNome || authPaciente?.nome || "PACIENTE").toUpperCase();
 
-  // Estados de Metas sincronizados com o Diário Alimentar do Paciente e API
+  // Estados de Metas sincronizados exclusivamente com o Diário Alimentar e API Oracle (sem dados chumbados)
   const diario = useDiarioAlimentar();
-  const [caloriasAlvoApi, setCaloriasAlvoApi] = useState<number | null>(null);
-  const caloriasAlvo = caloriasAlvoApi || diario.caloriasMeta || 2000;
+  const [caloriasAlvoApi, setCaloriasAlvoApi] = useState<number>(0);
+  const caloriasAlvo = caloriasAlvoApi > 0 ? caloriasAlvoApi : diario.caloriasMeta;
   const caloriasConsumidas = diario.caloriasConsumidas;
-  const [caloriasBonusGanhos, setCaloriasBonusGanhos] = useState(320);
-  const [caloriasBonusMeta, setCaloriasBonusMeta] = useState(400);
-  const [sonoHoras, setSonoHoras] = useState(7.5);
-  const [sonoAlvoHoras, setSonoAlvoHoras] = useState(8.0);
-  const [aguaConsumidaMl, setAguaConsumidaMl] = useState(1800);
-  const [aguaMetaMl, setAguaMetaMl] = useState(2500);
+  const [caloriasBonusGanhos, setCaloriasBonusGanhos] = useState(0);
+  const [caloriasBonusMeta, setCaloriasBonusMeta] = useState(0);
+  const [treinosHoje, setTreinosHoje] = useState<
+    Array<{ id: string; titulo: string; calorias: number }>
+  >([]);
+  const [sonoHoras, setSonoHoras] = useState(0);
+  const [sonoAlvoHoras, setSonoAlvoHoras] = useState(0);
+  const [sonoMediaSemana, setSonoMediaSemana] = useState(0);
+  const [sonoQualidade, setSonoQualidade] = useState<string | null>(null);
+  const [aguaConsumidaMl, setAguaConsumidaMl] = useState(0);
+  const [aguaMetaMl, setAguaMetaMl] = useState(0);
 
-  // Busca metas sincronizadas da API caso disponível
+  // Busca metas e check-ins reais sincronizados da API Oracle
   useEffect(() => {
     const id = realPacienteId;
     if (!id) return;
 
     let isMounted = true;
-    async function loadMetas(pacienteId: string) {
+    async function loadMetas(pId: string) {
       try {
-        const json = await api.pacientes.getMetas(pacienteId);
-        if (isMounted && json?.metas) {
-          if (json.metas.caloriasAlvo) {
-            setCaloriasAlvoApi(Number(json.metas.caloriasAlvo));
+        const json = await api.pacientes.getMetas(pId);
+        if (isMounted && json) {
+          if (json.metas) {
+            setCaloriasAlvoApi(Number(json.metas.caloriasAlvo) || 0);
+            const bonusVal =
+              json.metas.caloriasBonusAlvo ?? json.metas.pontosBonusAlvo ?? 0;
+            setCaloriasBonusMeta(Number(bonusVal) || 0);
+            setSonoAlvoHoras(Number(json.metas.sonoHorasAlvo) || 0);
+            setAguaMetaMl(Number(json.metas.aguaMlAlvo) || 0);
           }
-          if (json.metas.caloriasBonusAlvo !== undefined) {
-            setCaloriasBonusMeta(Number(json.metas.caloriasBonusAlvo));
-          } else if (json.metas.pontosBonusAlvo) {
-            const bVal = Number(json.metas.pontosBonusAlvo);
-            setCaloriasBonusMeta(bVal > 50 ? bVal : bVal * 30);
-          }
-          if (json.metas.sonoHorasAlvo) setSonoAlvoHoras(Number(json.metas.sonoHorasAlvo));
-          if (json.metas.aguaMlAlvo) setAguaMetaMl(Number(json.metas.aguaMlAlvo));
+          setCaloriasBonusGanhos(Number(json.caloriasGastasTreino) || 0);
+          setTreinosHoje(Array.isArray(json.treinosHoje) ? json.treinosHoje : []);
+          setSonoHoras(
+            json.ultimoSono ? Number(json.ultimoSono.horas) || 0 : 0
+          );
+          setSonoQualidade(json.ultimoSono?.qualidade || null);
+          setSonoMediaSemana(Number(json.sonoMediaSemana) || 0);
+          setAguaConsumidaMl(Number(json.hidratacaoHoje?.consumidoMl) || 0);
         }
       } catch {
-        // Fallback para os valores locais estáticos
+        // Mantém estado zerado quando sem conexão/dados
       }
     }
     loadMetas(id);
@@ -93,22 +103,46 @@ export function MetasScreen({
     };
   }, [realPacienteId]);
 
-  // Cálculos do Orçamento Calórico (com base nas refeições e check-ins reais)
-  const saldoCaloricoDisponivel = Math.max(0, diario.caloriasRestantes + caloriasBonusGanhos);
-  const percConsumoCalorias = diario.percentualConsumido;
-  const percBonusTreino = Math.min(100, Math.round((caloriasBonusGanhos / caloriasBonusMeta) * 100));
-  const percSono = Math.min(100, Math.round((sonoHoras / sonoAlvoHoras) * 100));
-  const percAgua = Math.min(100, Math.round((aguaConsumidaMl / aguaMetaMl) * 100));
+  // Cálculos do Orçamento Calórico (estritamente baseados nos registros reais)
+  const saldoCaloricoDisponivel = Math.max(
+    0,
+    caloriasAlvo - caloriasConsumidas + caloriasBonusGanhos
+  );
+  const percConsumoCalorias =
+    caloriasAlvo > 0
+      ? Math.min(100, Math.round((caloriasConsumidas / caloriasAlvo) * 100))
+      : 0;
+  const percBonusTreino =
+    caloriasBonusMeta > 0
+      ? Math.min(100, Math.round((caloriasBonusGanhos / caloriasBonusMeta) * 100))
+      : 0;
+  const percSono =
+    sonoAlvoHoras > 0
+      ? Math.min(100, Math.round((sonoHoras / sonoAlvoHoras) * 100))
+      : 0;
+  const percAgua =
+    aguaMetaMl > 0
+      ? Math.min(100, Math.round((aguaConsumidaMl / aguaMetaMl) * 100))
+      : 0;
 
-  function handleAddAgua(ml: number) {
-    setAguaConsumidaMl((prev) => {
-      const novo = Math.min(aguaMetaMl * 2, prev + ml);
-      Alert.alert(
-        "HIDRATAÇÃO REGISTRADA",
-        `+${ml} ML ADICIONADOS COM SUCESSO! TOTAL DO DIA: ${(novo / 1000).toFixed(1)} L.`
-      );
-      return novo;
-    });
+  async function handleAddAgua(ml: number) {
+    const novo = aguaConsumidaMl + ml;
+    setAguaConsumidaMl(novo);
+    if (realPacienteId) {
+      try {
+        await api.checkins.registrarHidratacao({
+          pacienteId: realPacienteId,
+          volumeMl: ml,
+          metaDiariaMl: aguaMetaMl || undefined,
+        });
+      } catch {
+        // Ignora falha silenciosa
+      }
+    }
+    Alert.alert(
+      "HIDRATAÇÃO REGISTRADA",
+      `+${ml} ML ADICIONADOS COM SUCESSO! TOTAL DO DIA: ${(novo / 1000).toFixed(1)} L.`
+    );
   }
 
   return (
@@ -264,7 +298,9 @@ export function MetasScreen({
             </View>
             <View style={styles.badgeCreditActive}>
               <CheckCircle2 size={12} color="#065f46" />
-              <Text style={styles.badgeCreditActiveText}>CRÉDITO ATIVO</Text>
+              <Text style={styles.badgeCreditActiveText}>
+                {caloriasBonusGanhos > 0 ? "TREINO REGISTRADO" : "SEM TREINO HOJE"}
+              </Text>
             </View>
           </View>
 
@@ -278,19 +314,26 @@ export function MetasScreen({
             />
           </View>
 
-          {/* Explicação de Compensação Calórica */}
+          {/* Detalhes Reais de Treino ou Empty State */}
           <View style={styles.cardDetailsBox}>
-            <View style={styles.detailItemRow}>
-              <Text style={styles.detailLabel}>TREINO DE FORÇA / MUSCULAÇÃO</Text>
-              <Text style={styles.detailValue}>+200 KCAL QUEIMADAS</Text>
-            </View>
-            <View style={styles.detailItemRow}>
-              <Text style={styles.detailLabel}>CARDIO / GASTO ENERGÉTICO ATIVO</Text>
-              <Text style={styles.detailValue}>+120 KCAL QUEIMADAS</Text>
-            </View>
+            {treinosHoje.length > 0 ? (
+              treinosHoje.map((t) => (
+                <View key={t.id} style={styles.detailItemRow}>
+                  <Text style={styles.detailLabel}>{t.titulo.toUpperCase()}</Text>
+                  <Text style={styles.detailValue}>+{t.calorias} KCAL QUEIMADAS</Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.detailItemRow}>
+                <Text style={styles.detailLabel}>ATIVIDADE FÍSICA DE HOJE</Text>
+                <Text style={styles.detailValue}>AGUARDANDO PRIMEIRO CHECK-IN</Text>
+              </View>
+            )}
             <View style={[styles.detailItemRow, { borderBottomWidth: 0 }]}>
               <Text style={styles.detailLabel}>META DE GASTO ATIVO DO DIA</Text>
-              <Text style={styles.detailValue}>+{caloriasBonusMeta} KCAL</Text>
+              <Text style={styles.detailValue}>
+                {caloriasBonusMeta > 0 ? `+${caloriasBonusMeta} KCAL` : "NENHUMA META DEFINIDA"}
+              </Text>
             </View>
           </View>
 
@@ -318,7 +361,9 @@ export function MetasScreen({
             </View>
 
             <View style={styles.tagBadgePurple}>
-              <Text style={styles.tagBadgePurpleText}>RITMO ESTÁVEL</Text>
+              <Text style={styles.tagBadgePurpleText}>
+                {sonoHoras > 0 ? "REGISTRADO" : "SEM REGISTRO"}
+              </Text>
             </View>
           </View>
 
@@ -326,10 +371,14 @@ export function MetasScreen({
           <View style={styles.metricRow}>
             <View style={styles.metricNumbers}>
               <Text style={[styles.metricBigText, { color: "#6d28d9" }]}>{sonoHoras}h</Text>
-              <Text style={styles.metricUnitText}>/ {sonoAlvoHoras}h ALVO CLÍNICO</Text>
+              <Text style={styles.metricUnitText}>
+                / {sonoAlvoHoras}h ALVO CLÍNICO
+              </Text>
             </View>
             <View style={styles.badgeQualityGood}>
-              <Text style={styles.badgeQualityGoodText}>QUALIDADE: BOM</Text>
+              <Text style={styles.badgeQualityGoodText}>
+                {sonoQualidade ? `QUALIDADE: ${sonoQualidade}` : "SEM CHECK-IN"}
+              </Text>
             </View>
           </View>
 
@@ -343,19 +392,25 @@ export function MetasScreen({
             />
           </View>
 
-          {/* Detalhes de Sono */}
+          {/* Detalhes de Sono Reais */}
           <View style={styles.cardDetailsBox}>
             <View style={styles.detailItemRow}>
               <Text style={styles.detailLabel}>MÉDIA SEMANAL REGISTRADA</Text>
-              <Text style={styles.detailValue}>7.2 HORAS / NOITE</Text>
+              <Text style={styles.detailValue}>
+                {sonoMediaSemana > 0 ? `${sonoMediaSemana} HORAS / NOITE` : "0 HORAS / NOITE"}
+              </Text>
             </View>
             <View style={styles.detailItemRow}>
               <Text style={styles.detailLabel}>EFICIÊNCIA METABÓLICA</Text>
-              <Text style={[styles.detailValue, { color: "#7c3aed" }]}>94% DO ALVO</Text>
+              <Text style={[styles.detailValue, { color: "#7c3aed" }]}>
+                {percSono}% DO ALVO
+              </Text>
             </View>
             <View style={[styles.detailItemRow, { borderBottomWidth: 0 }]}>
               <Text style={styles.detailLabel}>STATUS CLÍNICO</Text>
-              <Text style={styles.detailValue}>RESTAURAÇÃO PROFUNDA ATIVA</Text>
+              <Text style={styles.detailValue}>
+                {sonoHoras > 0 ? "REGISTRO SINCRONIZADO" : "AGUARDANDO PRIMEIRO CHECK-IN"}
+              </Text>
             </View>
           </View>
 

@@ -53,40 +53,44 @@ export function ProfileScreen({
   const { paciente, logout, atualizarAvatarUrl } = usePatientAuth();
   const [isUploading, setIsUploading] = useState(false);
   const [treatmentObjective, setTreatmentObjective] = useState<string>(
-    paciente?.treatmentObjective || paciente?.focoClinico || "Otimização Metabólica & Saúde Integrativa"
+    paciente?.treatmentObjective || paciente?.focoClinico || ""
+  );
+  const [metaAguaMl, setMetaAguaMl] = useState<number>(
+    paciente?.metaDiariaMl || 0
   );
 
   const nomeExibicao = (paciente?.nome || "PACIENTE FAAZ").toUpperCase();
   const initialLetter = nomeExibicao.trim().charAt(0) || "P";
-  const prontuarioCodigo = paciente?.recordCode || "FAAZ-00001";
-  const medicoResponsavel = paciente?.medicoResponsavel || "DR. CARLOS FANTINI";
+  const prontuarioCodigo = paciente?.recordCode || "--";
+  const medicoResponsavel = paciente?.medicoResponsavel || "CORPO CLÍNICO FAAZ";
   const especialidade = paciente?.especialidadeMedico || "ENDOCRINOLOGIA & METABOLOGIA";
-  const focoClinico = treatmentObjective || paciente?.focoClinico || "OTIMIZAÇÃO METABÓLICA & SAÚDE INTEGRATIVA";
-  const metaAguaLitros = paciente?.metaDiariaMl ? (paciente.metaDiariaMl / 1000).toFixed(1) : "2.5";
+  const focoClinico = treatmentObjective || paciente?.focoClinico || "NENHUMA DIRETRIZ DEFINIDA";
+  const metaAguaLitros = metaAguaMl > 0 ? (metaAguaMl / 1000).toFixed(1) : "0.0";
 
-  // Sincroniza em tempo real o Objetivo Clínico definido pela médica no Prontuário Web
+  // Sincroniza em tempo real o Objetivo Clínico e a Meta Hídrica definidos no Prontuário Web
   React.useEffect(() => {
     let isMounted = true;
     async function loadFreshObjective() {
       if (!paciente?.id) return;
       try {
-        const res = await api.get(`/pacientes/${paciente.id}`);
-        if (isMounted && res?.paciente) {
-          const fresh = res.paciente.treatmentObjective || res.paciente.clinicalFocus;
-          if (fresh) {
-            setTreatmentObjective(fresh);
-            return;
-          }
-        }
-      } catch {
-        // Tenta via endpoint de metas como fallback
-      }
-
-      try {
         const metasRes = await api.pacientes.getMetas(paciente.id);
         if (isMounted && metasRes?.metas) {
           const freshMetas = metasRes.metas.treatmentObjective || metasRes.metas.focoMetabolico;
-          if (freshMetas) setTreatmentObjective(freshMetas);
+          if (freshMetas !== undefined) setTreatmentObjective(freshMetas);
+          if (metasRes.metas.aguaMlAlvo !== undefined) {
+            setMetaAguaMl(Number(metasRes.metas.aguaMlAlvo) || 0);
+          }
+          return;
+        }
+      } catch {
+        // Tenta via endpoint de paciente como fallback
+      }
+
+      try {
+        const res = await api.get(`/pacientes/${paciente.id}`);
+        if (isMounted && res?.paciente) {
+          const fresh = res.paciente.treatmentObjective || res.paciente.clinicalFocus || "";
+          setTreatmentObjective(fresh);
         }
       } catch {
         // Fallback silencioso mantendo o estado anterior
@@ -422,7 +426,7 @@ export function ProfileScreen({
             </View>
           </View>
           <Text className="text-sm font-semibold text-slate-800 tracking-tight leading-snug pl-0.5" style={styles.objectiveText}>
-            {treatmentObjective}
+            {treatmentObjective || "Nenhuma diretriz definida"}
           </Text>
         </View>
 

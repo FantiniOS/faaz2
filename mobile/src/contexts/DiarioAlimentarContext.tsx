@@ -98,7 +98,7 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
   const { paciente } = usePatientAuth();
   const pacienteId = paciente?.id;
 
-  const [caloriasMeta, setCaloriasMeta] = useState<number>(1800);
+  const [caloriasMeta, setCaloriasMeta] = useState<number>(0);
   const [variacoes, setVariacoes] = useState<any[]>([]);
   const [variacaoAtivaId, setVariacaoAtivaId] = useState<string | null>(null);
   const [consumidoMap, setConsumidoMap] = useState<Record<string, boolean>>({});

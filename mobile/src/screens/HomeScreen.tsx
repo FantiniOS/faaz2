@@ -122,10 +122,7 @@ export function HomeScreen({
 
   const nomeExibicao = authPaciente?.nome || paciente.nome;
   const initialLetter = (nomeExibicao || "P").trim().charAt(0).toUpperCase();
-  const realPacienteId = authPaciente?.id || "92dab67a-1977-4690-ae23-7cc60499a0c5";
-  const metaAguaLitros = authPaciente?.metaDiariaMl
-    ? authPaciente.metaDiariaMl / 1000
-    : metasHoje.agua.meta;
+  const realPacienteId = authPaciente?.id || "";
 
   const avatarUrl = React.useMemo(() => {
     if (!authPaciente?.avatarUrl) return null;
@@ -140,7 +137,10 @@ export function HomeScreen({
   const [treinoFeito, setTreinoFeito] = useState(false);
   const [salvandoTreino, setSalvandoTreino] = useState(false);
   const [aguaAtual, setAguaAtual] = useState(0);
-  const [pesoAtualJornada, setPesoAtualJornada] = useState<number>(84.8);
+  const [metaAguaLitrosState, setMetaAguaLitrosState] = useState<number>(0);
+  const [pesoInicialJornada, setPesoInicialJornada] = useState<number>(0);
+  const [pesoAtualJornada, setPesoAtualJornada] = useState<number>(0);
+  const [pesoMetaJornada, setPesoMetaJornada] = useState<number>(0);
   const [internalCheckins, setInternalCheckins] = useState<string[]>([]);
   const checkinsConcluidos = Array.from(
     new Set([...internalCheckins, ...(completedCheckins || [])])
@@ -150,10 +150,11 @@ export function HomeScreen({
     useState<ProximaConsultaInfo | null>(null);
   const [carregandoConsulta, setCarregandoConsulta] = useState<boolean>(true);
 
-  const percAgua = Math.min(
-    Math.round((aguaAtual / metaAguaLitros) * 100),
-    100
-  );
+  const metaAguaLitros = metaAguaLitrosState;
+  const percAgua =
+    metaAguaLitros > 0
+      ? Math.min(Math.round((aguaAtual / metaAguaLitros) * 100), 100)
+      : 0;
   const calAtual = metasHoje?.calorias?.atual ?? 0;
   const calMeta = metasHoje?.calorias?.meta ?? 2000;
   const percCal = Math.min(
@@ -202,20 +203,39 @@ export function HomeScreen({
     loadTodayHidratacao();
   }, [realPacienteId]);
 
-  // Sincroniza o peso atual mais recente do paciente logado
+  // Sincroniza o peso atual e metas reais do paciente logado via API Oracle
   useEffect(() => {
+    if (!realPacienteId) return;
     let isMounted = true;
-    async function loadPesoRecente() {
+    async function loadPesoEMetasRecentes() {
+      try {
+        const metasJson = await api.pacientes.getMetas(realPacienteId);
+        if (isMounted && metasJson) {
+          if (metasJson.metas?.aguaMlAlvo !== undefined) {
+            setMetaAguaLitrosState(
+              Number((Number(metasJson.metas.aguaMlAlvo) / 1000).toFixed(1)) || 0
+            );
+          }
+          if (metasJson.pesoEvolucao) {
+            setPesoInicialJornada(Number(metasJson.pesoEvolucao.pesoInicialKg) || 0);
+            setPesoAtualJornada(Number(metasJson.pesoEvolucao.pesoAtualKg) || 0);
+            setPesoMetaJornada(Number(metasJson.pesoEvolucao.pesoAlvoKg) || 0);
+          }
+        }
+      } catch {
+        // Mantém estado zerado
+      }
+
       try {
         const json = await api.pacientes.getPesagens(realPacienteId);
         if (json && typeof json.pesoAtual === "number" && isMounted) {
           setPesoAtualJornada(json.pesoAtual);
         }
       } catch {
-        // Continua com valor local
+        // Mantém valor sincronizado
       }
     }
-    loadPesoRecente();
+    loadPesoEMetasRecentes();
     return () => {
       isMounted = false;
     };
@@ -522,9 +542,9 @@ export function HomeScreen({
         {/* ======================================================== */}
         <WeightJourneyPath
           pacienteId={realPacienteId}
-          pesoInicial={92.0}
+          pesoInicial={pesoInicialJornada}
           pesoAtual={pesoAtualJornada}
-          pesoMeta={77.0}
+          pesoMeta={pesoMetaJornada}
           onPesoUpdated={(novo) => {
             setPesoAtualJornada(novo);
           }}

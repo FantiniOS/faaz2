@@ -104,59 +104,24 @@ interface MetasData {
       peso: number;
     }>;
   };
+  caloriasConsumidasHoje?: number;
+  caloriasGastasTreino?: number;
+  treinosHoje?: Array<{
+    id: string;
+    titulo: string;
+    calorias: number;
+    data?: string | Date;
+  }>;
 }
 
 export function MetasTab({
   pacienteId,
   pacienteNome,
-  pacienteMetaHidricaMl = 2500,
-  pacientePesoAtualKg,
-  pacienteAlturaCm,
   ultimoSonoInicial,
 }: MetasTabProps) {
   const [mounted, setMounted] = useState(false);
-  const [isLoading, setIsLoading] = useState(!ultimoSonoInicial);
-  const [data, setData] = useState<MetasData | null>(() => {
-    if (ultimoSonoInicial) {
-      return {
-        metas: {
-          sonoHorasAlvo: 8.0,
-          aguaMlAlvo: pacienteMetaHidricaMl || 2500,
-          pesoAlvoKg: 78.0,
-          passosAlvo: 8000,
-          caloriasAlvo: 2000,
-          caloriasBonusAlvo: 300,
-          pontosAlvo: 2000,
-          pontosBonusAlvo: 300,
-          focoMetabolico: "OTIMIZAÇÃO METABÓLICA & SAÚDE INTEGRATIVA",
-        },
-        ultimoSono: ultimoSonoInicial,
-        horasDormidasRecentes: ultimoSonoInicial.horas,
-        sonoHistorico: [
-          { dia: "Seg", data: "03/11", horas: 6.8, meta: 8.0, qualidade: "Boa", sonoProfundoHoras: 1.8 },
-          { dia: "Ter", data: "04/11", horas: 7.2, meta: 8.0, qualidade: "Excelente", sonoProfundoHoras: 2.1 },
-          { dia: "Qua", data: "05/11", horas: 6.0, meta: 8.0, qualidade: "Regular", sonoProfundoHoras: 1.4 },
-          { dia: "Qui", data: "06/11", horas: 7.5, meta: 8.0, qualidade: "Excelente", sonoProfundoHoras: 2.3 },
-          { dia: "Sex", data: "07/11", horas: 6.4, meta: 8.0, qualidade: "Boa", sonoProfundoHoras: 1.7 },
-          { dia: "Sáb", data: "08/11", horas: 8.1, meta: 8.0, qualidade: "Excelente", sonoProfundoHoras: 2.5 },
-          { dia: "Dom", data: "09/11", horas: ultimoSonoInicial.horas, meta: 8.0, qualidade: ultimoSonoInicial.qualidade, sonoProfundoHoras: 1.9 },
-        ],
-        sonoMediaSemana: Math.round(((6.8 + 7.2 + 6.0 + 7.5 + 6.4 + 8.1 + ultimoSonoInicial.horas) / 7) * 10) / 10,
-        hidratacaoHoje: { consumidoMl: 1850, metaMl: pacienteMetaHidricaMl || 2500, percentual: 74 },
-        hidratacaoHistorico: [],
-        pesoEvolucao: {
-          pesoInicialKg: 89.2,
-          pesoAtualKg: typeof pacientePesoAtualKg === "number" ? pacientePesoAtualKg : 84.5,
-          pesoAlvoKg: 75.0,
-          perdaTotalKg: -4.7,
-          distanciaAlvoKg: 6.5,
-          imcAtual: 26.7,
-          historico: [],
-        },
-      };
-    }
-    return null;
-  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [data, setData] = useState<MetasData | null>(null);
   const [isModalAjusteOpen, setIsModalAjusteOpen] = useState(false);
   const isModalAjusteOpenRef = useRef(false);
   const [isSavingMetas, setIsSavingMetas] = useState(false);
@@ -165,24 +130,26 @@ export function MetasTab({
   const [objetivoSalvoRecently, setObjetivoSalvoRecently] = useState(false);
   const [toastMensagem, setToastMensagem] = useState<string | null>(null);
 
-  // Estados do formulário mantidos como string durante a digitação para evitar reversão/quebra com vírgula ou apagamento
-  const [formSonoHoras, setFormSonoHoras] = useState("8.0");
-  const [formAguaMl, setFormAguaMl] = useState(String(pacienteMetaHidricaMl || 2500));
-  const [formPesoAlvo, setFormPesoAlvo] = useState("75.0");
-  const [formCaloriasAlvo, setFormCaloriasAlvo] = useState("2000");
-  const [formCaloriasBonus, setFormCaloriasBonus] = useState("300");
-  const [formFoco, setFormFoco] = useState("Otimização Metabólica & Saúde Integrativa");
+  // Estados do formulário mantidos como string durante a digitação
+  const [formSonoHoras, setFormSonoHoras] = useState("");
+  const [formAguaMl, setFormAguaMl] = useState("");
+  const [formPesoAlvo, setFormPesoAlvo] = useState("");
+  const [formCaloriasAlvo, setFormCaloriasAlvo] = useState("");
+  const [formCaloriasBonus, setFormCaloriasBonus] = useState("");
+  const [formFoco, setFormFoco] = useState<string>(CLINICAL_OBJECTIVES[0]);
 
   const syncFormFromMetas = useCallback((m: MetasData["metas"]) => {
-    setFormSonoHoras(String(m.sonoHorasAlvo ?? 8.0));
-    setFormAguaMl(String(m.aguaMlAlvo ?? 2500));
-    setFormPesoAlvo(String(m.pesoAlvoKg ?? 75.0));
-    setFormCaloriasAlvo(String(m.caloriasAlvo ?? m.pontosAlvo ?? 2000));
-    setFormCaloriasBonus(String(m.caloriasBonusAlvo ?? m.pontosBonusAlvo ?? 300));
+    setFormSonoHoras(m.sonoHorasAlvo ? String(m.sonoHorasAlvo) : "");
+    setFormAguaMl(m.aguaMlAlvo ? String(m.aguaMlAlvo) : "");
+    setFormPesoAlvo(m.pesoAlvoKg ? String(m.pesoAlvoKg) : "");
+    const cal = m.caloriasAlvo ?? m.pontosAlvo ?? 0;
+    setFormCaloriasAlvo(cal ? String(cal) : "");
+    const bonus = m.caloriasBonusAlvo ?? m.pontosBonusAlvo ?? 0;
+    setFormCaloriasBonus(bonus ? String(bonus) : "");
     setFormFoco(
       m.treatmentObjective ||
         m.focoMetabolico ||
-        "Otimização Metabólica & Saúde Integrativa"
+        CLINICAL_OBJECTIVES[0]
     );
   }, []);
 
@@ -408,45 +375,61 @@ export function MetasTab({
   }
 
   const metas = data?.metas || {
-    sonoHorasAlvo: 8.0,
-    aguaMlAlvo: 2500,
-    pesoAlvoKg: 78.0,
-    passosAlvo: 8000,
-    caloriasAlvo: 2000,
-    caloriasBonusAlvo: 300,
-    pontosAlvo: 2000,
-    pontosBonusAlvo: 300,
-    focoMetabolico: "OTIMIZAÇÃO METABÓLICA & SAÚDE INTEGRATIVA",
+    sonoHorasAlvo: 0,
+    aguaMlAlvo: 0,
+    pesoAlvoKg: 0,
+    passosAlvo: 0,
+    caloriasAlvo: 0,
+    caloriasBonusAlvo: 0,
+    pontosAlvo: 0,
+    pontosBonusAlvo: 0,
+    focoMetabolico: "",
+    treatmentObjective: "",
   };
 
-  const metaCalorias = metas.caloriasAlvo ?? metas.pontosAlvo ?? 2000;
-  const metaCaloriasBonus = metas.caloriasBonusAlvo ?? metas.pontosBonusAlvo ?? 300;
-  const caloriasConsumidas = 1360;
+  const metaCalorias = metas.caloriasAlvo ?? metas.pontosAlvo ?? 0;
+  const metaCaloriasBonus = metas.caloriasBonusAlvo ?? metas.pontosBonusAlvo ?? 0;
+  const caloriasConsumidas = data?.caloriasConsumidasHoje ?? 0;
   const saldoCaloricoRestante = Math.max(0, metaCalorias - caloriasConsumidas);
-  const percentualCalorico = Math.min(100, Math.round((caloriasConsumidas / metaCalorias) * 100));
+  const percentualCalorico =
+    metaCalorias > 0
+      ? Math.min(100, Math.round((caloriasConsumidas / metaCalorias) * 100))
+      : 0;
 
-  const ultimoSono = data?.ultimoSono || ultimoSonoInicial;
-  const sonoHistorico = data?.sonoHistorico || [];
-  const sonoMedia = data?.sonoMediaSemana || 7.0;
-  const horasDormidasExibicao = ultimoSono ? ultimoSono.horas : sonoMedia;
-  const sonoAderenciaPct = Math.round((horasDormidasExibicao / metas.sonoHorasAlvo) * 100);
+  const ultimoSono = data?.ultimoSono ?? ultimoSonoInicial ?? null;
+  const sonoHistorico = data?.sonoHistorico ?? [];
+  const sonoMedia = data?.sonoMediaSemana ?? 0;
+  const horasDormidasExibicao = ultimoSono ? Number(ultimoSono.horas) : sonoMedia;
+  const sonoAderenciaPct =
+    metas.sonoHorasAlvo > 0
+      ? Math.round((horasDormidasExibicao / metas.sonoHorasAlvo) * 100)
+      : 0;
 
   const hidratacaoHoje = data?.hidratacaoHoje || {
-    consumidoMl: 1850,
+    consumidoMl: 0,
     metaMl: metas.aguaMlAlvo,
-    percentual: 74,
+    percentual: 0,
   };
-  const hidratacaoHistorico = data?.hidratacaoHistorico || [];
+  const hidratacaoHistorico = data?.hidratacaoHistorico ?? [];
 
   const pesoEvolucao = data?.pesoEvolucao || {
-    pesoInicialKg: 89.2,
-    pesoAtualKg: 84.5,
+    pesoInicialKg: 0,
+    pesoAtualKg: 0,
     pesoAlvoKg: metas.pesoAlvoKg,
-    perdaTotalKg: -4.7,
-    distanciaAlvoKg: 6.5,
-    imcAtual: 26.7,
+    perdaTotalKg: 0,
+    distanciaAlvoKg: 0,
+    imcAtual: 0,
     historico: [],
   };
+
+  const caloriasGastasTreino = data?.caloriasGastasTreino ?? 0;
+  const treinosHoje = data?.treinosHoje ?? [];
+
+  const temDadosRegistrados =
+    sonoHistorico.length > 0 ||
+    hidratacaoHistorico.length > 0 ||
+    pesoEvolucao.historico.length > 0 ||
+    treinosHoje.length > 0;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-7 space-y-6 bg-slate-50/50">
@@ -489,7 +472,7 @@ export function MetasTab({
       {/* GRID DE ACOMPANHAMENTO: 3 COLUNAS VISÃO 360 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* ======================================================== */}
-        {/* CARD 1: QUALIDADE DO SONO (REPRODUZIDO E APRIMORADO)      */}
+        {/* CARD 1: QUALIDADE DO SONO                                 */}
         {/* ======================================================== */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 flex flex-col justify-between space-y-4 hover:border-slate-300 transition-colors">
           <div>
@@ -510,7 +493,9 @@ export function MetasTab({
               </div>
 
               <span className="text-[11px] font-bold text-violet-800 bg-violet-50/90 border border-violet-200/80 px-2 py-0.5 rounded-lg">
-                Meta: {metas.sonoHorasAlvo.toFixed(1)}h
+                {metas.sonoHorasAlvo > 0
+                  ? `Meta: ${metas.sonoHorasAlvo.toFixed(1)}h`
+                  : "Nenhuma meta definida"}
               </span>
             </div>
 
@@ -521,17 +506,19 @@ export function MetasTab({
                   {horasDormidasExibicao.toFixed(1)}h
                 </span>
                 <span className="text-xs font-semibold text-slate-400">
-                  {ultimoSono ? "horas dormidas (app)" : "média semanal"}
+                  {ultimoSono ? "horas dormidas (app)" : "sem registros"}
                 </span>
               </div>
               <span
                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  sonoAderenciaPct >= 85
+                  metas.sonoHorasAlvo > 0 && sonoAderenciaPct >= 85
                     ? "bg-emerald-50 text-emerald-800 border border-emerald-200/70"
-                    : "bg-amber-50 text-amber-800 border border-amber-200/70"
+                    : "bg-slate-100 text-slate-600 border border-slate-200"
                 }`}
               >
-                {sonoAderenciaPct}% da meta
+                {metas.sonoHorasAlvo > 0
+                  ? `${sonoAderenciaPct}% da meta`
+                  : "0% da meta"}
               </span>
             </div>
 
@@ -541,7 +528,7 @@ export function MetasTab({
                 <div className="flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-violet-600 shrink-0" />
                   <span>
-                    Último Check-in: <strong>{ultimoSono.horas.toFixed(1)}h</strong> ({ultimoSono.qualidade})
+                    Último Check-in: <strong>{Number(ultimoSono.horas).toFixed(1)}h</strong> ({ultimoSono.qualidade})
                   </span>
                 </div>
                 <span className="text-[10px] text-violet-600 font-mono">
@@ -550,9 +537,11 @@ export function MetasTab({
               </div>
             )}
 
-            {/* Gráfico Recharts de Sono dos 7 Dias */}
+            {/* Gráfico Recharts de Sono dos 7 Dias ou Empty State */}
             <div className="w-full h-28 mt-2">
-              {mounted ? (
+              {!mounted ? (
+                <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
+              ) : sonoHistorico.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={sonoHistorico}
@@ -566,7 +555,7 @@ export function MetasTab({
                       tickLine={false}
                     />
                     <YAxis
-                      domain={[4, 10]}
+                      domain={[0, 12]}
                       tick={{ fontSize: 9, fill: "#94a3b8" }}
                       axisLine={false}
                       tickLine={false}
@@ -583,12 +572,14 @@ export function MetasTab({
                       formatter={(val: any) => [`${val} horas`, "Sono"]}
                       labelFormatter={(label) => `Dia: ${label}`}
                     />
-                    <ReferenceLine
-                      y={metas.sonoHorasAlvo}
-                      stroke="#c084fc"
-                      strokeDasharray="4 4"
-                      strokeWidth={1.5}
-                    />
+                    {metas.sonoHorasAlvo > 0 && (
+                      <ReferenceLine
+                        y={metas.sonoHorasAlvo}
+                        stroke="#c084fc"
+                        strokeDasharray="4 4"
+                        strokeWidth={1.5}
+                      />
+                    )}
                     <Line
                       type="monotone"
                       dataKey="horas"
@@ -600,7 +591,11 @@ export function MetasTab({
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
+                <div className="h-full rounded-xl border border-dashed border-slate-200 bg-slate-50/70 flex flex-col items-center justify-center text-center px-3">
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    Aguardando primeiro check-in de sono
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -612,7 +607,7 @@ export function MetasTab({
               Média semanal: <strong className="text-slate-700">{sonoMedia.toFixed(1)}h</strong>
             </span>
             <span className="font-bold text-violet-700">
-              {ultimoSono ? `Qualidade: ${ultimoSono.qualidade}` : "Ritmo Estável"}
+              {ultimoSono ? `Qualidade: ${ultimoSono.qualidade}` : "Aguardando primeiro check-in"}
             </span>
           </div>
         </div>
@@ -639,7 +634,9 @@ export function MetasTab({
               </div>
 
               <span className="text-[11px] font-bold text-sky-800 bg-sky-50/90 border border-sky-200/80 px-2 py-0.5 rounded-lg">
-                Meta: {(metas.aguaMlAlvo / 1000).toFixed(1)}L / dia
+                {metas.aguaMlAlvo > 0
+                  ? `Meta: ${(metas.aguaMlAlvo / 1000).toFixed(1)}L / dia`
+                  : "Nenhuma meta definida"}
               </span>
             </div>
 
@@ -657,7 +654,7 @@ export function MetasTab({
                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                   hidratacaoHoje.percentual >= 70
                     ? "bg-sky-50 text-sky-800 border border-sky-200/70"
-                    : "bg-amber-50 text-amber-800 border border-amber-200/70"
+                    : "bg-slate-100 text-slate-600 border border-slate-200"
                 }`}
               >
                 {hidratacaoHoje.percentual}% concluído
@@ -672,9 +669,11 @@ export function MetasTab({
               />
             </div>
 
-            {/* Mini Gráfico em Barras dos Últimos 7 Dias */}
+            {/* Mini Gráfico em Barras dos Últimos 7 Dias ou Empty State */}
             <div className="w-full h-24 mt-2">
-              {mounted ? (
+              {!mounted ? (
+                <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
+              ) : hidratacaoHistorico.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={hidratacaoHistorico}
@@ -688,7 +687,7 @@ export function MetasTab({
                       tickLine={false}
                     />
                     <YAxis
-                      domain={[0, 3000]}
+                      domain={[0, Math.max(3000, metas.aguaMlAlvo || 3000)]}
                       tick={{ fontSize: 9, fill: "#94a3b8" }}
                       axisLine={false}
                       tickLine={false}
@@ -704,11 +703,13 @@ export function MetasTab({
                       formatter={(val: any) => [`${val} ml`, "Consumo"]}
                       labelFormatter={(label) => `Dia: ${label}`}
                     />
-                    <ReferenceLine
-                      y={metas.aguaMlAlvo}
-                      stroke="#38bdf8"
-                      strokeDasharray="3 3"
-                    />
+                    {metas.aguaMlAlvo > 0 && (
+                      <ReferenceLine
+                        y={metas.aguaMlAlvo}
+                        stroke="#38bdf8"
+                        strokeDasharray="3 3"
+                      />
+                    )}
                     <Bar
                       dataKey="consumoMl"
                       fill="#0284c7"
@@ -717,7 +718,11 @@ export function MetasTab({
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
+                <div className="h-full rounded-xl border border-dashed border-slate-200 bg-slate-50/70 flex flex-col items-center justify-center text-center px-3">
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    Aguardando primeiro check-in de hidratação
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -727,7 +732,11 @@ export function MetasTab({
             <span className="font-medium">
               Check-ins: <strong className="text-slate-700">+250ml / +500ml</strong>
             </span>
-            <span className="font-bold text-sky-700">Aderência Positiva</span>
+            <span className="font-bold text-sky-700">
+              {hidratacaoHoje.consumidoMl > 0
+                ? "Aderência Positiva"
+                : "Aguardando primeiro check-in"}
+            </span>
           </div>
         </div>
 
@@ -753,7 +762,9 @@ export function MetasTab({
               </div>
 
               <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50/90 border border-emerald-200/80 px-2 py-0.5 rounded-lg">
-                Alvo: {pesoEvolucao.pesoAlvoKg.toFixed(1)} kg
+                {pesoEvolucao.pesoAlvoKg > 0
+                  ? `Alvo: ${pesoEvolucao.pesoAlvoKg.toFixed(1)} kg`
+                  : "Nenhuma meta definida"}
               </span>
             </div>
 
@@ -761,21 +772,29 @@ export function MetasTab({
             <div className="flex items-baseline justify-between py-1">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-3xl font-black text-slate-900 tracking-tight font-mono">
-                  {pesoEvolucao.pesoAtualKg.toFixed(1)} kg
+                  {pesoEvolucao.pesoAtualKg > 0
+                    ? `${pesoEvolucao.pesoAtualKg.toFixed(1)} kg`
+                    : "0.0 kg"}
                 </span>
-                <span className="text-xs font-semibold text-emerald-700 flex items-center gap-0.5">
-                  <TrendingDown className="w-3.5 h-3.5" />
-                  {pesoEvolucao.perdaTotalKg} kg
-                </span>
+                {pesoEvolucao.perdaTotalKg !== 0 && (
+                  <span className="text-xs font-semibold text-emerald-700 flex items-center gap-0.5">
+                    <TrendingDown className="w-3.5 h-3.5" />
+                    {pesoEvolucao.perdaTotalKg} kg
+                  </span>
+                )}
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                Falta {pesoEvolucao.distanciaAlvoKg} kg
+                {pesoEvolucao.pesoAlvoKg > 0 && pesoEvolucao.pesoAtualKg > 0
+                  ? `Falta ${pesoEvolucao.distanciaAlvoKg} kg`
+                  : "Sem peso alvo"}
               </span>
             </div>
 
-            {/* Gráfico de Evolução Ponderal */}
+            {/* Gráfico de Evolução Ponderal ou Empty State */}
             <div className="w-full h-28 mt-2">
-              {mounted ? (
+              {!mounted ? (
+                <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
+              ) : pesoEvolucao.historico.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={pesoEvolucao.historico}
@@ -805,12 +824,14 @@ export function MetasTab({
                       formatter={(val: any) => [`${val} kg`, "Peso"]}
                       labelFormatter={(label) => `Data: ${label}`}
                     />
-                    <ReferenceLine
-                      y={pesoEvolucao.pesoAlvoKg}
-                      stroke="#10b981"
-                      strokeDasharray="4 4"
-                      strokeWidth={1.5}
-                    />
+                    {pesoEvolucao.pesoAlvoKg > 0 && (
+                      <ReferenceLine
+                        y={pesoEvolucao.pesoAlvoKg}
+                        stroke="#10b981"
+                        strokeDasharray="4 4"
+                        strokeWidth={1.5}
+                      />
+                    )}
                     <Line
                       type="monotone"
                       dataKey="peso"
@@ -822,7 +843,11 @@ export function MetasTab({
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full bg-slate-50 animate-pulse rounded-lg" />
+                <div className="h-full rounded-xl border border-dashed border-slate-200 bg-slate-50/70 flex flex-col items-center justify-center text-center px-3">
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    Aguardando primeira pesagem registrada
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -830,13 +855,19 @@ export function MetasTab({
           {/* Rodapé do Card de Peso */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
             <span className="font-medium">
-              IMC Atual: <strong className="text-slate-800 font-mono">{pesoEvolucao.imcAtual}</strong>
+              IMC Atual:{" "}
+              <strong className="text-slate-800 font-mono">
+                {pesoEvolucao.imcAtual > 0 ? pesoEvolucao.imcAtual : "--"}
+              </strong>
             </span>
-            <span className="font-bold text-emerald-700">Em decréscimo consistente</span>
+            <span className="font-bold text-emerald-700">
+              {pesoEvolucao.historico.length > 0
+                ? "Em acompanhamento"
+                : "Sem medições"}
+            </span>
           </div>
         </div>
 
-        {/* ======================================================== */}
         {/* ======================================================== */}
         {/* CARD 4: FOCO METABÓLICO & DIRETRIZES                     */}
         {/* ======================================================== */}
@@ -858,7 +889,7 @@ export function MetasTab({
               </div>
 
               <span className="text-[11px] font-bold text-amber-800 bg-amber-50/90 border border-amber-200/80 px-2 py-0.5 rounded-lg">
-                Ativo
+                {metas.treatmentObjective || metas.focoMetabolico ? "Ativo" : "Pendente"}
               </span>
             </div>
 
@@ -881,11 +912,14 @@ export function MetasTab({
 
               <div className="relative">
                 <select
-                  value={metas.treatmentObjective || metas.focoMetabolico}
+                  value={metas.treatmentObjective || metas.focoMetabolico || ""}
                   onChange={(e) => handleChangeObjetivo(e.target.value)}
                   disabled={salvandoObjetivo}
                   className="w-full text-xs font-bold text-amber-950 bg-white border border-amber-300 rounded-lg px-2.5 py-2 shadow-2xs focus:outline-hidden focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 cursor-pointer transition-all disabled:opacity-60"
                 >
+                  <option value="" disabled>
+                    Nenhuma diretriz definida — Selecione...
+                  </option>
                   {CLINICAL_OBJECTIVES.map((opcao) => (
                     <option key={opcao} value={opcao}>
                       {opcao}
@@ -900,23 +934,13 @@ export function MetasTab({
             </div>
 
             <div className="space-y-2 mt-3 text-xs">
-              {/* Rastreador de Passos ocultado cirurgicamente via classe hidden */}
-              <div className="hidden items-center justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-500 font-medium flex items-center gap-1.5">
-                  <Footprints className="w-3.5 h-3.5 text-slate-400" />
-                  Meta Diária de Passos
-                </span>
-                <span className="font-bold font-mono text-slate-800">
-                  {metas.passosAlvo.toLocaleString("pt-BR")} passos
-                </span>
-              </div>
               <div className="flex items-center justify-between py-1 border-b border-slate-100">
                 <span className="text-slate-500 font-medium flex items-center gap-1.5">
                   <Activity className="w-3.5 h-3.5 text-slate-400" />
                   Frequência de Aderência
                 </span>
-                <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.2 rounded">
-                  88% no Mês
+                <span className="font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                  {temDadosRegistrados ? "Registros Ativos" : "Aguardando primeiro check-in"}
                 </span>
               </div>
             </div>
@@ -924,7 +948,9 @@ export function MetasTab({
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
             <span>Protocolo de Longevidade</span>
-            <span className="font-bold text-slate-700">Fase 01</span>
+            <span className="font-bold text-slate-700">
+              {metas.treatmentObjective || metas.focoMetabolico ? "Configurado" : "Sem meta definida"}
+            </span>
           </div>
         </div>
 
@@ -950,7 +976,7 @@ export function MetasTab({
               </div>
 
               <span className="text-[11px] font-bold text-orange-800 bg-orange-50/90 border border-orange-200/80 px-2 py-0.5 rounded-lg">
-                Meta: {metaCalorias} kcal
+                {metaCalorias > 0 ? `Meta: ${metaCalorias} kcal` : "Nenhuma meta definida"}
               </span>
             </div>
 
@@ -964,8 +990,10 @@ export function MetasTab({
                   / {metaCalorias} kcal consumidas
                 </span>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/70">
-                Restam {saldoCaloricoRestante} kcal
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                {metaCalorias > 0
+                  ? `Restam ${saldoCaloricoRestante} kcal`
+                  : "0 kcal"}
               </span>
             </div>
 
@@ -999,7 +1027,9 @@ export function MetasTab({
           {/* Rodapé do Card */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
             <span className="font-medium">Diretriz Nutricional em kcal</span>
-            <span className="font-bold text-orange-700">Dentro da Meta</span>
+            <span className="font-bold text-orange-700">
+              {metaCalorias > 0 ? "Meta Definida" : "Nenhuma meta definida"}
+            </span>
           </div>
         </div>
 
@@ -1026,7 +1056,9 @@ export function MetasTab({
 
               <span className="text-[11px] font-bold text-teal-800 bg-teal-50/90 border border-teal-200/80 px-2 py-0.5 rounded-lg flex items-center gap-1">
                 <Zap className="w-3 h-3 text-teal-600" />
-                Meta: +{metaCaloriasBonus} kcal
+                {metaCaloriasBonus > 0
+                  ? `Meta: +${metaCaloriasBonus} kcal`
+                  : "Nenhuma meta definida"}
               </span>
             </div>
 
@@ -1034,14 +1066,14 @@ export function MetasTab({
             <div className="flex items-baseline justify-between py-1">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-3xl font-black text-teal-600 tracking-tight font-mono">
-                  +320
+                  +{caloriasGastasTreino}
                 </span>
                 <span className="text-xs font-bold text-teal-800">
                   KCAL GASTAS NO TREINO
                 </span>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200/70">
-                Meta Superada
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                {caloriasGastasTreino > 0 ? "Treino Registrado" : "0 kcal hoje"}
               </span>
             </div>
 
@@ -1056,23 +1088,37 @@ export function MetasTab({
               </p>
             </div>
 
-            {/* Detalhes de Treinos do Dia */}
+            {/* Detalhes de Treinos do Dia (Reais ou Empty State) */}
             <div className="space-y-2 mt-2 text-xs">
-              <div className="flex items-center justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-500 font-medium">Musculação (45 min)</span>
-                <span className="font-extrabold font-mono text-teal-700">+200 kcal gastas</span>
-              </div>
-              <div className="flex items-center justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-500 font-medium">Caminhada Acelerada (25 min)</span>
-                <span className="font-extrabold font-mono text-teal-700">+120 kcal gastas</span>
-              </div>
+              {treinosHoje.length > 0 ? (
+                treinosHoje.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between py-1 border-b border-slate-100"
+                  >
+                    <span className="text-slate-600 font-medium">{t.titulo}</span>
+                    <span className="font-extrabold font-mono text-teal-700">
+                      +{t.calorias} kcal gastas
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="py-2 text-center text-[11px] font-semibold text-slate-400 border border-dashed border-slate-200 rounded-lg bg-slate-50/60">
+                  Aguardando primeiro check-in de treino
+                </div>
+              )}
             </div>
           </div>
 
           {/* Rodapé do Card */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span className="font-medium">Gasto Adicional Total: <strong className="text-teal-700">+320 kcal</strong></span>
-            <span className="font-bold text-teal-700">Queima Ativa</span>
+            <span className="font-medium">
+              Gasto Adicional Total:{" "}
+              <strong className="text-teal-700">+{caloriasGastasTreino} kcal</strong>
+            </span>
+            <span className="font-bold text-teal-700">
+              {caloriasGastasTreino > 0 ? "Queima Ativa" : "Sem registros hoje"}
+            </span>
           </div>
         </div>
       </div>

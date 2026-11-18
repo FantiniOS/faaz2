@@ -11,6 +11,7 @@ import {
   PatientEntity,
   PatientGoalEntity,
   ProntuarioPacienteEntity,
+  WorkoutLogEntity,
   type GoalCategory,
   type PatientGoal,
 } from "@/lib/db/entities";
@@ -99,6 +100,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const hidraRepo = await getRepository(CheckinHidratacaoEntity);
     const sonoRepo = await getRepository(CheckInSonoEntity);
     const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
+    const workoutRepo = await getRepository(WorkoutLogEntity);
 
     const paciente = await patientRepo.findOne({
       where: { id },
@@ -115,8 +117,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       prontuario,
       patientGoals,
       checkinsHidratacao,
-      ultimoRegistroSono,
+      checkinsSono,
       evolucoesComPeso,
+      workoutLogs,
     ] = await Promise.all([
       prontuarioRepo.findOne({ where: { pacienteId: id } }),
       goalRepo.find({
@@ -126,11 +129,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       hidraRepo.find({
         where: { pacienteId: id },
         order: { data: "DESC" },
-        take: 7,
+        take: 30,
       }),
-      sonoRepo.findOne({
+      sonoRepo.find({
         where: { pacienteId: id },
         order: { data: "DESC" },
+        take: 7,
       }),
       evolucaoRepo.find({
         where: {
@@ -140,36 +144,52 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         order: { dataAtendimento: "ASC" },
         take: 10,
       }),
+      workoutRepo.find({
+        where: { patientId: id },
+        order: { date: "DESC" },
+        take: 10,
+      }),
     ]);
 
     const activeGoals = patientGoals.filter((g) => g.status === "ACTIVE");
 
     const hidratacaoGoal = activeGoals.find(isHydrationGoal);
-    const metaAguaMl =
-      paciente.metaDiariaMl ||
-      (hidratacaoGoal ? Math.round(Number(hidratacaoGoal.targetValue)) : 2500);
+    const metaAguaMl = hidratacaoGoal
+      ? Math.round(Number(hidratacaoGoal.targetValue))
+      : 0;
 
     const sonoGoal = activeGoals.find(isSleepGoal);
-    const metaSonoHoras = sonoGoal ? Number(sonoGoal.targetValue) : 8.0;
+    const metaSonoHoras = sonoGoal ? Number(sonoGoal.targetValue) : 0;
 
     const caloriasGoal = activeGoals.find(isDailyCalorieGoal);
     const caloriasBonusGoal = activeGoals.find(isWorkoutCalorieGoal);
 
-    const caloriasRaw = caloriasGoal ? Number(caloriasGoal.targetValue) : 2000;
-    const caloriasAlvoNum = caloriasRaw > 200 ? caloriasRaw : caloriasRaw * 40;
+    const caloriasRaw = caloriasGoal ? Number(caloriasGoal.targetValue) : 0;
+    const caloriasAlvoNum =
+      caloriasRaw === 0
+        ? 0
+        : caloriasRaw > 200
+          ? caloriasRaw
+          : caloriasRaw * 40;
 
     const bonusRaw = caloriasBonusGoal
       ? Number(caloriasBonusGoal.targetValue)
-      : 300;
+      : 0;
     const caloriasBonusNum =
       bonusRaw === 0 || bonusRaw > 50 ? bonusRaw : bonusRaw * 30;
 
     const pesoGoal = activeGoals.find(isWeightGoal);
+    const pesoAlvoKg = pesoGoal ? Number(pesoGoal.targetValue) : 0;
+
+    const ultimoPesoEvolucao =
+      evolucoesComPeso.length > 0
+        ? Number(evolucoesComPeso[evolucoesComPeso.length - 1].pesoAtual)
+        : 0;
     const pesoAtualNum =
-      prontuario?.pesoAtualKg != null ? Number(prontuario.pesoAtualKg) : 84.5;
-    const pesoAlvoKg = pesoGoal
-      ? Number(pesoGoal.targetValue)
-      : Math.max(50, Math.round((pesoAtualNum - 6.5) * 10) / 10);
+      prontuario?.pesoAtualKg != null
+        ? Number(prontuario.pesoAtualKg)
+        : ultimoPesoEvolucao;
+
     const alturaM =
       prontuario?.alturaCm != null
         ? Number(prontuario.alturaCm) > 3
@@ -177,117 +197,78 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           : Number(prontuario.alturaCm)
         : paciente.heightCm != null
           ? Number(paciente.heightCm) / 100
-          : 1.78;
+          : 0;
     const imcAtual =
-      Math.round((pesoAtualNum / (alturaM * alturaM)) * 100) / 100;
+      pesoAtualNum > 0 && alturaM > 0
+        ? Math.round((pesoAtualNum / (alturaM * alturaM)) * 100) / 100
+        : 0;
 
-    const consumoHojeMl =
-      checkinsHidratacao.length > 0
-        ? checkinsHidratacao.reduce((acc, c) => acc + (c.volumeMl || 0), 0)
-        : 1850;
+    // Consumo de água estritamente dos check-ins reais registrados hoje no Oracle
+    const hojeStr = new Date().toDateString();
+    const checkinsHidraHoje = checkinsHidratacao.filter(
+      (c) => c.data && new Date(c.data).toDateString() === hojeStr,
+    );
+    const consumoHojeMl = checkinsHidraHoje.reduce(
+      (acc, c) => acc + (Number(c.volumeMl) || 0),
+      0,
+    );
 
-    const sonoHistoricoBase = [
-      {
-        dia: "Seg",
-        data: "03/11",
-        horas: 6.8,
-        meta: metaSonoHoras,
-        qualidade: "Boa",
-        sonoProfundoHoras: 1.8,
-      },
-      {
-        dia: "Ter",
-        data: "04/11",
-        horas: 7.2,
-        meta: metaSonoHoras,
-        qualidade: "Excelente",
-        sonoProfundoHoras: 2.1,
-      },
-      {
-        dia: "Qua",
-        data: "05/11",
-        horas: 6.0,
-        meta: metaSonoHoras,
-        qualidade: "Regular",
-        sonoProfundoHoras: 1.4,
-      },
-      {
-        dia: "Qui",
-        data: "06/11",
-        horas: 7.5,
-        meta: metaSonoHoras,
-        qualidade: "Excelente",
-        sonoProfundoHoras: 2.3,
-      },
-      {
-        dia: "Sex",
-        data: "07/11",
-        horas: 6.4,
-        meta: metaSonoHoras,
-        qualidade: "Boa",
-        sonoProfundoHoras: 1.7,
-      },
-      {
-        dia: "Sáb",
-        data: "08/11",
-        horas: 8.1,
-        meta: metaSonoHoras,
-        qualidade: "Excelente",
-        sonoProfundoHoras: 2.5,
-      },
-      {
-        dia: "Dom",
-        data: "09/11",
-        horas: 7.0,
-        meta: metaSonoHoras,
-        qualidade: "Boa",
-        sonoProfundoHoras: 1.9,
-      },
-    ];
+    const diasSemanaCurto = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
-    const sonoHistorico = sonoHistoricoBase.map((item, idx) => {
-      if (idx === sonoHistoricoBase.length - 1 && ultimoRegistroSono) {
-        return {
-          ...item,
-          horas: ultimoRegistroSono.horas,
-          qualidade: ultimoRegistroSono.qualidade,
-        };
-      }
-      return item;
+    // Histórico de sono estritamente dos registros reais em CHECKINS_SONO
+    const ultimoRegistroSono = checkinsSono[0] || null;
+    const sonoHistorico = [...checkinsSono].reverse().map((reg) => {
+      const d = new Date(reg.data);
+      const dia = diasSemanaCurto[d.getDay()] || "--";
+      const dataFmt = `${String(d.getDate()).padStart(2, "0")}/${String(
+        d.getMonth() + 1,
+      ).padStart(2, "0")}`;
+      return {
+        dia,
+        data: dataFmt,
+        horas: Number(reg.horas) || 0,
+        meta: metaSonoHoras,
+        qualidade: reg.qualidade || "N/A",
+        sonoProfundoHoras: 0,
+      };
     });
 
     const sonoMediaSemana =
-      Math.round(
-        (sonoHistorico.reduce((acc, item) => acc + item.horas, 0) /
-          sonoHistorico.length) *
-          10,
-      ) / 10;
+      sonoHistorico.length > 0
+        ? Math.round(
+            (sonoHistorico.reduce((acc, item) => acc + item.horas, 0) /
+              sonoHistorico.length) *
+              10,
+          ) / 10
+        : 0;
 
-    const hidratacaoHistorico = [
-      { dia: "Seg", data: "03/11", consumoMl: 2250, metaMl: metaAguaMl },
-      { dia: "Ter", data: "04/11", consumoMl: 2500, metaMl: metaAguaMl },
-      { dia: "Qua", data: "05/11", consumoMl: 2000, metaMl: metaAguaMl },
-      { dia: "Qui", data: "06/11", consumoMl: 2600, metaMl: metaAguaMl },
-      { dia: "Sex", data: "07/11", consumoMl: 2100, metaMl: metaAguaMl },
-      { dia: "Sáb", data: "08/11", consumoMl: 1900, metaMl: metaAguaMl },
-      {
-        dia: "Dom",
-        data: "09/11",
-        consumoMl: consumoHojeMl,
-        metaMl: metaAguaMl,
-      },
-    ];
+    // Histórico de hidratação estritamente agrupado por dia a partir de CHECKINS_HIDRATACAO
+    const hidraPorDiaMap = new Map<
+      string,
+      { dia: string; data: string; consumoMl: number; metaMl: number }
+    >();
+    for (const c of [...checkinsHidratacao].reverse()) {
+      const d = new Date(c.data);
+      const key = `${String(d.getDate()).padStart(2, "0")}/${String(
+        d.getMonth() + 1,
+      ).padStart(2, "0")}`;
+      const existing = hidraPorDiaMap.get(key);
+      if (existing) {
+        existing.consumoMl += Number(c.volumeMl) || 0;
+      } else {
+        hidraPorDiaMap.set(key, {
+          dia: diasSemanaCurto[d.getDay()] || "--",
+          data: key,
+          consumoMl: Number(c.volumeMl) || 0,
+          metaMl: metaAguaMl,
+        });
+      }
+    }
+    const hidratacaoHistorico = Array.from(hidraPorDiaMap.values()).slice(-7);
 
-    let historicoPeso = [
-      { data: "01/10", peso: Math.round((pesoAtualNum + 4.7) * 10) / 10 },
-      { data: "10/10", peso: Math.round((pesoAtualNum + 3.3) * 10) / 10 },
-      { data: "20/10", peso: Math.round((pesoAtualNum + 1.9) * 10) / 10 },
-      { data: "30/10", peso: Math.round((pesoAtualNum + 0.8) * 10) / 10 },
-      { data: "09/11", peso: pesoAtualNum },
-    ];
-
-    if (evolucoesComPeso.length > 0) {
-      historicoPeso = evolucoesComPeso.map((ev) => {
+    // Histórico de peso estritamente de EVOLUCOES_CLINICAS / PRONTUARIOS_PACIENTE
+    const historicoPeso: Array<{ data: string; peso: number }> =
+      evolucoesComPeso.map((ev) => {
         const d = new Date(ev.dataAtendimento);
         const dia = String(d.getDate()).padStart(2, "0");
         const mes = String(d.getMonth() + 1).padStart(2, "0");
@@ -296,11 +277,15 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           peso: Number(ev.pesoAtual),
         };
       });
+
+    if (pesoAtualNum > 0) {
       const ultimoHistorico = historicoPeso[historicoPeso.length - 1];
-      if (ultimoHistorico && ultimoHistorico.peso !== pesoAtualNum) {
-        const hoje = new Date();
-        const dia = String(hoje.getDate()).padStart(2, "0");
-        const mes = String(hoje.getMonth() + 1).padStart(2, "0");
+      if (!ultimoHistorico || ultimoHistorico.peso !== pesoAtualNum) {
+        const refDate = prontuario?.updatedAt
+          ? new Date(prontuario.updatedAt)
+          : new Date();
+        const dia = String(refDate.getDate()).padStart(2, "0");
+        const mes = String(refDate.getMonth() + 1).padStart(2, "0");
         historicoPeso.push({
           data: `${dia}/${mes}`,
           peso: pesoAtualNum,
@@ -309,28 +294,41 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 
     const pesoInicial =
-      historicoPeso.length > 0
-        ? historicoPeso[0].peso
-        : Math.round((pesoAtualNum + 4.7) * 10) / 10;
-    const perdaTotal = Math.round((pesoAtualNum - pesoInicial) * 10) / 10;
+      historicoPeso.length > 0 ? historicoPeso[0].peso : pesoAtualNum;
+    const perdaTotal =
+      pesoAtualNum > 0 && pesoInicial > 0
+        ? Math.round((pesoAtualNum - pesoInicial) * 10) / 10
+        : 0;
 
     const pesoEvolucao = {
       pesoInicialKg: pesoInicial,
       pesoAtualKg: pesoAtualNum,
       pesoAlvoKg,
       perdaTotalKg: perdaTotal,
-      distanciaAlvoKg: Math.max(
-        0,
-        Math.round((pesoAtualNum - pesoAlvoKg) * 10) / 10,
-      ),
+      distanciaAlvoKg:
+        pesoAtualNum > 0 && pesoAlvoKg > 0
+          ? Math.max(0, Math.round((pesoAtualNum - pesoAlvoKg) * 10) / 10)
+          : 0,
       imcAtual,
       historico: historicoPeso,
     };
 
+    // Treinos registrados hoje no Oracle (WORKOUT_LOGS)
+    const treinosHojeLogs = workoutLogs.filter(
+      (w) => w.date && new Date(w.date).toDateString() === hojeStr,
+    );
+    const caloriasPorTreino = caloriasBonusNum > 0 ? caloriasBonusNum : 0;
+    const caloriasGastasTreino =
+      treinosHojeLogs.length > 0 ? caloriasPorTreino : 0;
+    const treinosHoje = treinosHojeLogs.map((w, idx) => ({
+      id: w.id,
+      titulo: `Sessão de Treino #${idx + 1}`,
+      calorias: caloriasPorTreino,
+      data: w.date,
+    }));
+
     const objetivoAtivo =
-      paciente.treatmentObjective ||
-      paciente.clinicalFocus ||
-      "Otimização Metabólica & Saúde Integrativa";
+      paciente.treatmentObjective || paciente.clinicalFocus || "";
 
     return NextResponse.json(
       {
@@ -338,7 +336,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           sonoHorasAlvo: metaSonoHoras,
           aguaMlAlvo: metaAguaMl,
           pesoAlvoKg,
-          passosAlvo: 8000,
+          passosAlvo: 0,
           caloriasAlvo: caloriasAlvoNum,
           caloriasBonusAlvo: caloriasBonusNum,
           pontosAlvo: caloriasAlvoNum,
@@ -351,25 +349,28 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         ultimoSono: ultimoRegistroSono
           ? {
               id: ultimoRegistroSono.id,
-              horas: ultimoRegistroSono.horas,
+              horas: Number(ultimoRegistroSono.horas),
               qualidade: ultimoRegistroSono.qualidade,
               observacao: ultimoRegistroSono.observacao,
               data: ultimoRegistroSono.data,
             }
           : null,
         horasDormidasRecentes: ultimoRegistroSono
-          ? ultimoRegistroSono.horas
-          : sonoMediaSemana,
+          ? Number(ultimoRegistroSono.horas)
+          : 0,
         hidratacaoHoje: {
           consumidoMl: consumoHojeMl,
           metaMl: metaAguaMl,
-          percentual: Math.min(
-            100,
-            Math.round((consumoHojeMl / metaAguaMl) * 100),
-          ),
+          percentual:
+            metaAguaMl > 0
+              ? Math.min(100, Math.round((consumoHojeMl / metaAguaMl) * 100))
+              : 0,
         },
         hidratacaoHistorico,
         pesoEvolucao,
+        caloriasConsumidasHoje: 0,
+        caloriasGastasTreino,
+        treinosHoje,
       },
       {
         headers: {
@@ -450,18 +451,29 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         return null;
       }
 
+      // Carrega todas as metas existentes do paciente em uma única consulta
+      const existingGoals = await goalRepo.find({
+        where: { patientId: id, deletedAt: IsNull() },
+        order: { updatedAt: "DESC" },
+      });
+
+      const prevHidra = existingGoals.find(isHydrationGoal);
       const aguaFinal =
         parsedAgua !== undefined
           ? Math.round(parsedAgua)
-          : paciente.metaDiariaMl || 2500;
+          : prevHidra
+            ? Math.round(Number(prevHidra.targetValue))
+            : 0;
       const objetivoFinal =
         rawObjetivo ||
         paciente.treatmentObjective ||
         paciente.clinicalFocus ||
-        "Otimização Metabólica & Saúde Integrativa";
+        "";
 
       // 1. Atualiza PATIENTS (META_DIARIA_ML, TREATMENT_OBJECTIVE, CLINICAL_FOCUS)
-      paciente.metaDiariaMl = aguaFinal;
+      if (parsedAgua !== undefined) {
+        paciente.metaDiariaMl = aguaFinal;
+      }
       if (rawObjetivo) {
         paciente.treatmentObjective = rawObjetivo;
         paciente.clinicalFocus = rawObjetivo;
@@ -470,12 +482,6 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         paciente.updatedBy = sessao.userId;
       }
       await patientRepo.save(paciente);
-
-      // 2. Carrega todas as metas existentes do paciente em uma única consulta
-      const existingGoals = await goalRepo.find({
-        where: { patientId: id, deletedAt: IsNull() },
-        order: { updatedAt: "DESC" },
-      });
 
       const upsertGoal = async (
         matcher: (g: PatientGoal) => boolean,
@@ -539,31 +545,32 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
           ? Math.round(parsedSono * 10) / 10
           : prevSono
             ? Number(prevSono.targetValue)
-            : 8.0;
+            : 0;
 
       const pesoFinal =
         parsedPeso !== undefined
           ? Math.round(parsedPeso * 10) / 10
           : prevPeso
             ? Number(prevPeso.targetValue)
-            : 75.0;
+            : 0;
 
       const caloriasRaw =
         parsedCalorias !== undefined
           ? parsedCalorias
           : prevCalorias
             ? Number(prevCalorias.targetValue)
-            : 2000;
-      const caloriasFinal = Math.round(
-        caloriasRaw > 200 ? caloriasRaw : caloriasRaw * 40,
-      );
+            : 0;
+      const caloriasFinal =
+        caloriasRaw === 0
+          ? 0
+          : Math.round(caloriasRaw > 200 ? caloriasRaw : caloriasRaw * 40);
 
       const bonusRaw =
         parsedBonus !== undefined
           ? parsedBonus
           : prevBonus
             ? Number(prevBonus.targetValue)
-            : 300;
+            : 0;
       const bonusFinal = Math.round(
         bonusRaw === 0 || bonusRaw > 50 ? bonusRaw : bonusRaw * 30,
       );
