@@ -43,8 +43,8 @@ export const mockPatientHome: PatientHomeData = {
     proximaConsulta: "15 de Novembro (em 13 dias)",
   },
   metasHoje: {
-    agua: { atual: 1.5, meta: 3.0, unidade: "L" },
-    calorias: { atual: 1200, meta: 1800, unidade: "kcal" },
+    agua: { atual: 0, meta: 0, unidade: "L" },
+    calorias: { atual: 0, meta: 0, unidade: "kcal" },
     treinoFeito: false,
   },
   checkinsPendentes: [

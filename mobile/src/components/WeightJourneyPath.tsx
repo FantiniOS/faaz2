@@ -60,10 +60,10 @@ export interface WeightJourneyPathProps {
 const STAR_OFFSETS = [5, -7, 5, -6, 2];
 
 export function WeightJourneyPath({
-  pacienteId = "92dab67a-1977-4690-ae23-7cc60499a0c5",
-  pesoInicial = 92.0,
-  pesoAtual = 87.5,
-  pesoMeta = 77.0,
+  pacienteId = "",
+  pesoInicial = 0,
+  pesoAtual = 0,
+  pesoMeta = 0,
   currentStar,
   milestoneLabels,
   onPressStar,
@@ -85,16 +85,26 @@ export function WeightJourneyPath({
     }
   }, [pesoAtual]);
 
+  // Verifica se o paciente possui peso inicial e peso alvo definidos no prontuário/metas
+  const hasPlanoDefinido = pesoInicial > 0 && pesoMeta > 0;
+
   // ========================================================
   // 1. MATEMÁTICA DE CHECKPOINTS DE PESO REAL (5 ESTÁGIOS)
   // ========================================================
-  const deltaTotal = Math.abs(pesoInicial - pesoMeta);
-  const stepKg = deltaTotal > 0 ? deltaTotal / 5 : 1;
+  const deltaTotal = hasPlanoDefinido ? Math.abs(pesoInicial - pesoMeta) : 0;
+  const stepKg = deltaTotal > 0 ? deltaTotal / 5 : 0;
   const isLosingWeight = pesoInicial >= pesoMeta;
 
-  // Calcula o peso de cada um dos 5 marcos de estrelas
+  // Calcula o peso de cada um dos 5 marcos de estrelas (ou marcos vazios quando sem plano)
   const checkpoints = useMemo(() => {
     return [1, 2, 3, 4, 5].map((i) => {
+      if (!hasPlanoDefinido) {
+        return {
+          starNumber: i,
+          weightKg: 0,
+          label: "-- KG",
+        };
+      }
       const weight = isLosingWeight
         ? pesoInicial - stepKg * i
         : pesoInicial + stepKg * i;
@@ -104,10 +114,13 @@ export function WeightJourneyPath({
         label: `${weight.toFixed(1)} KG`,
       };
     });
-  }, [pesoInicial, pesoMeta, stepKg, isLosingWeight]);
+  }, [hasPlanoDefinido, pesoInicial, pesoMeta, stepKg, isLosingWeight]);
 
-  // Determina quantas estrelas já foram conquistadas pelo localPesoAtual
+  // Determina quantas estrelas já foram conquistadas pelo localPesoAtual (0 se sem plano definido)
   const conqueredCount = useMemo(() => {
+    if (!hasPlanoDefinido || localPesoAtual <= 0) {
+      return 0;
+    }
     if (typeof currentStar === "number" && !localPesoAtual) {
       return Math.min(5, Math.max(0, currentStar));
     }
@@ -115,18 +128,23 @@ export function WeightJourneyPath({
       isLosingWeight ? localPesoAtual <= cp.weightKg : localPesoAtual >= cp.weightKg
     ).length;
     return Math.min(5, Math.max(0, reached));
-  }, [checkpoints, localPesoAtual, isLosingWeight, currentStar]);
+  }, [hasPlanoDefinido, checkpoints, localPesoAtual, isLosingWeight, currentStar]);
 
-  // A "Estrela Atual" (a próxima a ser conquistada / alvo da animação de pulse)
+  // A "Estrela Atual" (0 quando sem plano definido para não acender nenhuma estrela)
   const targetStarNumber = useMemo(() => {
+    if (!hasPlanoDefinido) {
+      return 0;
+    }
     if (typeof currentStar === "number" && !localPesoAtual) {
       return currentStar > 0 ? Math.min(5, currentStar) : 1;
     }
     return conqueredCount < 5 ? conqueredCount + 1 : 5;
-  }, [conqueredCount, currentStar, localPesoAtual]);
+  }, [hasPlanoDefinido, conqueredCount, currentStar, localPesoAtual]);
 
-  const targetCheckpoint = checkpoints[targetStarNumber - 1] || checkpoints[0];
-  const targetWeightText = `ALVO: ${targetCheckpoint.weightKg.toFixed(1)} KG`;
+  const targetCheckpoint =
+    targetStarNumber > 0
+      ? checkpoints[targetStarNumber - 1] || checkpoints[0]
+      : checkpoints[0];
 
   // ========================================================
   // 2. ANIMAÇÃO SEQUENCIAL DE DESCOBERTA (PATH REVEAL) & SFX
@@ -135,10 +153,17 @@ export function WeightJourneyPath({
   const [progressRatio, setProgressRatio] = useState<number>(0);
   const pulseAnim = useRef(new Animated.Value(1.0)).current;
 
-  // A proporção de destino da animação de preenchimento (da estrela 1 até a alvo)
-  const finalRevealTarget = (targetStarNumber - 1) / 4;
+  // A proporção de destino da animação de preenchimento (0 quando sem plano definido)
+  const finalRevealTarget =
+    hasPlanoDefinido && targetStarNumber > 0 ? (targetStarNumber - 1) / 4 : 0;
 
   useEffect(() => {
+    if (!hasPlanoDefinido) {
+      setProgressRatio(0);
+      pulseAnim.stopAnimation();
+      return;
+    }
+
     const listenerId = revealAnim.addListener(({ value }) => {
       setProgressRatio(value);
     });
@@ -157,7 +182,7 @@ export function WeightJourneyPath({
       revealAnim.removeListener(listenerId);
       pulseAnim.stopAnimation();
     };
-  }, [targetStarNumber, finalRevealTarget]);
+  }, [hasPlanoDefinido, targetStarNumber, finalRevealTarget]);
 
   const startPulseLoop = () => {
     Animated.loop(
@@ -311,12 +336,14 @@ export function WeightJourneyPath({
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
           <View style={styles.trophyIconBox}>
-            <Trophy size={14} color="#d97706" />
+            <Trophy size={14} color={hasPlanoDefinido ? "#d97706" : "#94a3b8"} />
           </View>
           <View style={styles.titleCol}>
             <Text style={styles.title}>SUA JORNADA DE PESO</Text>
             <Text style={styles.subtitle} numberOfLines={1}>
-              INÍCIO: {pesoInicial.toFixed(1)} KG • ATUAL: {localPesoAtual.toFixed(1)} KG • META: {pesoMeta.toFixed(1)} KG
+              {hasPlanoDefinido
+                ? `INÍCIO: ${pesoInicial.toFixed(1)} KG • ATUAL: ${localPesoAtual.toFixed(1)} KG • META: ${pesoMeta.toFixed(1)} KG`
+                : "AGUARDANDO DEFINIÇÃO DO PLANO CLÍNICO"}
             </Text>
           </View>
         </View>
@@ -329,144 +356,176 @@ export function WeightJourneyPath({
       </View>
 
       {/* ======================================================== */}
-      {/* ÁREA DA TRILHA / ROADMAP (5 ESTRELAS)                    */}
+      {/* ÁREA DA TRILHA / ROADMAP (5 ESTRELAS OU EMPTY STATE)     */}
       {/* ======================================================== */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollTrackContent}
-        bounces={false}
-      >
-        <View
-          style={[
-            styles.trackContainer,
-            { width: effectiveTrackWidth },
-          ]}
-          onLayout={handleTrackLayout}
+      {hasPlanoDefinido ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.scrollTrackContent}
+          bounces={false}
         >
-          {/* Traçado em SVG com Reveal Progressivo */}
-          {effectiveTrackWidth > 0 && nodePoints.length === 5 ? (
-            <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
-              {/* Linha tracejada de fundo para todo o percurso */}
-              <Polyline
-                points={allPolylinePoints}
-                stroke="#cbd5e1"
-                strokeWidth={2}
-                strokeDasharray="5, 4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill="none"
-              />
-              {/* Linha dourada revelada progressivamente da esquerda para a direita */}
-              {animatedGoldenPoints.length > 0 && (
+          <View
+            style={[
+              styles.trackContainer,
+              { width: effectiveTrackWidth },
+            ]}
+            onLayout={handleTrackLayout}
+          >
+            {/* Traçado em SVG com Reveal Progressivo (Exibido apenas quando há plano definido) */}
+            {effectiveTrackWidth > 0 && nodePoints.length === 5 ? (
+              <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+                {/* Linha tracejada de fundo para todo o percurso */}
                 <Polyline
-                  points={animatedGoldenPoints}
-                  stroke="#f59e0b"
-                  strokeWidth={2.8}
-                  strokeDasharray="5, 3"
+                  points={allPolylinePoints}
+                  stroke="#cbd5e1"
+                  strokeWidth={2}
+                  strokeDasharray="5, 4"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   fill="none"
                 />
-              )}
-            </Svg>
-          ) : (
-            <View style={styles.fallbackDashedLine} pointerEvents="none" />
-          )}
+                {/* Linha dourada revelada progressivamente da esquerda para a direita */}
+                {animatedGoldenPoints.length > 0 && (
+                  <Polyline
+                    points={animatedGoldenPoints}
+                    stroke="#f59e0b"
+                    strokeWidth={2.8}
+                    strokeDasharray="5, 3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                )}
+              </Svg>
+            ) : (
+              <View style={styles.fallbackDashedLine} pointerEvents="none" />
+            )}
 
-          {/* 5 Estrelas Distribuídas com Checkpoints Matemáticos */}
-          <View style={styles.starsRow}>
-            {checkpoints.map((cp, index) => {
-              const starNum = cp.starNumber;
-              const starThreshold = index / 4;
-              const isLitByAnimation = progressRatio >= starThreshold - 0.05;
-              const isConquered = starNum <= conqueredCount && isLitByAnimation;
-              const isTarget = starNum === targetStarNumber;
-              const verticalOffset = STAR_OFFSETS[index];
+            {/* 5 Estrelas Distribuídas com Checkpoints Matemáticos */}
+            <View style={styles.starsRow}>
+              {checkpoints.map((cp, index) => {
+                const starNum = cp.starNumber;
+                const starThreshold = index / 4;
+                const isLitByAnimation = progressRatio >= starThreshold - 0.05;
+                const isConquered = starNum <= conqueredCount && isLitByAnimation;
+                const isTarget = starNum === targetStarNumber;
+                const verticalOffset = STAR_OFFSETS[index];
 
-              const labelText = isTarget
-                ? `ALVO: ${targetCheckpoint.weightKg.toFixed(1)} KG`
-                : cp.starNumber === 5
-                ? `META: ${cp.weightKg.toFixed(1)} KG`
-                : `${cp.weightKg.toFixed(1)} KG`;
+                const labelText = isTarget
+                  ? `ALVO: ${targetCheckpoint.weightKg.toFixed(1)} KG`
+                  : cp.starNumber === 5
+                  ? `META: ${cp.weightKg.toFixed(1)} KG`
+                  : `${cp.weightKg.toFixed(1)} KG`;
 
-              return (
-                <View
-                  key={`star-checkpoint-${starNum}`}
-                  style={[
-                    styles.starNodeWrapper,
-                    {
-                      transform: [{ translateY: verticalOffset }],
-                    },
-                  ]}
-                >
-                  {/* Estrela Alvo com Animação Contínua de Pulse */}
-                  {isTarget ? (
-                    <Animated.View
-                      style={[
-                        styles.animatedTargetContainer,
-                        {
-                          transform: [{ scale: pulseAnim }],
-                        },
-                      ]}
-                    >
-                      <View style={styles.targetAuraGlow} />
+                return (
+                  <View
+                    key={`star-checkpoint-${starNum}`}
+                    style={[
+                      styles.starNodeWrapper,
+                      {
+                        transform: [{ translateY: verticalOffset }],
+                      },
+                    ]}
+                  >
+                    {/* Estrela Alvo com Animação Contínua de Pulse */}
+                    {isTarget ? (
+                      <Animated.View
+                        style={[
+                          styles.animatedTargetContainer,
+                          {
+                            transform: [{ scale: pulseAnim }],
+                          },
+                        ]}
+                      >
+                        <View style={styles.targetAuraGlow} />
 
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => onPressStar?.(starNum)}
+                          style={[styles.starCircleBase, styles.starCircleTarget]}
+                        >
+                          <Star
+                            size={18}
+                            color="#b45309"
+                            fill="#f59e0b"
+                            strokeWidth={2.2}
+                          />
+                        </TouchableOpacity>
+                      </Animated.View>
+                    ) : (
                       <TouchableOpacity
                         activeOpacity={0.85}
                         onPress={() => onPressStar?.(starNum)}
-                        style={[styles.starCircleBase, styles.starCircleTarget]}
+                        style={[
+                          styles.starCircleBase,
+                          isConquered
+                            ? styles.starCircleConquered
+                            : styles.starCircleFuture,
+                        ]}
                       >
                         <Star
-                          size={18}
-                          color="#b45309"
-                          fill="#f59e0b"
-                          strokeWidth={2.2}
+                          size={17}
+                          color={isConquered ? "#d97706" : "#94a3b8"}
+                          fill={isConquered ? "#fbbf24" : "transparent"}
+                          strokeWidth={2}
                         />
                       </TouchableOpacity>
-                    </Animated.View>
-                  ) : (
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => onPressStar?.(starNum)}
-                      style={[
-                        styles.starCircleBase,
-                        isConquered
-                          ? styles.starCircleConquered
-                          : styles.starCircleFuture,
-                      ]}
-                    >
-                      <Star
-                        size={17}
-                        color={isConquered ? "#d97706" : "#94a3b8"}
-                        fill={isConquered ? "#fbbf24" : "transparent"}
-                        strokeWidth={2}
-                      />
-                    </TouchableOpacity>
-                  )}
+                    )}
 
-                  {/* Rótulo de Checkpoint em Caixa Alta */}
-                  <Text
-                    style={[
-                      styles.nodeLabel,
-                      isTarget
-                        ? styles.nodeLabelTarget
-                        : isConquered
-                        ? styles.nodeLabelConquered
-                        : styles.nodeLabelFuture,
-                    ]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.75}
-                  >
-                    {labelText}
-                  </Text>
-                </View>
-              );
-            })}
+                    {/* Rótulo de Checkpoint em Caixa Alta */}
+                    <Text
+                      style={[
+                        styles.nodeLabel,
+                        isTarget
+                          ? styles.nodeLabelTarget
+                          : isConquered
+                          ? styles.nodeLabelConquered
+                          : styles.nodeLabelFuture,
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
+                      {labelText}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
           </View>
+        </ScrollView>
+      ) : (
+        <View style={{ paddingVertical: 12, alignItems: "center" }}>
+          {/* 5 Estrelas Vazias sem linha de progresso */}
+          <View style={styles.starsRow}>
+            {[1, 2, 3, 4, 5].map((starNum) => (
+              <View key={`empty-star-${starNum}`} style={styles.starNodeWrapper}>
+                <View style={[styles.starCircleBase, styles.starCircleFuture]}>
+                  <Star
+                    size={17}
+                    color="#94a3b8"
+                    fill="transparent"
+                    strokeWidth={2}
+                  />
+                </View>
+              </View>
+            ))}
+          </View>
+          <Text
+            style={{
+              fontSize: 10.5,
+              fontWeight: "600",
+              color: "#64748b",
+              marginTop: 10,
+              letterSpacing: 0.3,
+              textAlign: "center",
+            }}
+          >
+            AGUARDANDO DEFINIÇÃO DO PLANO CLÍNICO
+          </Text>
         </View>
-      </ScrollView>
+      )}
 
       {/* ======================================================== */}
       {/* BOTÃO COMPACTO E ELEGANTE: ATUALIZAR PESO ATUAL         */}
@@ -489,10 +548,12 @@ export function WeightJourneyPath({
       {/* ======================================================== */}
       <View style={styles.footerRow}>
         <View style={styles.footerIconBox}>
-          <Sparkles size={12} color="#d97706" />
+          <Sparkles size={12} color={hasPlanoDefinido ? "#d97706" : "#94a3b8"} />
         </View>
         <Text style={styles.footerText}>
-          FOCO NO ALVO: {targetCheckpoint.weightKg.toFixed(1)} KG • FALTAM {quilosRestantesAlvo.toFixed(1)} KG PARA DESBLOQUEAR A ESTRELA {targetStarNumber}
+          {hasPlanoDefinido
+            ? `FOCO NO ALVO: ${targetCheckpoint.weightKg.toFixed(1)} KG • FALTAM ${quilosRestantesAlvo.toFixed(1)} KG PARA DESBLOQUEAR A ESTRELA ${targetStarNumber}`
+            : "SUA JORNADA DE 5 ESTRELAS SERÁ ATIVADA ASSIM QUE SUA META DE PESO FOR DEFINIDA NO PRONTUÁRIO."}
         </Text>
       </View>
 

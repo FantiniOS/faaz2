@@ -547,6 +547,9 @@ export function HomeScreen({
           pesoMeta={pesoMetaJornada}
           onPesoUpdated={(novo) => {
             setPesoAtualJornada(novo);
+            if (pesoInicialJornada <= 0) {
+              setPesoInicialJornada(novo);
+            }
           }}
         />
 
