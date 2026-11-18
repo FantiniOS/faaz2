@@ -46,11 +46,14 @@ export function AdicionarAlimentoModal({
   const [resultados, setResultados] = useState<AlimentoBuscaOption[]>([]);
   const [alimentoSelecionado, setAlimentoSelecionado] = useState<AlimentoBuscaOption | null>(null);
   const [gramas, setGramas] = useState<string>("100");
+  const requestSeqRef = useRef(0);
 
   const executarBusca = useCallback(async (termo: string) => {
+    const seq = ++requestSeqRef.current;
     try {
       setCarregando(true);
       const res = await api.alimentos.buscar(termo);
+      if (seq !== requestSeqRef.current) return;
       if (res?.sucesso && Array.isArray(res?.alimentos)) {
         setResultados(res.alimentos);
       } else if (Array.isArray(res?.alimentos)) {
@@ -59,33 +62,36 @@ export function AdicionarAlimentoModal({
         setResultados([]);
       }
     } catch (err) {
-      console.log("[AdicionarAlimentoModal] Erro ao buscar alimentos:", err);
-      setResultados([]);
+      if (seq === requestSeqRef.current) {
+        console.log("[AdicionarAlimentoModal] Erro ao buscar alimentos:", err);
+        setResultados([]);
+      }
     } finally {
-      setCarregando(false);
+      if (seq === requestSeqRef.current) {
+        setCarregando(false);
+      }
     }
   }, []);
 
-  // Debounce de 300ms na digitação
-  useEffect(() => {
-    if (!visible) return;
-
-    const timer = setTimeout(() => {
-      executarBusca(busca);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [busca, visible, executarBusca]);
-
-  // Carrega lista inicial de alimentos ao abrir o modal
+  // Reseta estado ao abrir o modal
   useEffect(() => {
     if (visible) {
       setBusca("");
       setAlimentoSelecionado(null);
       setGramas("100");
-      executarBusca("");
     }
-  }, [visible, executarBusca]);
+  }, [visible]);
+
+  // Busca imediata quando o campo está vazio (ao abrir/limpar) e debounce de 250ms ao digitar
+  useEffect(() => {
+    if (!visible) return;
+    const delay = busca.trim() ? 250 : 0;
+    const timer = setTimeout(() => {
+      executarBusca(busca);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [busca, visible, executarBusca]);
 
   const gramasNum = parseFloat(gramas.replace(",", ".")) || 0;
   const caloriasCalculadas = alimentoSelecionado

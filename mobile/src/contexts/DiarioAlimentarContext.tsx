@@ -135,7 +135,7 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
         ? dataDieta.plano.variacoes
         : [];
 
-      if (variacoesApi.length > 0) {
+      if (dataDieta?.sucesso) {
         setVariacoes(variacoesApi);
         setVariacaoAtivaId((prev) =>
           prev && variacoesApi.some((v: any) => v?.id === prev)

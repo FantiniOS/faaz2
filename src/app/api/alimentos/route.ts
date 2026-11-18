@@ -8,7 +8,7 @@ import { AlimentoEntity } from "@/lib/db/entities";
 /**
  * GET /api/alimentos?q=termo
  * Rota oficial de busca no banco de alimentos (Tabela TACO / UNICAMP).
- * Case-insensitive via LOWER(NOME) LIKE no Oracle.
+ * Insensível a acentos, caixa e vírgulas/hífens (Oracle TRANSLATE + ordenação por relevância).
  */
 const ALIMENTO_SELECT = {
   id: true,
@@ -24,53 +24,93 @@ const ALIMENTO_SELECT = {
   thumbnailUrl: true,
 } as const;
 
+// Mapeamento 1:1 para TRANSLATE no Oracle (mesmo comprimento; independe de ALTER SESSION no pool)
+const ORACLE_FROM_CHARS =
+  "ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ,-/().%";
+const ORACLE_TO_CHARS =
+  "aaaaaeeeeiiiiooooouuuucnaaaaaeeeeiiiiooooouuuucn       ";
+
+function oracleNormalizedExpr(alias: string): string {
+  return `REGEXP_REPLACE(LOWER(TRANSLATE(${alias}, '${ORACLE_FROM_CHARS}', '${ORACLE_TO_CHARS}')), '\\s+', ' ')`;
+}
+
+function normalizeSearchText(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function relevanceRank(nome: string, normQuery: string, tokens: string[]): number {
+  const normName = normalizeSearchText(nome);
+  if (normName === normQuery) return 0;
+  if (normName.startsWith(`${normQuery} `)) return 1;
+  if (normName.startsWith(normQuery)) return 2;
+
+  const words = normName.split(" ");
+  const firstToken = tokens[0];
+  if (words[0] === firstToken) return 3;
+  if (normName.startsWith(firstToken)) return 4;
+  if (tokens.every((t) => words.includes(t))) return 5;
+  if (normName.includes(` ${firstToken}`)) return 6;
+  return 7;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const termoDeBusca = (searchParams.get("q") || "").trim();
-
-    console.log("Buscando por:", termoDeBusca);
+    const termoOriginal = (searchParams.get("q") || "").trim();
+    const normQuery = normalizeSearchText(termoOriginal);
+    const tokens = normQuery ? normQuery.split(" ").filter(Boolean).slice(0, 8) : [];
 
     const alimentoRepo = await getRepository(AlimentoEntity);
 
-    let resultados = await alimentoRepo.find({
-      where: termoDeBusca
-        ? {
-            nome: Raw((alias) => `LOWER(${alias}) LIKE :q`, {
-              q: `%${termoDeBusca.toLowerCase()}%`,
-            }),
-          }
-        : {},
-      take: 50,
-      order: { nome: "ASC" },
-      select: ALIMENTO_SELECT,
-    });
-
-    if (resultados.length === 0 && termoDeBusca.includes(" ")) {
-      const tokens = termoDeBusca
-        .toLowerCase()
-        .split(/\s+/)
-        .filter(Boolean);
-      const params: Record<string, string> = {};
-      tokens.forEach((tok, idx) => {
-        params[`t${idx}`] = `%${tok}%`;
-      });
-
-      resultados = await alimentoRepo.find({
-        where: {
-          nome: Raw(
-            (alias) =>
-              tokens.map((_, idx) => `LOWER(${alias}) LIKE :t${idx}`).join(" AND "),
-            params,
-          ),
-        },
+    if (tokens.length === 0) {
+      const resultados = await alimentoRepo.find({
         take: 50,
         order: { nome: "ASC" },
         select: ALIMENTO_SELECT,
       });
+
+      return NextResponse.json({
+        sucesso: true,
+        total: resultados.length,
+        alimentos: resultados,
+      });
     }
 
-    console.log("Resultados:", resultados.length);
+    const params: Record<string, string> = {};
+    tokens.forEach((tok, idx) => {
+      params[`t${idx}`] = `%${tok}%`;
+    });
+
+    // Busca sem LIMIT antes de ranquear por relevância para não cortar prefixos exatos (ex.: "sal", "maca", "pao")
+    const candidatos = await alimentoRepo.find({
+      where: {
+        nome: Raw(
+          (alias) => {
+            const normCol = oracleNormalizedExpr(alias);
+            return tokens.map((_, idx) => `${normCol} LIKE :t${idx}`).join(" AND ");
+          },
+          params,
+        ),
+      },
+      order: { nome: "ASC" },
+      select: ALIMENTO_SELECT,
+    });
+
+    candidatos.sort((a, b) => {
+      const diff =
+        relevanceRank(a.nome, normQuery, tokens) -
+        relevanceRank(b.nome, normQuery, tokens);
+      if (diff !== 0) return diff;
+      return a.nome.localeCompare(b.nome, "pt-BR");
+    });
+
+    const resultados = candidatos.slice(0, 50);
 
     return NextResponse.json({
       sucesso: true,

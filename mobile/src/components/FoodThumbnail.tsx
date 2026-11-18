@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, Image, ViewStyle, StyleProp } from "react-native";
+import { View, Text, Image, Platform, ViewStyle, StyleProp } from "react-native";
 import { getFoodVisual } from "../utils/foodVisual";
 import { resolveAssetUrl } from "../services/api";
 
@@ -41,7 +41,12 @@ export function FoodThumbnail({
     return (
       <View style={[containerStyle, style]}>
         <Image
-          source={{ uri: resolvedUri, cache: "force-cache" }}
+          key={resolvedUri}
+          source={
+            Platform.OS === "ios"
+              ? { uri: resolvedUri, cache: "force-cache" }
+              : { uri: resolvedUri }
+          }
           style={{ width: "100%", height: "100%", borderRadius: 7 }}
           resizeMode="cover"
           onError={() => setFailedUri(resolvedUri)}

@@ -53,40 +53,51 @@ export function AlimentoCombobox({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const inputSearchRef = useRef<HTMLInputElement>(null);
+  const requestSeqRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Busca Assíncrona no Banco TACO
+  // Busca Assíncrona no Banco TACO (cancela respostas antigas fora de ordem)
   const executarBusca = useCallback(async (termo: string) => {
+    const seq = ++requestSeqRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       setCarregando(true);
       const url = termo.trim()
         ? `/api/alimentos?q=${encodeURIComponent(termo.trim())}`
         : "/api/alimentos";
 
-      const res = await fetch(url);
-      if (res.ok) {
+      const res = await fetch(url, { signal: controller.signal });
+      if (res.ok && seq === requestSeqRef.current) {
         const data = await res.json();
         setResultados(data.alimentos || []);
       }
     } catch (err) {
-      console.error("Erro na busca assíncrona de alimentos:", err);
+      if ((err as Error)?.name !== "AbortError") {
+        console.error("Erro na busca assíncrona de alimentos:", err);
+      }
     } finally {
-      setCarregando(false);
+      if (seq === requestSeqRef.current) {
+        setCarregando(false);
+      }
     }
   }, []);
 
-  // Busca em Tempo Real com useDebounce (300ms) diretamente ao digitar no input
+  // Busca em Tempo Real com useDebounce (imediata ao montar/limpar, 250ms ao digitar)
   useEffect(() => {
+    const delay = search.trim() ? 250 : 0;
     const timer = setTimeout(() => {
       executarBusca(search);
-    }, 300);
+    }, delay);
 
     return () => clearTimeout(timer);
   }, [search, executarBusca]);
 
-  // Carrega sugestões iniciais ao montar o componente
   useEffect(() => {
-    executarBusca("");
-  }, [executarBusca]);
+    return () => abortRef.current?.abort();
+  }, []);
 
   // Fecha o dropdown ao clicar fora ou pressionar Escape
   useEffect(() => {
@@ -186,7 +197,7 @@ export function AlimentoCombobox({
               }}
               onFocus={() => {
                 setOpen(true);
-                if (resultados.length === 0) executarBusca(search);
+                if (resultados.length === 0 && !carregando) executarBusca(search);
               }}
               placeholder="Buscar alimento (ex: arroz, frango, maçã)..."
               className="w-full text-xs font-medium text-slate-800 bg-slate-50 focus:bg-white border border-slate-200 focus:border-teal-500 rounded-lg pl-8 pr-7 py-2 outline-hidden transition-all placeholder:text-slate-400 shadow-2xs"
