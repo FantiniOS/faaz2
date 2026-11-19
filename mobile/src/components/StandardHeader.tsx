@@ -13,12 +13,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export interface StandardHeaderProps {
   /**
-   * Título principal da tela exibido na 2ª linha do centro.
-   * Ex: "Meu Plano Alimentar", "Qualidade do Sono", "Seu Desempenho", "Meu Perfil"
+   * Título principal da tela exibido na 2ª linha.
    */
   title: string;
   /**
-   * Ação ao tocar no botão de voltar.
+   * Subtítulo opcional exibido abaixo do título quando não há botão voltar.
+   */
+  subtitle?: string;
+  /**
+   * Ação ao tocar no botão de voltar (apenas em telas empilhadas/secundárias).
    */
   onBack?: () => void;
   /**
@@ -26,7 +29,7 @@ export interface StandardHeaderProps {
    */
   backLabel?: string;
   /**
-   * Elemento opcional renderizado no canto direito (ex: Tag de médico, badge de calorias/status).
+   * Elemento opcional renderizado no canto direito (ex: badge de status/objetivo).
    */
   rightElement?: React.ReactNode;
   /**
@@ -36,16 +39,15 @@ export interface StandardHeaderProps {
 }
 
 /**
- * StandardHeader - Componente Universal de Cabeçalho do App Mobile (Padrão Global FAAZ)
+ * StandardHeader - Cabeçalho Executivo Escuro Unificado (Clínica FAAZ)
  *
- * Características:
- * - Fundo escuro oficial `#0f172a` (Slate 900) com borda inferior `#1e293b`.
- * - Lado Esquerdo: Botão com ícone ChevronLeft e texto "Voltar" na cor Teal `#2dd4bf`.
- * - Centro: Duas linhas ("CLÍNICA FAAZ" em caixa alta/Teal + Título da tela em Branco).
- * - Lado Direito: `rightElement` opcional ou `View` de largura espelhada para centralização matemática.
+ * - Telas empilhadas (com `onBack`): botão `< Voltar` à esquerda + título centralizado.
+ * - Telas raiz das 4 abas (sem `onBack`): branding + título alinhados à esquerda com `rightElement` à direita,
+ *   seguindo o mesmo padrão executivo navy/slate escuro + acentos esmeralda do painel Web.
  */
 export function StandardHeader({
   title,
+  subtitle,
   onBack,
   backLabel = "Voltar",
   rightElement,
@@ -59,13 +61,34 @@ export function StandardHeader({
     // Fallback gracioso se renderizado fora de SafeAreaProvider
   }
 
-  // Largura dinâmica do botão Voltar para espelhamento simétrico perfeito
   const [leftSlotWidth, setLeftSlotWidth] = useState<number>(76);
 
   const paddingTop = Math.max(
-    insets.top,
-    Platform.OS === "android" ? 14 : 10
+    insets.top + 6,
+    Platform.OS === "android" ? 16 : 12
   );
+
+  // Modo tela raiz de aba (sem botão Voltar): alinhamento executivo à esquerda
+  if (!onBack) {
+    return (
+      <View style={[styles.container, { paddingTop }, style]}>
+        <View style={styles.rootTitleBlock}>
+          <Text style={styles.brandText}>CLÍNICA FAAZ</Text>
+          <Text style={styles.rootTitleText} numberOfLines={1}>
+            {title}
+          </Text>
+          {subtitle ? (
+            <Text style={styles.rootSubtitleText} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+        {rightElement ? (
+          <View style={styles.rootRightSlot}>{rightElement}</View>
+        ) : null}
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop }, style]}>
@@ -79,22 +102,18 @@ export function StandardHeader({
         }}
         style={styles.leftSlot}
       >
-        {onBack ? (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={onBack}
-            style={styles.backButton}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <ChevronLeft size={22} color="#2dd4bf" strokeWidth={2.4} />
-            <Text style={styles.backButtonText}>{backLabel}</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: leftSlotWidth }} />
-        )}
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={onBack}
+          style={styles.backButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <ChevronLeft size={21} color="#2dd4bf" strokeWidth={2.4} />
+          <Text style={styles.backButtonText}>{backLabel}</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* 2. CENTRO: BRANDING & TÍTULO DA TELA (MATEMATICAMENTE CENTRALIZADO) */}
+      {/* 2. CENTRO: BRANDING & TÍTULO DA TELA */}
       <View style={styles.centerSlot}>
         <Text style={styles.brandText}>CLÍNICA FAAZ</Text>
         <Text style={styles.titleText} numberOfLines={1}>
@@ -179,6 +198,28 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   rightSlot: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  rootTitleBlock: {
+    flex: 1,
+    justifyContent: "center",
+    paddingRight: 12,
+  },
+  rootTitleText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "700",
+    marginTop: 2,
+    letterSpacing: -0.2,
+  },
+  rootSubtitleText: {
+    color: "#94a3b8",
+    fontSize: 12,
+    fontWeight: "400",
+    marginTop: 2,
+  },
+  rootRightSlot: {
     alignItems: "flex-end",
     justifyContent: "center",
   },

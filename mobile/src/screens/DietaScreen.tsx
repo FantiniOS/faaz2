@@ -31,7 +31,9 @@ import {
   Trash2,
 } from "lucide-react-native";
 import { StandardHeader } from "../components/StandardHeader";
+import { BottomTabBar } from "../components/BottomTabBar";
 import { api } from "../services/api";
+import { usePatientAuth } from "../contexts/PatientAuthContext";
 import { useDiarioAlimentar } from "../contexts/DiarioAlimentarContext";
 import { AdicionarAlimentoModal, AlimentoBuscaOption } from "../components/AdicionarAlimentoModal";
 import { FoodThumbnail } from "../components/FoodThumbnail";
@@ -233,10 +235,11 @@ function getVariacaoId(variacao?: VariacaoDieta | null, index: number = 0): stri
 
 export function DietaScreen({
   pacienteId,
-  pacienteNome = "Carlos",
+  pacienteNome = "Paciente",
   onBack,
   onTabPress,
 }: DietaScreenProps) {
+  const { paciente: authPaciente } = usePatientAuth();
   const [plano, setPlano] = useState<PlanoAlimentarData | null>(null);
   const [paciente, setPaciente] = useState<PacienteData | null>(null);
   const [activeVariationId, setActiveVariationId] = useState<string | null>(
@@ -440,8 +443,8 @@ export function DietaScreen({
     return (
       <View style={styles.root}>
         <StandardHeader
-          title="Meu Plano Alimentar"
-          onBack={onBack}
+          title="Dieta"
+          subtitle="Plano alimentar prescrito"
           rightElement={
             <View style={styles.headerBadge}>
               <ShieldCheck size={12} color="#2dd4bf" />
@@ -456,58 +459,26 @@ export function DietaScreen({
           </Text>
         </View>
 
-        {/* BOTTOM NAVIGATION FIXA PREMIUM (CLÍNICA FAAZ) */}
-        <View style={styles.bottomNavContainer}>
-          {[
-            { label: "Home", icon: HomeIcon },
-            { label: "Dieta", icon: Utensils },
-            { label: "METAS", icon: Target },
-            { label: "Perfil", icon: User },
-          ].map((tab, idx) => {
-            const isSelected = tab.label === "Dieta";
-            const Icon = tab.icon;
-            return (
-              <TouchableOpacity
-                key={idx}
-                activeOpacity={0.7}
-                onPress={() => {
-                  if (onTabPress) {
-                    onTabPress(tab.label);
-                  } else if (tab.label === "Home" && onBack) {
-                    onBack();
-                  }
-                }}
-                style={styles.bottomNavTab}
-              >
-                <Icon
-                  size={21}
-                  color={isSelected ? "#0f766e" : "#94a3b8"}
-                  strokeWidth={isSelected ? 2.4 : 1.8}
-                />
-                <Text
-                  style={[
-                    styles.bottomNavLabel,
-                    isSelected
-                      ? styles.bottomNavLabelActive
-                      : styles.bottomNavLabelInactive,
-                  ]}
-                >
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <BottomTabBar
+          activeTab="Dieta"
+          onTabPress={(tab) => {
+            if (onTabPress) {
+              onTabPress(tab);
+            } else if (tab === "Hoje" && onBack) {
+              onBack();
+            }
+          }}
+        />
       </View>
     );
   }
 
   return (
     <View style={styles.root}>
-      {/* 1. HEADER NATIVO DO APP (PADRÃO GLOBAL) */}
+      {/* 1. HEADER ESCURO EXECUTIVO UNIFICADO (SEM VOLTAR) */}
       <StandardHeader
-        title="Meu Plano Alimentar"
-        onBack={onBack}
+        title="Dieta"
+        subtitle="Plano alimentar prescrito"
         rightElement={
           <View style={styles.headerBadge}>
             <ShieldCheck size={12} color="#2dd4bf" />
@@ -549,11 +520,15 @@ export function DietaScreen({
             <Text style={styles.medicoText}>
               Médico:{" "}
               <Text style={styles.medicoNome}>
-                {paciente?.medico || "Dr. Carlos Fantini"}
+                {paciente?.medico?.trim() ||
+                  authPaciente?.medicoResponsavel?.trim() ||
+                  "Equipe Clínica FAAZ"}
               </Text>
             </Text>
             <Text style={styles.especialidadeText}>
-              {paciente?.especialidade || "Endocrinologia & Nutrologia"}
+              {paciente?.especialidade?.trim() ||
+                authPaciente?.especialidadeMedico?.trim() ||
+                "Endocrinologia & Metabologia"}
             </Text>
           </View>
         </View>
@@ -1018,7 +993,7 @@ export function DietaScreen({
                       activeOpacity={0.7}
                     >
                       <Plus size={13} color="#0f766e" />
-                      <Text style={styles.addExtraButtonText}>+ Adicionar item consumido</Text>
+                      <Text style={styles.addExtraButtonText}>Adicionar item consumido</Text>
                     </TouchableOpacity>
                   </View>
                 );
@@ -1040,50 +1015,17 @@ export function DietaScreen({
         )}
       </ScrollView>
 
-      {/* ======================================================== */}
-      {/* 3. BOTTOM NAVIGATION FIXA PREMIUM (CLÍNICA FAAZ)         */}
-      {/* ======================================================== */}
-      <View style={styles.bottomNavContainer}>
-        {[
-          { label: "Home", icon: HomeIcon },
-          { label: "Dieta", icon: Utensils },
-          { label: "METAS", icon: Target },
-          { label: "Perfil", icon: User },
-        ].map((tab, idx) => {
-          const isSelected = tab.label === "Dieta";
-          const Icon = tab.icon;
-          return (
-            <TouchableOpacity
-              key={idx}
-              activeOpacity={0.7}
-              onPress={() => {
-                if (onTabPress) {
-                  onTabPress(tab.label);
-                } else if (tab.label === "Home" && onBack) {
-                  onBack();
-                }
-              }}
-              style={styles.bottomNavTab}
-            >
-              <Icon
-                size={21}
-                color={isSelected ? "#0f766e" : "#94a3b8"}
-                strokeWidth={isSelected ? 2.4 : 1.8}
-              />
-              <Text
-                style={[
-                  styles.bottomNavLabel,
-                  isSelected
-                    ? styles.bottomNavLabelActive
-                    : styles.bottomNavLabelInactive,
-                ]}
-              >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {/* 3. BOTTOM NAVIGATION UNIFICADA (CLÍNICA FAAZ) */}
+      <BottomTabBar
+        activeTab="Dieta"
+        onTabPress={(tab) => {
+          if (onTabPress) {
+            onTabPress(tab);
+          } else if (tab === "Hoje" && onBack) {
+            onBack();
+          }
+        }}
+      />
 
       {/* MODAL DE BUSCA LIVRE (TABELA TACO) PARA SUBSTITUIÇÃO ANCORADA */}
       <AdicionarAlimentoModal

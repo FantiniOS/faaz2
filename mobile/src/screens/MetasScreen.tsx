@@ -1,1033 +1,1470 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  Alert,
+  RefreshControl,
+  ActivityIndicator,
 } from "react-native";
+import Svg, { Polyline, Circle as SvgCircle } from "react-native-svg";
 import {
-  Target,
-  Utensils,
+  Scale,
+  Ruler,
+  HeartPulse,
+  Activity,
   Dumbbell,
-  Moon,
-  Droplets,
-  Zap,
-  ArrowLeft,
-  ChevronRight,
+  Plus,
   Clock,
-  Sparkles,
+  AlertTriangle,
   CheckCircle2,
-  Home as HomeIcon,
-  User,
+  Calendar,
 } from "lucide-react-native";
 import { usePatientAuth } from "../contexts/PatientAuthContext";
-import { useDiarioAlimentar } from "../contexts/DiarioAlimentarContext";
 import { StandardHeader } from "../components/StandardHeader";
-import { api } from "../services/api";
+import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
+import { RegistrarPesoModal } from "../components/RegistrarPesoModal";
+import {
+  api,
+  MeasurementItem,
+  GlicemiaHistoricoItem,
+  GlicemiaResumoPeriodo,
+  IntestinoCheckinItem,
+  PacienteTreinosResponse,
+} from "../services/api";
+import {
+  getConfigObjetivoClinico,
+  avaliarVariacaoPeso,
+} from "../utils/objetivoClinico";
 
 export interface MetasScreenProps {
   pacienteId?: string;
   pacienteNome?: string;
+  refreshKey?: number;
   onBack?: () => void;
-  onTabPress?: (tabName: string) => void;
+  onTabPress?: (tabName: MainTabKey | string) => void;
   onNavigateToCheckin?: (id: string) => void;
   onNavigateToDieta?: () => void;
 }
 
+interface PesoEvolucaoState {
+  pesoInicialKg: number;
+  pesoAtualKg: number;
+  pesoAlvoKg: number;
+  imcAtual: number;
+  historico: Array<{ data: string; peso: number }>;
+}
+
+const MEDIDAS_META: Array<{
+  key: keyof Pick<
+    MeasurementItem,
+    | "waist"
+    | "abdomen"
+    | "hips"
+    | "bodyFatPercentage"
+    | "rightArm"
+    | "leftArm"
+    | "rightThigh"
+    | "leftThigh"
+  >;
+  label: string;
+  unit: string;
+}> = [
+  { key: "waist", label: "Cintura", unit: "cm" },
+  { key: "abdomen", label: "Abdômen", unit: "cm" },
+  { key: "hips", label: "Quadril", unit: "cm" },
+  { key: "bodyFatPercentage", label: "% Gordura", unit: "%" },
+  { key: "rightArm", label: "Braço Dir.", unit: "cm" },
+  { key: "leftArm", label: "Braço Esq.", unit: "cm" },
+  { key: "rightThigh", label: "Coxa Dir.", unit: "cm" },
+  { key: "leftThigh", label: "Coxa Esq.", unit: "cm" },
+];
+
+function formatKg(val: number): string {
+  if (!val || val <= 0) return "--";
+  return `${val.toFixed(1).replace(".", ",")} kg`;
+}
+
+function formatDataHoraLocal(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "--";
+  const data = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  const hora = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return `${data} • ${hora}`;
+}
+
+function formatCategoriaBristol(cat?: string, tipo?: number): {
+  label: string;
+  color: string;
+  bg: string;
+} {
+  const c = (cat || "").toLowerCase();
+  if (c === "ideal" || tipo === 3 || tipo === 4) {
+    return { label: "Ideal", color: "#047857", bg: "#ecfdf5" };
+  }
+  if (c === "constipacao" || (tipo !== undefined && tipo <= 2)) {
+    return { label: "Constipação", color: "#b45309", bg: "#fffbeb" };
+  }
+  return { label: "Diarreia", color: "#be123c", bg: "#fff1f2" };
+}
+
 export function MetasScreen({
   pacienteId,
-  pacienteNome,
-  onBack,
+  refreshKey = 0,
   onTabPress,
   onNavigateToCheckin,
-  onNavigateToDieta,
 }: MetasScreenProps) {
   const { paciente: authPaciente } = usePatientAuth();
-  const realPacienteId = pacienteId || authPaciente?.id;
-  const nomeExibicao = (pacienteNome || authPaciente?.nome || "PACIENTE").toUpperCase();
+  const realPacienteId = pacienteId || authPaciente?.id || "";
 
-  // Estados de Metas sincronizados exclusivamente com o Diário Alimentar e API Oracle (sem dados chumbados)
-  const diario = useDiarioAlimentar();
-  const [caloriasAlvoApi, setCaloriasAlvoApi] = useState<number>(0);
-  const caloriasAlvo = caloriasAlvoApi > 0 ? caloriasAlvoApi : diario.caloriasMeta;
-  const caloriasConsumidas = diario.caloriasConsumidas;
-  const [caloriasBonusGanhos, setCaloriasBonusGanhos] = useState(0);
-  const [caloriasBonusMeta, setCaloriasBonusMeta] = useState(0);
-  const [treinosHoje, setTreinosHoje] = useState<
-    Array<{ id: string; titulo: string; calorias: number }>
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const [isPesoModalOpen, setIsPesoModalOpen] = useState(false);
+
+  const [objetivoClinico, setObjetivoClinico] = useState<string>(
+    authPaciente?.treatmentObjective || authPaciente?.focoClinico || ""
+  );
+  const [pesoEvolucao, setPesoEvolucao] = useState<PesoEvolucaoState>({
+    pesoInicialKg: 0,
+    pesoAtualKg: 0,
+    pesoAlvoKg: 0,
+    imcAtual: 0,
+    historico: [],
+  });
+  const [measurements, setMeasurements] = useState<MeasurementItem[]>([]);
+  const [glicemiaResumo, setGlicemiaResumo] = useState<GlicemiaResumoPeriodo>({
+    media: null,
+    totalMedicoes: 0,
+    dentroDaMeta: 0,
+    alertas: 0,
+  });
+  const [glicemiaHistorico, setGlicemiaHistorico] = useState<
+    GlicemiaHistoricoItem[]
   >([]);
-  const [sonoHoras, setSonoHoras] = useState(0);
-  const [sonoAlvoHoras, setSonoAlvoHoras] = useState(0);
-  const [sonoMediaSemana, setSonoMediaSemana] = useState(0);
-  const [sonoQualidade, setSonoQualidade] = useState<string | null>(null);
-  const [aguaConsumidaMl, setAguaConsumidaMl] = useState(0);
-  const [aguaMetaMl, setAguaMetaMl] = useState(0);
+  const [intestinoHistorico, setIntestinoHistorico] = useState<
+    IntestinoCheckinItem[]
+  >([]);
+  const [treinos, setTreinos] = useState<PacienteTreinosResponse | null>(null);
 
-  // Busca metas e check-ins reais sincronizados da API Oracle
-  useEffect(() => {
-    const id = realPacienteId;
-    if (!id) return;
+  const [chartWidth, setChartWidth] = useState<number>(280);
 
-    let isMounted = true;
-    async function loadMetas(pId: string) {
-      try {
-        const json = await api.pacientes.getMetas(pId);
-        if (isMounted && json) {
-          if (json.metas) {
-            setCaloriasAlvoApi(Number(json.metas.caloriasAlvo) || 0);
-            const bonusVal =
-              json.metas.caloriasBonusAlvo ?? json.metas.pontosBonusAlvo ?? 0;
-            setCaloriasBonusMeta(Number(bonusVal) || 0);
-            setSonoAlvoHoras(Number(json.metas.sonoHorasAlvo) || 0);
-            setAguaMetaMl(Number(json.metas.aguaMlAlvo) || 0);
-          }
-          setCaloriasBonusGanhos(Number(json.caloriasGastasTreino) || 0);
-          setTreinosHoje(Array.isArray(json.treinosHoje) ? json.treinosHoje : []);
-          setSonoHoras(
-            json.ultimoSono ? Number(json.ultimoSono.horas) || 0 : 0
-          );
-          setSonoQualidade(json.ultimoSono?.qualidade || null);
-          setSonoMediaSemana(Number(json.sonoMediaSemana) || 0);
-          setAguaConsumidaMl(Number(json.hidratacaoHoje?.consumidoMl) || 0);
-        }
-      } catch {
-        // Mantém estado zerado quando sem conexão/dados
+  const carregarEvolucao = useCallback(async () => {
+    if (!realPacienteId) {
+      setIsInitialLoading(false);
+      return;
+    }
+
+    const [metasRes, medidasRes, glicemiaRes, intestinoRes, treinosRes] =
+      await Promise.allSettled([
+        api.pacientes.getMetas(realPacienteId),
+        api.pacientes.getMedidas(realPacienteId),
+        api.checkins.getHistoricoGlicemia(realPacienteId, 30),
+        api.checkins.getHistoricoIntestino(realPacienteId, 50),
+        api.pacientes.getTreinos(realPacienteId),
+      ]);
+
+    if (metasRes.status === "fulfilled" && metasRes.value) {
+      const m = metasRes.value;
+      if (m.metas?.treatmentObjective || m.metas?.focoMetabolico) {
+        setObjetivoClinico(
+          m.metas.treatmentObjective || m.metas.focoMetabolico
+        );
+      }
+      if (m.pesoEvolucao) {
+        setPesoEvolucao({
+          pesoInicialKg: Number(m.pesoEvolucao.pesoInicialKg) || 0,
+          pesoAtualKg: Number(m.pesoEvolucao.pesoAtualKg) || 0,
+          pesoAlvoKg: Number(m.pesoEvolucao.pesoAlvoKg) || 0,
+          imcAtual: Number(m.pesoEvolucao.imcAtual) || 0,
+          historico: Array.isArray(m.pesoEvolucao.historico)
+            ? m.pesoEvolucao.historico
+            : [],
+        });
       }
     }
-    loadMetas(id);
 
-    return () => {
-      isMounted = false;
-    };
+    if (medidasRes.status === "fulfilled" && medidasRes.value) {
+      setMeasurements(
+        Array.isArray(medidasRes.value.measurements)
+          ? medidasRes.value.measurements
+          : []
+      );
+    }
+
+    if (glicemiaRes.status === "fulfilled" && glicemiaRes.value) {
+      if (glicemiaRes.value.resumo) {
+        setGlicemiaResumo(glicemiaRes.value.resumo);
+      }
+      setGlicemiaHistorico(
+        Array.isArray(glicemiaRes.value.historico)
+          ? glicemiaRes.value.historico
+          : []
+      );
+    }
+
+    if (intestinoRes.status === "fulfilled" && intestinoRes.value) {
+      const hist = Array.isArray(intestinoRes.value.historico)
+        ? intestinoRes.value.historico
+        : Array.isArray(intestinoRes.value.registrosHoje)
+          ? intestinoRes.value.registrosHoje
+          : [];
+      setIntestinoHistorico(hist);
+    }
+
+    if (treinosRes.status === "fulfilled" && treinosRes.value?.sucesso) {
+      setTreinos(treinosRes.value);
+    }
+
+    setIsInitialLoading(false);
   }, [realPacienteId]);
 
-  // Cálculos do Orçamento Calórico (estritamente baseados nos registros reais)
-  const saldoCaloricoDisponivel = Math.max(
-    0,
-    caloriasAlvo - caloriasConsumidas + caloriasBonusGanhos
-  );
-  const percConsumoCalorias =
-    caloriasAlvo > 0
-      ? Math.min(100, Math.round((caloriasConsumidas / caloriasAlvo) * 100))
-      : 0;
-  const percBonusTreino =
-    caloriasBonusMeta > 0
-      ? Math.min(100, Math.round((caloriasBonusGanhos / caloriasBonusMeta) * 100))
-      : 0;
-  const percSono =
-    sonoAlvoHoras > 0
-      ? Math.min(100, Math.round((sonoHoras / sonoAlvoHoras) * 100))
-      : 0;
-  const percAgua =
-    aguaMetaMl > 0
-      ? Math.min(100, Math.round((aguaConsumidaMl / aguaMetaMl) * 100))
-      : 0;
+  useEffect(() => {
+    carregarEvolucao();
+  }, [carregarEvolucao, refreshKey]);
 
-  async function handleAddAgua(ml: number) {
-    const novo = aguaConsumidaMl + ml;
-    setAguaConsumidaMl(novo);
-    if (realPacienteId) {
-      try {
-        await api.checkins.registrarHidratacao({
-          pacienteId: realPacienteId,
-          volumeMl: ml,
-          metaDiariaMl: aguaMetaMl || undefined,
-        });
-      } catch {
-        // Ignora falha silenciosa
+  const handlePullRefresh = useCallback(async () => {
+    setIsPullRefreshing(true);
+    try {
+      await carregarEvolucao();
+    } finally {
+      setIsPullRefreshing(false);
+    }
+  }, [carregarEvolucao]);
+
+  const objetivoConfig = useMemo(
+    () => getConfigObjetivoClinico(objetivoClinico),
+    [objetivoClinico]
+  );
+
+  const variacaoPeso = useMemo(() => {
+    if (pesoEvolucao.pesoAtualKg <= 0 || pesoEvolucao.pesoInicialKg <= 0) {
+      return null;
+    }
+    const delta = pesoEvolucao.pesoAtualKg - pesoEvolucao.pesoInicialKg;
+    return avaliarVariacaoPeso(delta, objetivoClinico);
+  }, [pesoEvolucao.pesoAtualKg, pesoEvolucao.pesoInicialKg, objetivoClinico]);
+
+  // Pontos do mini gráfico de linha temporal de peso (SVG)
+  const weightChart = useMemo(() => {
+    const pts = pesoEvolucao.historico.slice(-8);
+    if (pts.length < 2) return null;
+
+    const values = pts.map((p) => p.peso);
+    const minVal = Math.min(...values);
+    const maxVal = Math.max(...values);
+    const span = Math.max(maxVal - minVal, 1);
+
+    const w = Math.max(chartWidth, 200);
+    const h = 84;
+    const padX = 14;
+    const padY = 14;
+    const usableW = w - padX * 2;
+    const usableH = h - padY * 2;
+
+    const coords = pts.map((p, idx) => {
+      const x = padX + (idx / (pts.length - 1)) * usableW;
+      const y = padY + (1 - (p.peso - minVal) / span) * usableH;
+      return { x, y, data: p.data, peso: p.peso };
+    });
+
+    const polylinePoints = coords
+      .map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`)
+      .join(" ");
+
+    return { width: w, height: h, coords, polylinePoints };
+  }, [pesoEvolucao.historico, chartWidth]);
+
+  // Comparativo de medidas (última avaliação vs. avaliação anterior por campo)
+  const ultimaMedida = measurements[0] || null;
+  const medidasComComparativo = useMemo(() => {
+    if (!ultimaMedida) return [];
+    const anteriores = measurements.slice(1);
+
+    return MEDIDAS_META.map((meta) => {
+      const atual = ultimaMedida[meta.key];
+      if (atual === null || atual === undefined) return null;
+
+      const anteriorRow = anteriores.find(
+        (row) => row[meta.key] !== null && row[meta.key] !== undefined
+      );
+      const anteriorVal = anteriorRow ? anteriorRow[meta.key] : null;
+      const delta =
+        anteriorVal !== null && anteriorVal !== undefined
+          ? Math.round((Number(atual) - Number(anteriorVal)) * 10) / 10
+          : null;
+
+      return {
+        key: meta.key,
+        label: meta.label,
+        unit: meta.unit,
+        atual: Number(atual),
+        delta,
+      };
+    }).filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [ultimaMedida, measurements]);
+
+  // Resumo do padrão intestinal (Escala de Bristol)
+  const resumoIntestino = useMemo(() => {
+    let ideal = 0;
+    let constipacao = 0;
+    let diarreia = 0;
+
+    for (const item of intestinoHistorico) {
+      const c = (item.categoria || "").toLowerCase();
+      if (c === "ideal" || item.tipoBristol === 3 || item.tipoBristol === 4) {
+        ideal += 1;
+      } else if (c === "constipacao" || item.tipoBristol <= 2) {
+        constipacao += 1;
+      } else {
+        diarreia += 1;
       }
     }
-    Alert.alert(
-      "HIDRATAÇÃO REGISTRADA",
-      `+${ml} ML ADICIONADOS COM SUCESSO! TOTAL DO DIA: ${(novo / 1000).toFixed(1)} L.`
-    );
-  }
+
+    const total = intestinoHistorico.length;
+    let predominante = "Sem registros";
+    let cor = "#64748b";
+    let bg = "#f1f5f9";
+
+    if (total > 0) {
+      if (ideal >= constipacao && ideal >= diarreia) {
+        predominante = "Padrão Ideal";
+        cor = "#047857";
+        bg = "#ecfdf5";
+      } else if (constipacao >= diarreia) {
+        predominante = "Tendência a Constipação";
+        cor = "#b45309";
+        bg = "#fffbeb";
+      } else {
+        predominante = "Tendência a Diarreia";
+        cor = "#be123c";
+        bg = "#fff1f2";
+      }
+    }
+
+    return { total, ideal, constipacao, diarreia, predominante, cor, bg };
+  }, [intestinoHistorico]);
+
+  const percGlicemiaNaMeta =
+    glicemiaResumo.totalMedicoes > 0
+      ? Math.round(
+          (glicemiaResumo.dentroDaMeta / glicemiaResumo.totalMedicoes) * 100
+        )
+      : null;
 
   return (
-    <View style={styles.rootContainer}>
-      {/* ======================================================== */}
-      {/* 1. CABEÇALHO SUPERIOR PADRÃO GLOBAL (SEU DESEMPENHO)     */}
-      {/* ======================================================== */}
+    <View style={styles.root}>
+      {/* HEADER ESCURO EXECUTIVO (SEM VOLTAR) */}
       <StandardHeader
-        title="SEU DESEMPENHO"
-        onBack={() => (onBack ? onBack() : onTabPress?.("Home"))}
+        title="Evolução"
+        subtitle="Espelho vivo do seu prontuário"
         rightElement={
-          <View style={styles.pointsBadgePill}>
-            <Zap size={11} color="#2dd4bf" />
-            <Text style={styles.pointsBadgeText}>{saldoCaloricoDisponivel} KCAL</Text>
+          <View style={styles.headerObjetivoPill}>
+            <Text style={styles.headerObjetivoText}>
+              {objetivoConfig.rotuloCurto}
+            </Text>
           </View>
         }
       />
 
-      {/* ======================================================== */}
-      {/* 2. CONTEÚDO ROLÁVEL COM OS CARDS DE METAS                */}
-      {/* ======================================================== */}
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-        style={styles.scrollView}
-      >
-        {/* BANNER DE RESUMO DO SALDO TOTAL */}
-        <View style={styles.heroBanner}>
-          <View style={styles.heroBannerHeader}>
-            <View style={styles.heroIconBox}>
-              <Target size={18} color="#0f766e" />
-            </View>
-            <View style={styles.heroTitleGroup}>
-              <Text style={styles.heroPreTitle}>SALDO CALÓRICO DO DIA</Text>
-              <Text style={styles.heroMainScore}>{saldoCaloricoDisponivel} KCAL RESTANTES</Text>
-            </View>
-          </View>
-          <Text style={styles.heroDescription}>
-            SUA META CALÓRICA DIÁRIA GARANTE DÉFICIT SEGURO COM PRESERVAÇÃO DA TAXA METABÓLICA.
-          </Text>
+      {isInitialLoading ? (
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color="#0f766e" />
+          <Text style={styles.loadingText}>Sincronizando sua evolução...</Text>
         </View>
-
-        {/* ======================================================== */}
-        {/* CARD 1: META CALÓRICA DIÁRIA (ALIMENTAÇÃO)               */}
-        {/* ======================================================== */}
-        <View style={styles.metaCard}>
-          <View style={styles.metaCardHeader}>
-            <View style={styles.cardHeaderLeft}>
-              <View style={[styles.cardIconBox, styles.cardIconBoxOrange]}>
-                <Utensils size={17} color="#d97706" />
-              </View>
-              <View>
-                <Text style={styles.cardTitle}>META CALÓRICA DIÁRIA</Text>
-                <Text style={styles.cardSubtitle}>PLANEJAMENTO NUTRICIONAL & CONSUMO</Text>
-              </View>
-            </View>
-
-            <View style={styles.tagBadgeOrange}>
-              <Text style={styles.tagBadgeOrangeText}>
-                {caloriasConsumidas} / {caloriasAlvo} KCAL
-              </Text>
-            </View>
-          </View>
-
-          {/* Destaque Numérico */}
-          <View style={styles.metricRow}>
-            <View style={styles.metricNumbers}>
-              <Text style={styles.metricBigText}>{caloriasConsumidas}</Text>
-              <Text style={styles.metricUnitText}>/ {caloriasAlvo} KCAL CONSUMIDAS</Text>
-            </View>
-            <View style={styles.badgeSuccessPill}>
-              <Text style={styles.badgeSuccessText}>
-                RESTAM {Math.max(0, caloriasAlvo - caloriasConsumidas)} KCAL
-              </Text>
-            </View>
-          </View>
-
-          {/* Barra de Progresso do Orçamento */}
-          <View style={styles.progressBarTrack}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${percConsumoCalorias}%`, backgroundColor: "#f97316" },
-              ]}
+      ) : (
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isPullRefreshing}
+              onRefresh={handlePullRefresh}
+              progressViewOffset={12}
+              tintColor="#0f766e"
+              colors={["#0f766e"]}
             />
-          </View>
-
-          {/* Detalhes do Orçamento em Linhas */}
-          <View style={styles.cardDetailsBox}>
-            <View style={styles.detailItemRow}>
-              <Text style={styles.detailLabel}>META CALÓRICA DIÁRIA BASE</Text>
-              <Text style={styles.detailValue}>{caloriasAlvo} KCAL</Text>
-            </View>
-            <View style={styles.detailItemRow}>
-              <Text style={styles.detailLabel}>CALORIAS CONSUMIDAS HOJE</Text>
-              <Text style={[styles.detailValue, { color: "#ea580c" }]}>
-                {caloriasConsumidas} KCAL
-              </Text>
-            </View>
-            <View style={[styles.detailItemRow, { borderBottomWidth: 0 }]}>
-              <Text style={styles.detailLabel}>SALDO RESTANTE DISPONÍVEL</Text>
-              <Text style={[styles.detailValue, { color: "#0f766e", fontWeight: "600" }]}>
-                {Math.max(0, caloriasAlvo - caloriasConsumidas)} KCAL
-              </Text>
-            </View>
-          </View>
-
-          {/* Botão de Atalho para o Cardápio */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() =>
-              onNavigateToDieta ? onNavigateToDieta() : onTabPress?.("Dieta")
-            }
-            style={styles.cardActionButton}
-          >
-            <Text style={styles.cardActionButtonText}>
-              VER CARDÁPIO & SUBSTITUIÇÕES DE ALIMENTOS
-            </Text>
-            <ChevronRight size={14} color="#0f766e" />
-          </TouchableOpacity>
-        </View>
-
-        {/* ======================================================== */}
-        {/* CARD 2: GASTO CALÓRICO & TREINO                          */}
-        {/* ======================================================== */}
-        <View style={styles.metaCard}>
-          <View style={styles.metaCardHeader}>
-            <View style={styles.cardHeaderLeft}>
-              <View style={[styles.cardIconBox, styles.cardIconBoxTeal]}>
-                <Dumbbell size={17} color="#0f766e" />
-              </View>
-              <View>
-                <Text style={styles.cardTitle}>GASTO CALÓRICO & TREINO</Text>
-                <Text style={styles.cardSubtitle}>CALORIAS EXTRAS CONQUISTADAS VIA EXERCÍCIO</Text>
-              </View>
-            </View>
-
-            <View style={styles.tagBadgeTeal}>
-              <Zap size={11} color="#0f766e" />
-              <Text style={styles.tagBadgeTealText}>+{caloriasBonusGanhos} KCAL</Text>
-            </View>
-          </View>
-
-          {/* Destaque Numérico */}
-          <View style={styles.metricRow}>
-            <View style={styles.metricNumbers}>
-              <Text style={[styles.metricBigText, { color: "#0f766e" }]}>
-                +{caloriasBonusGanhos}
-              </Text>
-              <Text style={[styles.metricUnitText, { color: "#0f766e" }]}>
-                KCAL GASTAS NO TREINO
-              </Text>
-            </View>
-            <View style={styles.badgeCreditActive}>
-              <CheckCircle2 size={12} color="#065f46" />
-              <Text style={styles.badgeCreditActiveText}>
-                {caloriasBonusGanhos > 0 ? "TREINO REGISTRADO" : "SEM TREINO HOJE"}
-              </Text>
-            </View>
-          </View>
-
-          {/* Barra de Progresso do Bônus */}
-          <View style={styles.progressBarTrack}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${percBonusTreino}%`, backgroundColor: "#0f766e" },
-              ]}
-            />
-          </View>
-
-          {/* Detalhes Reais de Treino ou Empty State */}
-          <View style={styles.cardDetailsBox}>
-            {treinosHoje.length > 0 ? (
-              treinosHoje.map((t) => (
-                <View key={t.id} style={styles.detailItemRow}>
-                  <Text style={styles.detailLabel}>{t.titulo.toUpperCase()}</Text>
-                  <Text style={styles.detailValue}>+{t.calorias} KCAL QUEIMADAS</Text>
+          }
+        >
+          {/* ====================================================== */}
+          {/* BLOCO 1: RESUMO DE PESO (ORIENTADO AO OBJETIVO)        */}
+          {/* ====================================================== */}
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.cardTitleGroup}>
+                <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
+                  <Scale size={16} color="#0f766e" />
                 </View>
-              ))
+                <View>
+                  <Text style={styles.cardTitle}>Evolução de Peso</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {objetivoClinico?.trim() || objetivoConfig.rotuloCurto}
+                  </Text>
+                </View>
+              </View>
+
+              {variacaoPeso ? (
+                <View
+                  style={[
+                    styles.statusPill,
+                    {
+                      backgroundColor: variacaoPeso.corFundo,
+                      borderColor: variacaoPeso.corBorda,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusPillText,
+                      { color: variacaoPeso.corTexto },
+                    ]}
+                  >
+                    {variacaoPeso.sinalTexto}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {/* Métricas limpas sem truncamento */}
+            <View style={styles.weightMetricsGrid}>
+              <View style={styles.weightMetricCell}>
+                <Text style={styles.metricLabel}>Inicial</Text>
+                <Text style={styles.metricValue}>
+                  {formatKg(pesoEvolucao.pesoInicialKg)}
+                </Text>
+              </View>
+              <View style={[styles.weightMetricCell, styles.weightMetricHighlight]}>
+                <Text style={styles.metricLabelHighlight}>Atual</Text>
+                <Text style={styles.metricValueHighlight}>
+                  {formatKg(pesoEvolucao.pesoAtualKg)}
+                </Text>
+              </View>
+              <View style={styles.weightMetricCell}>
+                <Text style={styles.metricLabel}>Meta</Text>
+                <Text style={styles.metricValue}>
+                  {pesoEvolucao.pesoAlvoKg > 0
+                    ? formatKg(pesoEvolucao.pesoAlvoKg)
+                    : "A definir"}
+                </Text>
+              </View>
+            </View>
+
+            {pesoEvolucao.imcAtual > 0 ? (
+              <View style={styles.imcRow}>
+                <Text style={styles.imcLabel}>IMC atual</Text>
+                <Text style={styles.imcValue}>
+                  {pesoEvolucao.imcAtual.toFixed(1).replace(".", ",")} kg/m²
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Gráfico de linha temporal */}
+            {weightChart ? (
+              <View
+                style={styles.chartContainer}
+                onLayout={(e) => {
+                  const w = Math.floor(e.nativeEvent.layout.width - 16);
+                  if (w > 120 && Math.abs(w - chartWidth) > 4) {
+                    setChartWidth(w);
+                  }
+                }}
+              >
+                <Svg width={weightChart.width} height={weightChart.height}>
+                  <Polyline
+                    points={weightChart.polylinePoints}
+                    fill="none"
+                    stroke="#0f766e"
+                    strokeWidth={2.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {weightChart.coords.map((c, idx) => (
+                    <SvgCircle
+                      key={idx}
+                      cx={c.x}
+                      cy={c.y}
+                      r={idx === weightChart.coords.length - 1 ? 4.5 : 3}
+                      fill={
+                        idx === weightChart.coords.length - 1
+                          ? "#0f766e"
+                          : "#ffffff"
+                      }
+                      stroke="#0f766e"
+                      strokeWidth={2}
+                    />
+                  ))}
+                </Svg>
+                <View style={styles.chartLabelsRow}>
+                  <Text style={styles.chartAxisText}>
+                    {weightChart.coords[0].data} (
+                    {weightChart.coords[0].peso.toFixed(1).replace(".", ",")} kg)
+                  </Text>
+                  <Text style={styles.chartAxisTextBold}>
+                    {weightChart.coords[weightChart.coords.length - 1].data} (
+                    {weightChart.coords[weightChart.coords.length - 1].peso
+                      .toFixed(1)
+                      .replace(".", ",")}{" "}
+                    kg)
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
+            <Text style={styles.clinicalNote}>{objetivoConfig.mensagemPeso}</Text>
+
+            <TouchableOpacity
+              activeOpacity={0.82}
+              onPress={() => setIsPesoModalOpen(true)}
+              style={styles.primaryActionBtn}
+            >
+              <Scale size={15} color="#ffffff" />
+              <Text style={styles.primaryActionBtnText}>Atualizar Peso</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* ====================================================== */}
+          {/* BLOCO 2: MEDIDAS & COMPOSIÇÃO CORPORAL                 */}
+          {/* ====================================================== */}
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.cardTitleGroup}>
+                <View style={[styles.iconBox, { backgroundColor: "#f0f9ff" }]}>
+                  <Ruler size={16} color="#0284c7" />
+                </View>
+                <View>
+                  <Text style={styles.cardTitle}>
+                    Medidas & Composição Corporal
+                  </Text>
+                  <Text style={styles.cardSubtitle}>
+                    {ultimaMedida
+                      ? `Última aferição em ${new Date(
+                          ultimaMedida.measuredAt
+                        ).toLocaleDateString("pt-BR")}`
+                      : "Nenhuma aferição registrada"}
+                  </Text>
+                </View>
+              </View>
+
+              {measurements.length > 0 ? (
+                <View style={styles.neutralPill}>
+                  <Text style={styles.neutralPillText}>
+                    {measurements.length}{" "}
+                    {measurements.length === 1 ? "reg." : "regs."}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {medidasComComparativo.length > 0 ? (
+              <View style={styles.measureGrid}>
+                {medidasComComparativo.map((item) => (
+                  <View key={item.key} style={styles.measureTile}>
+                    <Text style={styles.measureLabel}>{item.label}</Text>
+                    <Text style={styles.measureVal}>
+                      {item.atual.toFixed(1).replace(".", ",")} {item.unit}
+                    </Text>
+                    {item.delta !== null ? (
+                      <Text
+                        style={[
+                          styles.measureDelta,
+                          {
+                            color:
+                              Math.abs(item.delta) < 0.05
+                                ? "#64748b"
+                                : "#0f766e",
+                          },
+                        ]}
+                      >
+                        {item.delta > 0 ? "+" : ""}
+                        {item.delta.toFixed(1).replace(".", ",")} {item.unit} vs.
+                        ant.
+                      </Text>
+                    ) : (
+                      <Text style={styles.measureDeltaMuted}>1º registro</Text>
+                    )}
+                  </View>
+                ))}
+              </View>
             ) : (
-              <View style={styles.detailItemRow}>
-                <Text style={styles.detailLabel}>ATIVIDADE FÍSICA DE HOJE</Text>
-                <Text style={styles.detailValue}>AGUARDANDO PRIMEIRO CHECK-IN</Text>
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>
+                  Registre cintura, abdômen, quadril, membros ou % de gordura
+                  para acompanhar a evolução ao longo das consultas.
+                </Text>
               </View>
             )}
-            <View style={[styles.detailItemRow, { borderBottomWidth: 0 }]}>
-              <Text style={styles.detailLabel}>META DE GASTO ATIVO DO DIA</Text>
-              <Text style={styles.detailValue}>
-                {caloriasBonusMeta > 0 ? `+${caloriasBonusMeta} KCAL` : "NENHUMA META DEFINIDA"}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.rewardNoticeBox}>
-            <Sparkles size={13} color="#0f766e" />
-            <Text style={styles.rewardNoticeText}>
-              O GASTO CALÓRICO DE TREINO EXPANDE O SEU DÉFICIT E OTIMIZA SEU METABOLISMO!
-            </Text>
-          </View>
-        </View>
-
-        {/* ======================================================== */}
-        {/* CARD 3: QUALIDADE DO SONO                                */}
-        {/* ======================================================== */}
-        <View style={styles.metaCard}>
-          <View style={styles.metaCardHeader}>
-            <View style={styles.cardHeaderLeft}>
-              <View style={[styles.cardIconBox, styles.cardIconBoxPurple]}>
-                <Moon size={17} color="#7c3aed" />
-              </View>
-              <View>
-                <Text style={styles.cardTitle}>QUALIDADE DO SONO</Text>
-                <Text style={styles.cardSubtitle}>RECUPERAÇÃO & RITMO CIRCADIANO</Text>
-              </View>
-            </View>
-
-            <View style={styles.tagBadgePurple}>
-              <Text style={styles.tagBadgePurpleText}>
-                {sonoHoras > 0 ? "REGISTRADO" : "SEM REGISTRO"}
-              </Text>
-            </View>
-          </View>
-
-          {/* Destaque Numérico */}
-          <View style={styles.metricRow}>
-            <View style={styles.metricNumbers}>
-              <Text style={[styles.metricBigText, { color: "#6d28d9" }]}>{sonoHoras}h</Text>
-              <Text style={styles.metricUnitText}>
-                / {sonoAlvoHoras}h ALVO CLÍNICO
-              </Text>
-            </View>
-            <View style={styles.badgeQualityGood}>
-              <Text style={styles.badgeQualityGoodText}>
-                {sonoQualidade ? `QUALIDADE: ${sonoQualidade}` : "SEM CHECK-IN"}
-              </Text>
-            </View>
-          </View>
-
-          {/* Barra de Progresso de Sono */}
-          <View style={styles.progressBarTrack}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${percSono}%`, backgroundColor: "#8b5cf6" },
-              ]}
-            />
-          </View>
-
-          {/* Detalhes de Sono Reais */}
-          <View style={styles.cardDetailsBox}>
-            <View style={styles.detailItemRow}>
-              <Text style={styles.detailLabel}>MÉDIA SEMANAL REGISTRADA</Text>
-              <Text style={styles.detailValue}>
-                {sonoMediaSemana > 0 ? `${sonoMediaSemana} HORAS / NOITE` : "0 HORAS / NOITE"}
-              </Text>
-            </View>
-            <View style={styles.detailItemRow}>
-              <Text style={styles.detailLabel}>EFICIÊNCIA METABÓLICA</Text>
-              <Text style={[styles.detailValue, { color: "#7c3aed" }]}>
-                {percSono}% DO ALVO
-              </Text>
-            </View>
-            <View style={[styles.detailItemRow, { borderBottomWidth: 0 }]}>
-              <Text style={styles.detailLabel}>STATUS CLÍNICO</Text>
-              <Text style={styles.detailValue}>
-                {sonoHoras > 0 ? "REGISTRO SINCRONIZADO" : "AGUARDANDO PRIMEIRO CHECK-IN"}
-              </Text>
-            </View>
-          </View>
-
-          {/* Botão de Check-in de Sono */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => onNavigateToCheckin?.("sono")}
-            style={[styles.cardActionButton, styles.cardActionButtonPurple]}
-          >
-            <Clock size={13} color="#7c3aed" />
-            <Text style={[styles.cardActionButtonText, { color: "#6d28d9" }]}>
-              ATUALIZAR REGISTRO DE SONO DE HOJE
-            </Text>
-            <ChevronRight size={14} color="#7c3aed" />
-          </TouchableOpacity>
-        </View>
-
-        {/* ======================================================== */}
-        {/* CARD 4: HIDRATAÇÃO DIÁRIA                                */}
-        {/* ======================================================== */}
-        <View style={styles.metaCard}>
-          <View style={styles.metaCardHeader}>
-            <View style={styles.cardHeaderLeft}>
-              <View style={[styles.cardIconBox, styles.cardIconBoxSky]}>
-                <Droplets size={17} color="#0284c7" />
-              </View>
-              <View>
-                <Text style={styles.cardTitle}>HIDRATAÇÃO DIÁRIA</Text>
-                <Text style={styles.cardSubtitle}>EQUILÍBRIO HIDROELETROLÍTICO</Text>
-              </View>
-            </View>
-
-            <View style={styles.tagBadgeSky}>
-              <Text style={styles.tagBadgeSkyText}>{percAgua}% CONCLUÍDO</Text>
-            </View>
-          </View>
-
-          {/* Destaque Numérico */}
-          <View style={styles.metricRow}>
-            <View style={styles.metricNumbers}>
-              <Text style={[styles.metricBigText, { color: "#0284c7" }]}>
-                {(aguaConsumidaMl / 1000).toFixed(1)} L
-              </Text>
-              <Text style={styles.metricUnitText}>
-                / {(aguaMetaMl / 1000).toFixed(1)} L RECOMENDADOS
-              </Text>
-            </View>
-            <View style={styles.badgeRemainingWater}>
-              <Text style={styles.badgeRemainingWaterText}>
-                FALTAM {Math.max(0, aguaMetaMl - aguaConsumidaMl)} ML
-              </Text>
-            </View>
-          </View>
-
-          {/* Barra de Progresso de Água */}
-          <View style={styles.progressBarTrack}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${percAgua}%`, backgroundColor: "#0284c7" },
-              ]}
-            />
-          </View>
-
-          {/* Botões de Ação Rápida de Água */}
-          <View style={styles.waterQuickRow}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => handleAddAgua(250)}
-              style={styles.waterQuickBtn}
-            >
-              <Droplets size={13} color="#0284c7" />
-              <Text style={styles.waterQuickBtnText}>+250 ML (COPO)</Text>
-            </TouchableOpacity>
 
             <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => handleAddAgua(500)}
-              style={[styles.waterQuickBtn, styles.waterQuickBtnGarrafa]}
+              activeOpacity={0.8}
+              onPress={() => onNavigateToCheckin?.("medidas")}
+              style={styles.secondaryActionBtn}
             >
-              <Droplets size={13} color="#0369a1" />
-              <Text style={[styles.waterQuickBtnText, { color: "#0369a1" }]}>
-                +500 ML (GARRAFA)
+              <Plus size={15} color="#0f766e" />
+              <Text style={styles.secondaryActionBtnText}>
+                Registrar Medidas
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </ScrollView>
 
-      {/* ======================================================== */}
-      {/* 3. BOTTOM NAVIGATION FIXA PREMIUM                        */}
-      {/* ======================================================== */}
-      <View style={styles.bottomNavContainer}>
-        {[
-          { label: "Home", icon: HomeIcon },
-          { label: "Dieta", icon: Utensils },
-          { label: "METAS", icon: Target },
-          { label: "Perfil", icon: User },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isSelected = tab.label === "METAS";
+          {/* ====================================================== */}
+          {/* BLOCO 3: GLICEMIA — ÚLTIMOS 30 DIAS                    */}
+          {/* ====================================================== */}
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.cardTitleGroup}>
+                <View style={[styles.iconBox, { backgroundColor: "#fff1f2" }]}>
+                  <HeartPulse size={16} color="#e11d48" />
+                </View>
+                <View>
+                  <Text style={styles.cardTitle}>Glicemia — 30 dias</Text>
+                  <Text style={styles.cardSubtitle}>
+                    Faixa alvo clínica: 70 a 180 mg/dL
+                  </Text>
+                </View>
+              </View>
 
-          return (
-            <TouchableOpacity
-              key={tab.label}
-              activeOpacity={0.7}
-              onPress={() => {
-                if (tab.label === "Home") {
-                  onTabPress ? onTabPress("Home") : onBack?.();
-                } else if (tab.label === "Dieta") {
-                  onTabPress ? onTabPress("Dieta") : onNavigateToDieta?.();
-                } else if (onTabPress) {
-                  onTabPress(tab.label);
-                }
-              }}
-              style={styles.bottomNavTab}
-            >
-              <Icon
-                size={21}
-                color={isSelected ? "#0f766e" : "#94a3b8"}
-                strokeWidth={isSelected ? 2.5 : 2}
-              />
-              <Text
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => onNavigateToCheckin?.("glicemia")}
+                style={styles.inlineAddBtn}
+              >
+                <Plus size={13} color="#0f766e" />
+                <Text style={styles.inlineAddBtnText}>Registrar</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.kpiRow4}>
+              <View style={styles.kpiBox}>
+                <Text style={styles.kpiLabel}>Média</Text>
+                <Text style={styles.kpiValue}>
+                  {glicemiaResumo.media !== null
+                    ? `${glicemiaResumo.media}`
+                    : "--"}
+                </Text>
+                <Text style={styles.kpiUnit}>mg/dL</Text>
+              </View>
+              <View style={styles.kpiBox}>
+                <Text style={styles.kpiLabel}>Medições</Text>
+                <Text style={styles.kpiValue}>
+                  {glicemiaResumo.totalMedicoes}
+                </Text>
+                <Text style={styles.kpiUnit}>no período</Text>
+              </View>
+              <View style={styles.kpiBox}>
+                <Text style={styles.kpiLabel}>Na Meta</Text>
+                <Text style={[styles.kpiValue, { color: "#047857" }]}>
+                  {percGlicemiaNaMeta !== null ? `${percGlicemiaNaMeta}%` : "--"}
+                </Text>
+                <Text style={styles.kpiUnit}>
+                  {glicemiaResumo.dentroDaMeta} ok
+                </Text>
+              </View>
+              <View style={styles.kpiBox}>
+                <Text style={styles.kpiLabel}>Alertas</Text>
+                <Text
+                  style={[
+                    styles.kpiValue,
+                    glicemiaResumo.alertas > 0 && { color: "#be123c" },
+                  ]}
+                >
+                  {glicemiaResumo.alertas}
+                </Text>
+                <Text style={styles.kpiUnit}>fora faixa</Text>
+              </View>
+            </View>
+
+            {glicemiaHistorico.length > 0 ? (
+              <View style={styles.listContainer}>
+                {glicemiaHistorico.slice(0, 8).map((item) => (
+                  <View key={item.id} style={styles.listRow}>
+                    <View style={styles.listLeft}>
+                      <View
+                        style={[
+                          styles.dotIndicator,
+                          {
+                            backgroundColor: item.isCritico
+                              ? "#e11d48"
+                              : "#059669",
+                          },
+                        ]}
+                      />
+                      <View>
+                        <Text style={styles.listMainText}>
+                          {item.valor} mg/dL{" "}
+                          <Text style={styles.listSubInline}>
+                            • {item.momentoLegivel || item.momento}
+                          </Text>
+                        </Text>
+                        <Text style={styles.listDateText}>
+                          {formatDataHoraLocal(item.dataRegistro)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.tinyStatusPill,
+                        item.isCritico
+                          ? { backgroundColor: "#fff1f2" }
+                          : { backgroundColor: "#ecfdf5" },
+                      ]}
+                    >
+                      {item.isCritico ? (
+                        <AlertTriangle size={11} color="#be123c" />
+                      ) : (
+                        <CheckCircle2 size={11} color="#047857" />
+                      )}
+                      <Text
+                        style={[
+                          styles.tinyStatusText,
+                          { color: item.isCritico ? "#be123c" : "#047857" },
+                        ]}
+                      >
+                        {item.isCritico ? "Alerta" : "Normal"}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>
+                  Nenhuma medição de glicemia registrada nos últimos 30 dias.
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* ====================================================== */}
+          {/* BLOCO 4: PADRÃO INTESTINAL — ESCALA DE BRISTOL         */}
+          {/* ====================================================== */}
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.cardTitleGroup}>
+                <View style={[styles.iconBox, { backgroundColor: "#ecfdf5" }]}>
+                  <Activity size={16} color="#059669" />
+                </View>
+                <View>
+                  <Text style={styles.cardTitle}>
+                    Padrão Intestinal — Bristol
+                  </Text>
+                  <Text style={styles.cardSubtitle}>
+                    {resumoIntestino.total}{" "}
+                    {resumoIntestino.total === 1
+                      ? "registro recente"
+                      : "registros recentes"}
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => onNavigateToCheckin?.("bristol")}
+                style={styles.inlineAddBtn}
+              >
+                <Plus size={13} color="#0f766e" />
+                <Text style={styles.inlineAddBtnText}>Registrar</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.bristolSummaryBar}>
+              <View
                 style={[
-                  styles.bottomNavLabel,
-                  isSelected
-                    ? styles.bottomNavLabelActive
-                    : styles.bottomNavLabelInactive,
+                  styles.predominantPill,
+                  { backgroundColor: resumoIntestino.bg },
                 ]}
               >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+                <Text
+                  style={[
+                    styles.predominantText,
+                    { color: resumoIntestino.cor },
+                  ]}
+                >
+                  {resumoIntestino.predominante}
+                </Text>
+              </View>
+              <View style={styles.bristolCountsRow}>
+                <Text style={styles.bristolCountItem}>
+                  Ideal: <Text style={styles.boldText}>{resumoIntestino.ideal}</Text>
+                </Text>
+                <Text style={styles.bristolCountItem}>
+                  Constip.:{" "}
+                  <Text style={styles.boldText}>
+                    {resumoIntestino.constipacao}
+                  </Text>
+                </Text>
+                <Text style={styles.bristolCountItem}>
+                  Diarreia:{" "}
+                  <Text style={styles.boldText}>{resumoIntestino.diarreia}</Text>
+                </Text>
+              </View>
+            </View>
+
+            {intestinoHistorico.length > 0 ? (
+              <View style={styles.listContainer}>
+                {intestinoHistorico.slice(0, 6).map((item) => {
+                  const catInfo = formatCategoriaBristol(
+                    item.categoria,
+                    item.tipoBristol
+                  );
+                  const sintomasTxt =
+                    Array.isArray(item.sintomas) && item.sintomas.length > 0
+                      ? item.sintomas.join(", ")
+                      : "Sem sintomas relatados";
+
+                  return (
+                    <View key={item.id} style={styles.listRow}>
+                      <View style={styles.listLeft}>
+                        <View
+                          style={[
+                            styles.bristolTypeBadge,
+                            { backgroundColor: catInfo.bg },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.bristolTypeText,
+                              { color: catInfo.color },
+                            ]}
+                          >
+                            T{item.tipoBristol}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.listMainText}>
+                            Tipo {item.tipoBristol} • {catInfo.label}
+                          </Text>
+                          <Text style={styles.listDateText} numberOfLines={1}>
+                            {formatDataHoraLocal(item.data)} • {sintomasTxt}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>
+                  Nenhum check-in intestinal registrado ainda.
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* ====================================================== */}
+          {/* BLOCO 5: ADESÃO AOS TREINOS — 30 DIAS                  */}
+          {/* ====================================================== */}
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.cardTitleGroup}>
+                <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
+                  <Dumbbell size={16} color="#0f766e" />
+                </View>
+                <View>
+                  <Text style={styles.cardTitle}>Adesão aos Treinos — 30d</Text>
+                  <Text style={styles.cardSubtitle}>
+                    Diretrizes de atividade física
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.adherenceBadge}>
+                <Text style={styles.adherenceBadgeText}>
+                  {treinos?.adesao?.porcentagemAdesao ?? 0}%
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: `${treinos?.adesao?.porcentagemAdesao ?? 0}%`,
+                    backgroundColor: "#0f766e",
+                  },
+                ]}
+              />
+            </View>
+
+            <View style={styles.workoutStatsRow}>
+              <View style={styles.workoutStatItem}>
+                <Calendar size={13} color="#0f766e" />
+                <Text style={styles.workoutStatText}>
+                  <Text style={styles.boldText}>
+                    {treinos?.adesao?.diasAtivosUltimos30Dias ?? 0}
+                  </Text>{" "}
+                  de{" "}
+                  <Text style={styles.boldText}>
+                    {treinos?.adesao?.metaEsperada30Dias ?? 13}
+                  </Text>{" "}
+                  dias esperados
+                </Text>
+              </View>
+            </View>
+
+            {treinos?.diretrizes ? (
+              <View style={styles.directivesBox}>
+                <View style={styles.directiveRow}>
+                  <Text style={styles.directiveLabel}>Modalidade</Text>
+                  <Text style={styles.directiveValue}>
+                    {treinos.diretrizes.workoutType}
+                  </Text>
+                </View>
+                <View style={styles.directiveRow}>
+                  <Text style={styles.directiveLabel}>Frequência</Text>
+                  <Text style={styles.directiveValue}>
+                    {treinos.diretrizes.workoutFrequency}x por semana
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.directiveRow,
+                    !treinos.diretrizes.workoutRestrictions && {
+                      borderBottomWidth: 0,
+                    },
+                  ]}
+                >
+                  <Text style={styles.directiveLabel}>Duração</Text>
+                  <View style={styles.inlineIconVal}>
+                    <Clock size={12} color="#475569" />
+                    <Text style={styles.directiveValue}>
+                      {treinos.diretrizes.workoutDuration} min / sessão
+                    </Text>
+                  </View>
+                </View>
+                {treinos.diretrizes.workoutRestrictions ? (
+                  <View style={styles.restrictionsWrap}>
+                    <Text style={styles.restrictionsTitle}>
+                      Orientações & Restrições Médicas
+                    </Text>
+                    <Text style={styles.restrictionsText}>
+                      {treinos.diretrizes.workoutRestrictions}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            <Text style={styles.clinicalNote}>
+              {objetivoConfig.mensagemTreino}
+            </Text>
+          </View>
+        </ScrollView>
+      )}
+
+      {/* MODAL DE REGISTRO DE PESO */}
+      <RegistrarPesoModal
+        visible={isPesoModalOpen}
+        pacienteId={realPacienteId}
+        pesoAtual={pesoEvolucao.pesoAtualKg || null}
+        onClose={() => setIsPesoModalOpen(false)}
+        onSuccess={() => {
+          carregarEvolucao();
+        }}
+      />
+
+      {/* BARRA INFERIOR UNIFICADA */}
+      <BottomTabBar
+        activeTab="Evolução"
+        onTabPress={(tab) => onTabPress?.(tab)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  rootContainer: {
+  root: {
     flex: 1,
     backgroundColor: "#f8fafc",
   },
-  headerBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    backgroundColor: "#ffffff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-  },
-  backButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    backgroundColor: "#f0fdfa",
-    borderWidth: 1,
-    borderColor: "#ccfbf1",
-  },
-  backButtonText: {
-    fontSize: 10,
-    fontWeight: "500",
-    color: "#0f766e",
-    letterSpacing: 0.3,
-  },
-  headerTitleCenter: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0f172a",
-    letterSpacing: 0.6,
-  },
-  headerSubtitle: {
-    fontSize: 8,
-    fontWeight: "400",
-    color: "#94a3b8",
-    letterSpacing: 0.2,
-    marginTop: 1,
-  },
-  pointsBadgePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "rgba(45, 212, 191, 0.15)",
+  headerObjetivoPill: {
+    backgroundColor: "rgba(45, 212, 191, 0.14)",
     borderWidth: 1,
     borderColor: "rgba(45, 212, 191, 0.3)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 9999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
-  pointsBadgeText: {
-    fontSize: 10,
-    fontWeight: "600",
+  headerObjetivoText: {
     color: "#2dd4bf",
-    letterSpacing: 0.3,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: "#64748b",
+    fontWeight: "500",
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 110,
+    padding: 16,
+    paddingBottom: 28,
+    gap: 14,
   },
-
-  /* Hero Banner */
-  heroBanner: {
+  card: {
     backgroundColor: "#ffffff",
     borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    padding: 16,
-    marginBottom: 12,
-    elevation: 1,
-    shadowColor: "#0f172a",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-  },
-  heroBannerHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 6,
-  },
-  heroIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "#f0fdfa",
-    borderWidth: 1,
-    borderColor: "#ccfbf1",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroTitleGroup: {
-    flex: 1,
-  },
-  heroPreTitle: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#64748b",
-    letterSpacing: 0.4,
-  },
-  heroMainScore: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0f766e",
-    letterSpacing: -0.2,
-    marginTop: 1,
-  },
-  heroDescription: {
-    fontSize: 10,
-    fontWeight: "400",
-    color: "#4b5563",
-    lineHeight: 15,
-    letterSpacing: 0.1,
-  },
-
-  /* Cards de Metas */
-  metaCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-    padding: 15,
-    marginBottom: 12,
-    elevation: 1,
     shadowColor: "#0f172a",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    elevation: 2,
+    gap: 12,
   },
-  metaCardHeader: {
+  cardHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 10,
+    gap: 8,
   },
-  cardHeaderLeft: {
+  cardTitleGroup: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     flex: 1,
   },
-  cardIconBox: {
+  iconBox: {
     width: 34,
     height: 34,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-  },
-  cardIconBoxOrange: {
-    backgroundColor: "#fff7ed",
-    borderColor: "#ffedd5",
-  },
-  cardIconBoxTeal: {
-    backgroundColor: "#f0fdfa",
-    borderColor: "#ccfbf1",
-  },
-  cardIconBoxPurple: {
-    backgroundColor: "#faf5ff",
-    borderColor: "#f3e8ff",
-  },
-  cardIconBoxSky: {
-    backgroundColor: "#f0f9ff",
-    borderColor: "#e0f2fe",
   },
   cardTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0f172a",
-    letterSpacing: 0.3,
-  },
-  cardSubtitle: {
-    fontSize: 9,
-    fontWeight: "400",
-    color: "#64748b",
-    letterSpacing: 0.2,
-    marginTop: 1,
-  },
-  tagBadgeOrange: {
-    backgroundColor: "#fff7ed",
-    borderWidth: 1,
-    borderColor: "#fed7aa",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  tagBadgeOrangeText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#c2410c",
-  },
-  tagBadgeTeal: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: "#f0fdfa",
-    borderWidth: 1,
-    borderColor: "#99f6e4",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  tagBadgeTealText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#0f766e",
-  },
-  tagBadgePurple: {
-    backgroundColor: "#faf5ff",
-    borderWidth: 1,
-    borderColor: "#e9d5ff",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  tagBadgePurpleText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#6d28d9",
-  },
-  tagBadgeSky: {
-    backgroundColor: "#f0f9ff",
-    borderWidth: 1,
-    borderColor: "#bae6fd",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  tagBadgeSkyText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#0369a1",
-  },
-
-  /* Métrica e Progresso */
-  metricRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
-  metricNumbers: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 6,
-  },
-  metricBigText: {
-    fontSize: 22,
+    fontSize: 15,
     fontWeight: "700",
     color: "#0f172a",
-    letterSpacing: -0.5,
   },
-  metricUnitText: {
-    fontSize: 10,
-    fontWeight: "500",
+  cardSubtitle: {
+    fontSize: 12,
     color: "#64748b",
-    letterSpacing: 0.2,
+    marginTop: 1,
   },
-  badgeSuccessPill: {
-    backgroundColor: "#ecfdf5",
+  statusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#a7f3d0",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 9999,
   },
-  badgeSuccessText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#065f46",
-    letterSpacing: 0.2,
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: "700",
   },
-  badgeCreditActive: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#ecfdf5",
-    borderWidth: 1,
-    borderColor: "#a7f3d0",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 9999,
-  },
-  badgeCreditActiveText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#065f46",
-    letterSpacing: 0.2,
-  },
-  badgeQualityGood: {
-    backgroundColor: "#faf5ff",
-    borderWidth: 1,
-    borderColor: "#e9d5ff",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 9999,
-  },
-  badgeQualityGoodText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#6d28d9",
-    letterSpacing: 0.2,
-  },
-  badgeRemainingWater: {
-    backgroundColor: "#f0f9ff",
-    borderWidth: 1,
-    borderColor: "#bae6fd",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 9999,
-  },
-  badgeRemainingWaterText: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#0369a1",
-    letterSpacing: 0.2,
-  },
-  progressBarTrack: {
-    width: "100%",
-    height: 6,
-    borderRadius: 9999,
+  neutralPill: {
     backgroundColor: "#f1f5f9",
-    overflow: "hidden",
-    marginBottom: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
-  progressBarFill: {
-    height: 6,
-    borderRadius: 9999,
-  },
-
-  /* Detalhes */
-  cardDetailsBox: {
-    backgroundColor: "#f8fafc",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginBottom: 10,
-  },
-  detailItemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-  },
-  detailLabel: {
-    fontSize: 10,
-    fontWeight: "400",
-    color: "#64748b",
-    letterSpacing: 0.2,
-  },
-  detailValue: {
-    fontSize: 10,
+  neutralPillText: {
+    fontSize: 11,
     fontWeight: "600",
-    color: "#1e293b",
-    letterSpacing: 0.2,
+    color: "#475569",
   },
-  cardActionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#f0fdfa",
-    borderWidth: 1,
-    borderColor: "#ccfbf1",
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  cardActionButtonPurple: {
-    backgroundColor: "#faf5ff",
-    borderColor: "#f3e8ff",
-  },
-  cardActionButtonText: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#0f766e",
-    letterSpacing: 0.3,
-    flex: 1,
-  },
-  rewardNoticeBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    backgroundColor: "#f0fdfa",
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: "#ccfbf1",
-  },
-  rewardNoticeText: {
-    fontSize: 9,
-    fontWeight: "400",
-    color: "#0f766e",
-    letterSpacing: 0.2,
-    flex: 1,
-  },
-  waterQuickRow: {
+  weightMetricsGrid: {
     flexDirection: "row",
     gap: 8,
   },
-  waterQuickBtn: {
+  weightMetricCell: {
     flex: 1,
-    flexDirection: "row",
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 8,
     alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    backgroundColor: "#f0f9ff",
     borderWidth: 1,
-    borderColor: "#bae6fd",
-    paddingVertical: 8,
-    borderRadius: 10,
+    borderColor: "#e2e8f0",
   },
-  waterQuickBtnGarrafa: {
-    backgroundColor: "#e0f2fe",
-    borderColor: "#7dd3fc",
+  weightMetricHighlight: {
+    backgroundColor: "#f0fdfa",
+    borderColor: "#99f6e4",
   },
-  waterQuickBtnText: {
-    fontSize: 10,
-    fontWeight: "500",
-    color: "#0284c7",
-    letterSpacing: 0.2,
+  metricLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
   },
-
-  /* Bottom Navigation */
-  bottomNavContainer: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 64,
-    backgroundColor: "#ffffff",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-around",
-    paddingBottom: 8,
-    elevation: 8,
-    shadowColor: "#0f172a",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-  },
-  bottomNavTab: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  bottomNavLabel: {
-    fontSize: 10,
+  metricValue: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0f172a",
     marginTop: 3,
-    fontWeight: "500",
   },
-  bottomNavLabelActive: {
+  metricLabelHighlight: {
+    fontSize: 11,
+    fontWeight: "700",
     color: "#0f766e",
   },
-  bottomNavLabelInactive: {
+  metricValueHighlight: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0f766e",
+    marginTop: 3,
+  },
+  imcRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  imcLabel: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#64748b",
+  },
+  imcValue: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  chartContainer: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+  },
+  chartLabelsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    marginTop: 2,
+  },
+  chartAxisText: {
+    fontSize: 11,
+    color: "#64748b",
+  },
+  chartAxisTextBold: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  clinicalNote: {
+    fontSize: 12,
+    color: "#475569",
+    lineHeight: 18,
+  },
+  primaryActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#0f766e",
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  primaryActionBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#ffffff",
+  },
+  secondaryActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  secondaryActionBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  measureGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  measureTile: {
+    width: "48.4%",
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 11,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  measureLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  measureVal: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+    marginTop: 2,
+  },
+  measureDelta: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 3,
+  },
+  measureDeltaMuted: {
+    fontSize: 11,
     color: "#94a3b8",
+    marginTop: 3,
+  },
+  inlineAddBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  inlineAddBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  kpiRow4: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  kpiBox: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  kpiLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  kpiValue: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginTop: 2,
+  },
+  kpiUnit: {
+    fontSize: 10,
+    color: "#94a3b8",
+    marginTop: 1,
+  },
+  listContainer: {
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    paddingTop: 6,
+  },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f8fafc",
+    gap: 8,
+  },
+  listLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  dotIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  listMainText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  listSubInline: {
+    fontWeight: "500",
+    color: "#475569",
+  },
+  listDateText: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 2,
+  },
+  tinyStatusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  tinyStatusText: {
+    fontSize: 10.5,
+    fontWeight: "700",
+  },
+  bristolSummaryBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+  },
+  predominantPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  predominantText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+  },
+  bristolCountsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  bristolCountItem: {
+    fontSize: 11.5,
+    color: "#64748b",
+  },
+  boldText: {
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  bristolTypeBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bristolTypeText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  adherenceBadge: {
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  adherenceBadgeText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#0f766e",
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: "#f1f5f9",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  workoutStatsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  workoutStatItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  workoutStatText: {
+    fontSize: 12.5,
+    color: "#475569",
+  },
+  directivesBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  directiveRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+  },
+  directiveLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  directiveValue: {
+    fontSize: 12.5,
+    color: "#0f172a",
+    fontWeight: "700",
+  },
+  inlineIconVal: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  restrictionsWrap: {
+    paddingVertical: 8,
+    gap: 3,
+  },
+  restrictionsTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0f766e",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  restrictionsText: {
+    fontSize: 12,
+    color: "#334155",
+    lineHeight: 17,
+  },
+  emptyBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+  },
+  emptyText: {
+    fontSize: 12.5,
+    color: "#64748b",
+    lineHeight: 18,
+    textAlign: "center",
   },
 });
+
+export default MetasScreen;

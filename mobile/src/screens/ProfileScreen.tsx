@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,148 +10,296 @@ import {
   Platform,
   Image,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import {
-  User,
   ShieldCheck,
   Phone,
   FileText,
   LogOut,
   ChevronRight,
   HeartPulse,
-  Droplets,
   Calendar,
-  Home as HomeIcon,
-  Utensils,
+  Clock,
   Target,
   Camera,
+  Pill,
+  MessageCircle,
+  User as UserIcon,
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
 import { usePatientAuth } from "../contexts/PatientAuthContext";
 import { StandardHeader } from "../components/StandardHeader";
-import { api, getBaseApiUrl } from "../services/api";
+import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
+import { api, resolveAssetUrl } from "../services/api";
+import { getConfigObjetivoClinico } from "../utils/objetivoClinico";
 
 export interface ProfileScreenProps {
   onBack?: () => void;
-  onTabPress?: (tabName: string) => void;
+  onTabPress?: (tabName: MainTabKey | string) => void;
   onNavigateToDieta?: () => void;
   onNavigateToMetas?: () => void;
 }
 
-const WHATSAPP_RECEPCAO = "5531984400076";
+interface ProximaConsultaData {
+  id: string;
+  dataHora: string;
+  duracaoMinutos?: number;
+  tipo?: string;
+  tipoLegivel?: string;
+  status?: string;
+  statusLegivel?: string;
+  medicoNome?: string;
+  medicoEspecialidade?: string;
+  medico?: {
+    nome?: string | null;
+    especialidade?: string | null;
+  } | null;
+  observacao?: string;
+}
+
 const WHATSAPP_URL_OFICIAL =
   "https://wa.me/5531984400076?text=Olá!%20Sou%20paciente%20da%20Clínica%20FAAZ%20e%20gostaria%20de%20atendimento.";
 
-export function ProfileScreen({
-  onBack,
-  onTabPress,
-  onNavigateToDieta,
-  onNavigateToMetas,
-}: ProfileScreenProps) {
+const MESES_PT = [
+  "Janeiro",
+  "Fevereiro",
+  "Março",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro",
+];
+
+const DIAS_SEMANA_PT = [
+  "Domingo",
+  "Segunda-feira",
+  "Terça-feira",
+  "Quarta-feira",
+  "Quinta-feira",
+  "Sexta-feira",
+  "Sábado",
+];
+
+/**
+ * Formata data, horário e contagem regressiva EXCLUSIVAMENTE a partir do ISO UTC
+ * no fuso local do dispositivo (evita divergência UTC do servidor).
+ */
+function formatConsultaLocal(isoStr: string): {
+  dataExtenso: string;
+  horarioLocal: string;
+  contagemRegressiva: string;
+} {
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) {
+    return {
+      dataExtenso: "Data a confirmar",
+      horarioLocal: "--:--",
+      contagemRegressiva: "",
+    };
+  }
+
+  const dia = d.getDate();
+  const mes = MESES_PT[d.getMonth()] || "";
+  const diaSemana = DIAS_SEMANA_PT[d.getDay()] || "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  const dataExtenso = `${dia} de ${mes}, ${diaSemana}`;
+  const horarioLocal = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  const agora = new Date();
+  const hojeZero = new Date(
+    agora.getFullYear(),
+    agora.getMonth(),
+    agora.getDate()
+  );
+  const consultaZero = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDias = Math.round(
+    (consultaZero.getTime() - hojeZero.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  let contagemRegressiva = "";
+  if (diffDias <= 0) {
+    contagemRegressiva = "Hoje";
+  } else if (diffDias === 1) {
+    contagemRegressiva = "Amanhã";
+  } else {
+    contagemRegressiva = `Em ${diffDias} dias`;
+  }
+
+  return { dataExtenso, horarioLocal, contagemRegressiva };
+}
+
+function formatCpfExibicao(cpf?: string | null): string {
+  if (!cpf) return "Não informado";
+  const digits = cpf.replace(/\D/g, "");
+  if (digits.length !== 11) return cpf;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+function formatNomeTitleCase(nome?: string | null): string {
+  if (!nome) return "Paciente FAAZ";
+  return nome
+    .trim()
+    .split(/\s+/)
+    .map((part) => {
+      const lower = part.toLowerCase();
+      if (["de", "da", "do", "das", "dos", "e"].includes(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
+export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
   const { paciente, logout, atualizarAvatarUrl } = usePatientAuth();
+  const pacienteId = paciente?.id || "";
+
   const [isUploading, setIsUploading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [carregandoConsulta, setCarregandoConsulta] = useState(true);
+
+  const [proximaConsulta, setProximaConsulta] =
+    useState<ProximaConsultaData | null>(null);
   const [treatmentObjective, setTreatmentObjective] = useState<string>(
     paciente?.treatmentObjective || paciente?.focoClinico || ""
   );
+  const [medicacoes, setMedicacoes] = useState<string | null>(
+    paciente?.medicacoes ?? null
+  );
   const [metaAguaMl, setMetaAguaMl] = useState<number>(
-    paciente?.metaDiariaMl || 0
+    paciente?.metaDiariaMl || 2500
+  );
+  const [convenio, setConvenio] = useState<string>(
+    paciente?.convenio || "FAAZ Integrativo"
+  );
+  const [telefone, setTelefone] = useState<string | null>(
+    paciente?.telefoneWhatsapp ?? null
+  );
+  const [email, setEmail] = useState<string | null>(paciente?.email ?? null);
+
+  const nomeExibicao = formatNomeTitleCase(
+    paciente?.socialName || paciente?.nome
+  );
+  const initialLetter = nomeExibicao.charAt(0).toUpperCase() || "P";
+  const prontuarioCodigo = paciente?.recordCode || "--";
+  const medicoConsulta =
+    proximaConsulta?.medicoNome?.trim() ||
+    proximaConsulta?.medico?.nome?.trim() ||
+    "";
+  const especialidadeConsulta =
+    proximaConsulta?.medicoEspecialidade?.trim() ||
+    proximaConsulta?.medico?.especialidade?.trim() ||
+    "";
+  const medicoResponsavel =
+    medicoConsulta ||
+    paciente?.medicoResponsavel?.trim() ||
+    "Equipe Clínica FAAZ";
+  const especialidade =
+    especialidadeConsulta ||
+    paciente?.especialidadeMedico?.trim() ||
+    "Endocrinologia & Metabologia";
+  const metaAguaLitros = (metaAguaMl / 1000).toFixed(1).replace(".", ",");
+
+  const fullAvatarUrl = useMemo(
+    () => resolveAssetUrl(paciente?.avatarUrl),
+    [paciente?.avatarUrl]
   );
 
-  const nomeExibicao = (paciente?.nome || "PACIENTE FAAZ").toUpperCase();
-  const initialLetter = nomeExibicao.trim().charAt(0) || "P";
-  const prontuarioCodigo = paciente?.recordCode || "--";
-  const medicoResponsavel = paciente?.medicoResponsavel || "CORPO CLÍNICO FAAZ";
-  const especialidade = paciente?.especialidadeMedico || "ENDOCRINOLOGIA & METABOLOGIA";
-  const focoClinico = treatmentObjective || paciente?.focoClinico || "NENHUMA DIRETRIZ DEFINIDA";
-  const metaAguaLitros = metaAguaMl > 0 ? (metaAguaMl / 1000).toFixed(1) : "0.0";
+  const objetivoConfig = useMemo(
+    () => getConfigObjetivoClinico(treatmentObjective),
+    [treatmentObjective]
+  );
 
-  // Sincroniza em tempo real o Objetivo Clínico e a Meta Hídrica definidos no Prontuário Web
-  React.useEffect(() => {
-    let isMounted = true;
-    async function loadFreshObjective() {
-      if (!paciente?.id) return;
-      try {
-        const metasRes = await api.pacientes.getMetas(paciente.id);
-        if (isMounted && metasRes?.metas) {
-          const freshMetas = metasRes.metas.treatmentObjective || metasRes.metas.focoMetabolico;
-          if (freshMetas !== undefined) setTreatmentObjective(freshMetas);
-          if (metasRes.metas.aguaMlAlvo !== undefined) {
-            setMetaAguaMl(Number(metasRes.metas.aguaMlAlvo) || 0);
-          }
-          return;
-        }
-      } catch {
-        // Tenta via endpoint de paciente como fallback
-      }
+  const carregarDadosClinica = useCallback(async () => {
+    if (!pacienteId) {
+      setCarregandoConsulta(false);
+      return;
+    }
 
-      try {
-        const res = await api.get(`/pacientes/${paciente.id}`);
-        if (isMounted && res?.paciente) {
-          const fresh = res.paciente.treatmentObjective || res.paciente.clinicalFocus || "";
-          setTreatmentObjective(fresh);
-        }
-      } catch {
-        // Fallback silencioso mantendo o estado anterior
+    const [consultaRes, perfilRes, metasRes] = await Promise.allSettled([
+      api.pacientes.getProximaConsulta(pacienteId),
+      api.get(`/pacientes/${encodeURIComponent(pacienteId)}`),
+      api.pacientes.getMetas(pacienteId),
+    ]);
+
+    if (consultaRes.status === "fulfilled" && consultaRes.value) {
+      const c = consultaRes.value;
+      if (c.success && c.temProximaConsulta && c.proximaConsulta) {
+        setProximaConsulta(c.proximaConsulta);
+      } else {
+        setProximaConsulta(null);
       }
     }
-    loadFreshObjective();
-    const interval = setInterval(loadFreshObjective, 4000);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [paciente?.id]);
+    setCarregandoConsulta(false);
 
-  // URL absoluta normalizada para exibir no componente Image do React Native
-  const fullAvatarUrl = useMemo(() => {
-    if (!paciente?.avatarUrl) return null;
-    const url = paciente.avatarUrl;
-    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) {
-      return url;
+    if (perfilRes.status === "fulfilled" && perfilRes.value?.paciente) {
+      const p = perfilRes.value.paciente;
+      if (p.treatmentObjective || p.clinicalFocus) {
+        setTreatmentObjective(p.treatmentObjective || p.clinicalFocus);
+      }
+      if (p.medicacoes !== undefined) {
+        setMedicacoes(p.medicacoes || null);
+      }
+      if (p.convenio) setConvenio(p.convenio);
+      if (p.phoneWhatsapp) setTelefone(p.phoneWhatsapp);
+      if (p.email) setEmail(p.email);
+      if (p.metaDiariaMl) setMetaAguaMl(Number(p.metaDiariaMl));
     }
-    const base = getBaseApiUrl().replace(/\/api\/?$/, "");
-    return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
-  }, [paciente?.avatarUrl]);
 
-  /**
-   * Abre o seletor para o paciente escolher entre Câmera ou Galeria de Fotos
-   */
+    if (metasRes.status === "fulfilled" && metasRes.value?.metas) {
+      const m = metasRes.value.metas;
+      if (m.treatmentObjective || m.focoMetabolico) {
+        setTreatmentObjective(m.treatmentObjective || m.focoMetabolico);
+      }
+      if (Number(m.aguaMlAlvo) > 0) {
+        setMetaAguaMl(Number(m.aguaMlAlvo));
+      }
+    }
+  }, [pacienteId]);
+
+  useEffect(() => {
+    carregarDadosClinica();
+  }, [carregarDadosClinica]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await carregarDadosClinica();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [carregarDadosClinica]);
+
   const handleSelectPhotoSource = () => {
     Alert.alert(
       "Foto de Perfil",
       "Escolha como deseja atualizar sua foto de perfil:",
       [
-        {
-          text: "Tirar Foto (Câmera)",
-          onPress: () => handlePickImage("camera"),
-        },
-        {
-          text: "Escolher da Galeria",
-          onPress: () => handlePickImage("gallery"),
-        },
-        {
-          text: "Cancelar",
-          style: "cancel",
-        },
+        { text: "Tirar Foto (Câmera)", onPress: () => handlePickImage("camera") },
+        { text: "Escolher da Galeria", onPress: () => handlePickImage("gallery") },
+        { text: "Cancelar", style: "cancel" },
       ]
     );
   };
 
-  /**
-   * Executa a captura/seleção da imagem via expo-image-picker e faz o upload
-   * com compressão nativa (quality: 0.4), trava de 2MB e redimensionamento 800x800.
-   */
   const handlePickImage = async (mode: "camera" | "gallery") => {
     if (!paciente?.id) {
-      Alert.alert("Atenção", "É necessário estar autenticado para alterar a foto de perfil.");
+      Alert.alert(
+        "Atenção",
+        "É necessário estar autenticado para alterar a foto de perfil."
+      );
       return;
     }
 
     try {
       let result: ImagePicker.ImagePickerResult;
-
       const pickerOptions: ImagePicker.ImagePickerOptions = {
         mediaTypes: ["images"],
         allowsEditing: true,
@@ -165,17 +313,18 @@ export function ProfileScreen({
         if (status !== "granted") {
           Alert.alert(
             "Permissão da Câmera",
-            "É necessário autorizar o acesso à câmera para tirar sua foto de perfil."
+            "É necessário autorizar o acesso à câmera para tirar sua foto."
           );
           return;
         }
         result = await ImagePicker.launchCameraAsync(pickerOptions);
       } else {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        const { status } =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== "granted") {
           Alert.alert(
             "Permissão da Galeria",
-            "É necessário autorizar o acesso à galeria de fotos para selecionar sua foto."
+            "É necessário autorizar o acesso à galeria para selecionar sua foto."
           );
           return;
         }
@@ -187,35 +336,28 @@ export function ProfileScreen({
       }
 
       const asset = result.assets[0];
-      if (!asset.uri) {
-        Alert.alert("Erro", "Não foi possível carregar a imagem selecionada.");
-        return;
-      }
+      if (!asset.uri) return;
 
-      // 2. Trava de Tamanho Rigorosa (Máximo de 2MB = 2048 * 1024 bytes)
-      const MAX_FILE_SIZE_BYTES = 2048 * 1024; // 2MB (2.097.152 bytes)
+      const MAX_FILE_SIZE_BYTES = 2048 * 1024;
       let fileSizeInBytes = asset.fileSize || 0;
-
       try {
         const fileInfo = await FileSystem.getInfoAsync(asset.uri);
         if (fileInfo.exists && typeof fileInfo.size === "number") {
           fileSizeInBytes = fileInfo.size;
         }
-      } catch (fsErr) {
-        console.warn("[ProfileScreen] Aviso ao verificar fileSize:", fsErr);
+      } catch {
+        // Segue com tamanho informado pelo picker
       }
 
       if (fileSizeInBytes > MAX_FILE_SIZE_BYTES) {
         Alert.alert(
           "Atenção",
-          "A imagem selecionada é muito pesada. Por favor, escolha uma foto menor (máximo 2MB)."
+          "A imagem selecionada excede 2MB. Escolha uma imagem menor."
         );
         return;
       }
 
       setIsUploading(true);
-
-      // 3. Otimização de Resolução com expo-image-manipulator (máx 800x800) e geração Base64
       let rawBase64 = asset.base64;
 
       try {
@@ -227,51 +369,35 @@ export function ProfileScreen({
         if (manipResult.base64) {
           rawBase64 = manipResult.base64;
         }
-      } catch (manipErr) {
-        console.warn("[ProfileScreen] Falha ao redimensionar com manipulator:", manipErr);
+      } catch {
+        // Mantém base64 original se manipulator falhar
       }
 
       if (!rawBase64) {
-        setIsUploading(false);
-        Alert.alert("Erro", "Não foi possível gerar a codificação Base64 da imagem.");
+        Alert.alert("Erro", "Não foi possível processar a imagem selecionada.");
         return;
       }
 
-      // Monta a string de exibição oficial em Base64 Data URI
       const imageBase64 = "data:image/jpeg;base64," + rawBase64;
-
-      // Trava de segurança no peso final da string Base64
-      const approximateBytes = Math.round((rawBase64.length * 3) / 4);
-      if (approximateBytes > MAX_FILE_SIZE_BYTES) {
-        setIsUploading(false);
-        Alert.alert(
-          "Atenção",
-          "A imagem selecionada é muito pesada. Por favor, escolha uma foto menor (máximo 2MB)."
-        );
-        return;
-      }
-
-      // Envia a string Base64 diretamente no payload da API para salvar no banco de dados (Lean MVP)
       const uploadRes = await api.pacientes.uploadAvatar(
         paciente.id,
         imageBase64,
         "image/jpeg"
       );
 
-      if (uploadRes && uploadRes.sucesso && uploadRes.avatarUrl) {
+      if (uploadRes?.sucesso && uploadRes.avatarUrl) {
         atualizarAvatarUrl(uploadRes.avatarUrl);
-        Alert.alert("Sucesso", "Foto de perfil atualizada com sucesso!");
+        Alert.alert("Sucesso", "Foto de perfil atualizada.");
       } else {
         Alert.alert(
           "Falha no Salvamento",
-          uploadRes?.error || "Não foi possível salvar a imagem no servidor da clínica."
+          uploadRes?.error || "Não foi possível salvar a imagem."
         );
       }
     } catch (err: any) {
-      console.error("[ProfileScreen] Erro no upload da foto de perfil:", err);
       Alert.alert(
         "Erro no Upload",
-        err.message || "Ocorreu uma falha ao enviar sua foto de perfil. Tente novamente."
+        err?.message || "Ocorreu uma falha ao enviar sua foto."
       );
     } finally {
       setIsUploading(false);
@@ -279,380 +405,727 @@ export function ProfileScreen({
   };
 
   const handleOpenWhatsApp = async () => {
-    const url = WHATSAPP_URL_OFICIAL;
     try {
-      const targetUrl = encodeURI(decodeURI(url));
+      const targetUrl = encodeURI(decodeURI(WHATSAPP_URL_OFICIAL));
       if (Platform.OS === "web" && typeof window !== "undefined") {
         window.open(targetUrl, "_blank");
         return;
       }
       await Linking.openURL(targetUrl);
-    } catch (error) {
-      console.warn("[WhatsApp] Falha ao abrir link:", error);
+    } catch {
       Alert.alert(
-        "WhatsApp",
-        "Não foi possível abrir o WhatsApp. Por favor, adicione nosso número manualmente: (31) 98440-0076"
+        "WhatsApp Clínica FAAZ",
+        "Não foi possível abrir o WhatsApp. Nosso número oficial: (31) 98440-0076"
       );
     }
   };
 
-  const handleAbrirWhatsApp = handleOpenWhatsApp;
-
   const handleConfirmarLogout = () => {
     Alert.alert(
-      "CONFIRMAR SAÍDA",
-      "DESEJA REALMENTE SAIR DA SUA CONTA DO APP FAAZ?",
+      "Trocar Paciente / Sair",
+      `Deseja encerrar a sessão de ${nomeExibicao} neste dispositivo?`,
       [
-        { text: "CANCELAR", style: "cancel" },
-        {
-          text: "SAIR",
-          style: "destructive",
-          onPress: () => logout(),
-        },
+        { text: "Cancelar", style: "cancel" },
+        { text: "Sair da Conta", style: "destructive", onPress: () => logout() },
       ]
     );
   };
 
+  const consultaFormatada = useMemo(() => {
+    if (!proximaConsulta?.dataHora) return null;
+    return formatConsultaLocal(proximaConsulta.dataHora);
+  }, [proximaConsulta?.dataHora]);
+
   return (
-    <View style={styles.rootContainer}>
-      {/* ======================================================== */}
-      {/* 1. CABEÇALHO PADRÃO GLOBAL FAAZ                         */}
-      {/* ======================================================== */}
+    <View style={styles.root}>
+      {/* HEADER ESCURO EXECUTIVO (SEM VOLTAR) */}
       <StandardHeader
-        title="Meu Perfil"
-        onBack={() => (onBack ? onBack() : onTabPress?.("Home"))}
+        title="Clínica"
+        subtitle="Consultas, protocolo e sua conta"
         rightElement={
-          <View style={styles.headerVerifiedBadge}>
+          <View style={styles.headerStatusBadge}>
             <ShieldCheck size={12} color="#2dd4bf" />
-            <Text style={styles.headerVerifiedText}>Ativo</Text>
+            <Text style={styles.headerStatusText}>Ativo</Text>
           </View>
         }
       />
 
-      {/* ======================================================== */}
-      {/* 2. CONTEÚDO ROLÁVEL                                      */}
-      {/* ======================================================== */}
       <ScrollView
-        className="flex-1 w-full"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
         style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#0f766e"
+            colors={["#0f766e"]}
+          />
+        }
       >
-        {/* CARD DO PACIENTE */}
-        <View style={styles.patientCard}>
-          {/* FOTO DE PERFIL / AVATAR INTERATIVO */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleSelectPhotoSource}
-            disabled={isUploading}
-            className="w-24 h-24 rounded-full relative items-center justify-center overflow-hidden border-2 border-teal-500 shadow-md mb-2 bg-teal-50"
-            style={styles.avatarTouchable}
-          >
-            {fullAvatarUrl ? (
-              <Image
-                source={{ uri: fullAvatarUrl }}
-                className="w-24 h-24 rounded-full object-cover"
-                resizeMode="cover"
-                style={styles.avatarImage}
-              />
-            ) : (
-              <View className="w-24 h-24 rounded-full bg-teal-600 items-center justify-center" style={styles.avatarPlaceholder}>
-                <Text className="text-white text-3xl font-extrabold" style={styles.avatarLargeText}>
-                  {initialLetter}
-                </Text>
-              </View>
-            )}
-
-            {/* Ícone de Câmera / Edição */}
-            <View style={styles.cameraBadge}>
-              <Camera size={13} color="#ffffff" />
-            </View>
-
-            {/* Overlay de carregamento */}
-            {isUploading && (
-              <View style={styles.uploadingOverlay}>
-                <ActivityIndicator size="small" color="#ffffff" />
-              </View>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={handleSelectPhotoSource}
-            disabled={isUploading}
-            style={{ marginBottom: 6 }}
-          >
-            <Text style={styles.alterarFotoText}>
-              {isUploading ? "Enviando foto..." : "Toque na foto para alterar"}
-            </Text>
-          </TouchableOpacity>
-
-          <Text style={styles.patientName}>{nomeExibicao}</Text>
-          <View style={styles.prontuarioBadge}>
-            <Text style={styles.prontuarioBadgeText}>PRONTUÁRIO: {prontuarioCodigo}</Text>
-          </View>
-
-          <View style={styles.patientDetailsRow}>
-            <View style={styles.patientDetailItem}>
-              <Text style={styles.patientDetailLabel}>PLANO</Text>
-              <Text style={styles.patientDetailValue}>FAAZ INTEGRATIVO</Text>
-            </View>
-            <View style={styles.detailDivider} />
-            <View style={styles.patientDetailItem}>
-              <Text style={styles.patientDetailLabel}>META HÍDRICA</Text>
-              <Text style={styles.patientDetailValue}>{metaAguaLitros}L / DIA</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* ======================================================== */}
-        {/* BLOCO: OBJETIVO CLÍNICO ATUAL                            */}
-        {/* ======================================================== */}
-        <View
-          className="w-full bg-slate-50/90 border border-slate-200/80 rounded-2xl p-4 my-2 shadow-xs"
-          style={styles.objectiveCard}
-        >
-          <View className="flex-row items-center gap-2 mb-1.5" style={styles.objectiveHeaderRow}>
-            <View className="w-7 h-7 rounded-lg bg-teal-50 border border-teal-100 items-center justify-center" style={styles.objectiveIconBox}>
-              <Target size={15} color="#0f766e" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-wider" style={styles.objectiveLabel}>
-                OBJETIVO CLÍNICO ATUAL
-              </Text>
-              <Text className="text-[10px] text-teal-700 font-semibold" style={styles.objectiveSublabel}>
-                Definido pela médica assistente
-              </Text>
-            </View>
-          </View>
-          <Text className="text-sm font-semibold text-slate-800 tracking-tight leading-snug pl-0.5" style={styles.objectiveText}>
-            {treatmentObjective || "Nenhuma diretriz definida"}
-          </Text>
-        </View>
-
-        {/* CORPO CLÍNICO RESPONSÁVEL */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeaderRow}>
-            <HeartPulse size={16} color="#0f766e" />
-            <Text style={styles.sectionTitle}>EQUIPE MÉDICA ASSISTENTE</Text>
-          </View>
-
-          <View style={styles.doctorInfoRow}>
-            <View style={styles.doctorBadgeIcon}>
-              <ShieldCheck size={18} color="#0d9488" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.doctorName}>{medicoResponsavel}</Text>
-              <Text style={styles.doctorSpecialty}>{especialidade}</Text>
-              <Text style={styles.doctorFocus}>{focoClinico}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* ATENDIMENTO E SUPORTE */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeaderRow}>
-            <Phone size={16} color="#0f766e" />
-            <Text style={styles.sectionTitle}>SUPORTE E RECEPÇÃO</Text>
-          </View>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleOpenWhatsApp}
-            style={styles.actionRowButton}
-          >
-            <View style={styles.actionRowLeft}>
-              <View style={styles.whatsappIconCircle}>
-                <Phone size={14} color="#0f766e" />
+        {/* ============================================================ */}
+        {/* 1. CARD PRÓXIMA CONSULTA (FUSO LOCAL CORRIGIDO)              */}
+        {/* ============================================================ */}
+        <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardTitleGroup}>
+              <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
+                <Calendar size={16} color="#0f766e" />
               </View>
               <View>
-                <Text style={styles.actionRowTitle}>CONCIERGE CLÍNICA FAAZ</Text>
-                <Text style={styles.actionRowSubtitle}>FALAR COM A RECEPÇÃO VIA WHATSAPP</Text>
+                <Text style={styles.cardTitle}>Próxima Consulta</Text>
+                <Text style={styles.cardSubtitle}>Agenda oficial Clínica FAAZ</Text>
               </View>
             </View>
-            <ChevronRight size={18} color="#94a3b8" />
-          </TouchableOpacity>
-        </View>
 
-        {/* TERMOS E POLÍTICAS */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeaderRow}>
-            <FileText size={16} color="#0f766e" />
-            <Text style={styles.sectionTitle}>DOCUMENTAÇÃO</Text>
+            {consultaFormatada?.contagemRegressiva ? (
+              <View style={styles.countdownPill}>
+                <Text style={styles.countdownText}>
+                  {consultaFormatada.contagemRegressiva}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() =>
-              Alert.alert(
-                "LGPD & PRIVACIDADE",
-                "SEUS DADOS CLÍNICOS SÃO PROTEGIDOS POR CRIPTOGRAFIA DE PONTA A PONTA EM CONFORMIDADE COM A LGPD E O CFM."
-              )
-            }
-            style={styles.actionRowButton}
-          >
-            <View style={styles.actionRowLeft}>
-              <View style={styles.actionIconCircle}>
-                <FileText size={14} color="#64748b" />
-              </View>
-              <Text style={styles.actionRowTitle}>TERMOS DE USO E PRIVACIDADE</Text>
+          {carregandoConsulta ? (
+            <View style={styles.consultaLoadingRow}>
+              <ActivityIndicator size="small" color="#0f766e" />
+              <Text style={styles.consultaLoadingText}>
+                Verificando agenda...
+              </Text>
             </View>
-            <ChevronRight size={18} color="#94a3b8" />
+          ) : proximaConsulta && consultaFormatada ? (
+            <View style={styles.consultaBox}>
+              <View style={styles.consultaDateRow}>
+                <Text style={styles.consultaDateText}>
+                  {consultaFormatada.dataExtenso}
+                </Text>
+                <View style={styles.consultaTimePill}>
+                  <Clock size={12} color="#0f766e" />
+                  <Text style={styles.consultaTimeText}>
+                    {consultaFormatada.horarioLocal}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.consultaMetaList}>
+                <Text style={styles.consultaDoctorName}>
+                  {medicoConsulta || medicoResponsavel}
+                </Text>
+                <Text style={styles.consultaSpecialty}>
+                  {especialidadeConsulta || especialidade}
+                </Text>
+              </View>
+
+              <View style={styles.consultaTagsRow}>
+                {proximaConsulta.tipoLegivel ? (
+                  <View style={styles.tagPill}>
+                    <Text style={styles.tagPillText}>
+                      {proximaConsulta.tipoLegivel}
+                    </Text>
+                  </View>
+                ) : null}
+                {proximaConsulta.statusLegivel ? (
+                  <View style={styles.tagPillSuccess}>
+                    <Text style={styles.tagPillSuccessText}>
+                      {proximaConsulta.statusLegivel}
+                    </Text>
+                  </View>
+                ) : null}
+                {proximaConsulta.duracaoMinutos ? (
+                  <View style={styles.tagPill}>
+                    <Text style={styles.tagPillText}>
+                      {proximaConsulta.duracaoMinutos} min
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {proximaConsulta.observacao ? (
+                <Text style={styles.consultaNotes}>
+                  {proximaConsulta.observacao}
+                </Text>
+              ) : null}
+            </View>
+          ) : (
+            <View style={styles.emptyConsultaBox}>
+              <Text style={styles.emptyConsultaTitle}>
+                Nenhuma consulta futura agendada
+              </Text>
+              <Text style={styles.emptyConsultaSub}>
+                Fale com nossa recepção pelo WhatsApp para agendar seu próximo
+                retorno ou exame.
+              </Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            activeOpacity={0.82}
+            onPress={handleOpenWhatsApp}
+            style={styles.whatsappBtn}
+          >
+            <MessageCircle size={16} color="#ffffff" />
+            <Text style={styles.whatsappBtnText}>Falar no WhatsApp</Text>
           </TouchableOpacity>
         </View>
 
-        {/* BOTÃO DE LOGOUT */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={handleConfirmarLogout}
-          style={styles.logoutButton}
-        >
-          <LogOut size={16} color="#ef4444" />
-          <Text style={styles.logoutButtonText}>SAIR DA CONTA</Text>
-        </TouchableOpacity>
-      </ScrollView>
+        {/* ============================================================ */}
+        {/* 2. CARD PROTOCOLO CLÍNICO (OBJETIVO + MEDICAÇÕES)            */}
+        {/* ============================================================ */}
+        <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardTitleGroup}>
+              <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
+                <HeartPulse size={16} color="#0f766e" />
+              </View>
+              <View>
+                <Text style={styles.cardTitle}>Protocolo Clínico</Text>
+                <Text style={styles.cardSubtitle}>
+                  Diretrizes definidas pela equipe médica
+                </Text>
+              </View>
+            </View>
 
-      {/* ======================================================== */}
-      {/* 3. BARRA DE NAVEGAÇÃO INFERIOR                           */}
-      {/* ======================================================== */}
-      <View style={styles.bottomNavContainer}>
-        {[
-          { label: "Home", icon: HomeIcon },
-          { label: "Dieta", icon: Utensils },
-          { label: "METAS", icon: Target },
-          { label: "Perfil", icon: User },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isSelected = tab.label === "Perfil";
-
-          return (
-            <TouchableOpacity
-              key={tab.label}
-              activeOpacity={0.7}
-              onPress={() => {
-                if (tab.label === "Home") {
-                  onTabPress ? onTabPress("Home") : onBack?.();
-                } else if (tab.label === "Dieta") {
-                  onTabPress ? onTabPress("Dieta") : onNavigateToDieta?.();
-                } else if (tab.label === "METAS") {
-                  onTabPress ? onTabPress("METAS") : onNavigateToMetas?.();
-                } else if (onTabPress) {
-                  onTabPress(tab.label);
-                }
-              }}
-              style={styles.bottomNavTab}
+            <View
+              style={[
+                styles.profileTypePill,
+                {
+                  backgroundColor: objetivoConfig.badgeBg,
+                  borderColor: objetivoConfig.badgeBorder,
+                },
+              ]}
             >
-              <Icon
-                size={21}
-                color={isSelected ? "#0f766e" : "#94a3b8"}
-                strokeWidth={isSelected ? 2.5 : 2}
-              />
               <Text
                 style={[
-                  styles.bottomNavLabel,
-                  isSelected && styles.bottomNavLabelActive,
+                  styles.profileTypeText,
+                  { color: objetivoConfig.badgeText },
                 ]}
               >
-                {tab.label}
+                {objetivoConfig.rotuloCurto}
               </Text>
+            </View>
+          </View>
+
+          {/* Objetivo do Tratamento */}
+          <View style={styles.protocolBlock}>
+            <View style={styles.protocolBlockHeader}>
+              <Target size={13} color="#0f766e" />
+              <Text style={styles.protocolBlockLabel}>
+                Objetivo do Tratamento
+              </Text>
+            </View>
+            <Text style={styles.protocolBlockValue}>
+              {treatmentObjective?.trim() || "Nenhuma diretriz definida"}
+            </Text>
+          </View>
+
+          {/* Plano + Meta Hídrica */}
+          <View style={styles.protocolStatsRow}>
+            <View style={styles.protocolStatBox}>
+              <Text style={styles.protocolStatLabel}>Plano Ativo</Text>
+              <Text style={styles.protocolStatVal} numberOfLines={1}>
+                {convenio}
+              </Text>
+            </View>
+            <View style={styles.protocolStatBox}>
+              <Text style={styles.protocolStatLabel}>Meta Hídrica</Text>
+              <Text style={styles.protocolStatVal}>{metaAguaLitros} L / dia</Text>
+            </View>
+          </View>
+
+          {/* Equipe Médica */}
+          <View style={styles.protocolBlock}>
+            <Text style={styles.protocolBlockLabel}>Médico Responsável</Text>
+            <Text style={styles.protocolBlockValue}>{medicoResponsavel}</Text>
+            <Text style={styles.protocolBlockSub}>{especialidade}</Text>
+          </View>
+
+          {/* Medicações em Uso */}
+          <View style={styles.protocolBlock}>
+            <View style={styles.protocolBlockHeader}>
+              <Pill size={13} color="#0f766e" />
+              <Text style={styles.protocolBlockLabel}>Medicações em Uso</Text>
+            </View>
+            {medicacoes && medicacoes.trim().length > 0 ? (
+              <Text style={styles.medsText}>{medicacoes.trim()}</Text>
+            ) : (
+              <Text style={styles.medsEmptyText}>
+                Nenhuma medicação registrada no prontuário.
+              </Text>
+            )}
+          </View>
+        </View>
+
+        {/* ============================================================ */}
+        {/* 3. DADOS DO PACIENTE & CONTA                                 */}
+        {/* ============================================================ */}
+        <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardTitleGroup}>
+              <View style={[styles.iconBox, { backgroundColor: "#f1f5f9" }]}>
+                <UserIcon size={16} color="#334155" />
+              </View>
+              <View>
+                <Text style={styles.cardTitle}>Dados do Paciente & Conta</Text>
+                <Text style={styles.cardSubtitle}>
+                  Prontuário {prontuarioCodigo}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Avatar + Nome */}
+          <View style={styles.accountProfileRow}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={handleSelectPhotoSource}
+              disabled={isUploading}
+              style={styles.avatarTouchable}
+            >
+              {fullAvatarUrl ? (
+                <Image
+                  source={{ uri: fullAvatarUrl }}
+                  style={styles.avatarImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarInitial}>{initialLetter}</Text>
+                </View>
+              )}
+              <View style={styles.cameraBadge}>
+                <Camera size={11} color="#ffffff" />
+              </View>
+              {isUploading ? (
+                <View style={styles.uploadingOverlay}>
+                  <ActivityIndicator size="small" color="#ffffff" />
+                </View>
+              ) : null}
             </TouchableOpacity>
-          );
-        })}
-      </View>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.patientName}>{nomeExibicao}</Text>
+              <Text style={styles.patientMetaText}>
+                CPF: {formatCpfExibicao(paciente?.cpf)}
+              </Text>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={handleSelectPhotoSource}
+                disabled={isUploading}
+                style={{ marginTop: 4 }}
+              >
+                <Text style={styles.changePhotoLink}>
+                  {isUploading ? "Enviando foto..." : "Alterar foto de perfil"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Informações cadastrais */}
+          <View style={styles.infoList}>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoRowLabel}>Código do Prontuário</Text>
+              <Text style={styles.infoRowValue}>{prontuarioCodigo}</Text>
+            </View>
+            {telefone ? (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoRowLabel}>WhatsApp</Text>
+                <Text style={styles.infoRowValue}>{telefone}</Text>
+              </View>
+            ) : null}
+            {email ? (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoRowLabel}>E-mail</Text>
+                <Text style={styles.infoRowValue} numberOfLines={1}>
+                  {email}
+                </Text>
+              </View>
+            ) : null}
+            <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
+              <Text style={styles.infoRowLabel}>Recepção Clínica FAAZ</Text>
+              <TouchableOpacity
+                onPress={handleOpenWhatsApp}
+                style={styles.inlinePhoneBtn}
+              >
+                <Phone size={12} color="#0f766e" />
+                <Text style={styles.inlinePhoneText}>(31) 98440-0076</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* LGPD */}
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() =>
+              Alert.alert(
+                "Privacidade & LGPD",
+                "Seus dados clínicos são protegidos em conformidade com a LGPD e as normas do Conselho Federal de Medicina (CFM)."
+              )
+            }
+            style={styles.lgpdRow}
+          >
+            <View style={styles.lgpdLeft}>
+              <FileText size={14} color="#64748b" />
+              <Text style={styles.lgpdText}>Termos de Uso e Privacidade</Text>
+            </View>
+            <ChevronRight size={16} color="#94a3b8" />
+          </TouchableOpacity>
+
+          {/* Trocar Paciente / Sair (movido da antiga Home para cá) */}
+          <TouchableOpacity
+            activeOpacity={0.82}
+            onPress={handleConfirmarLogout}
+            style={styles.logoutButton}
+          >
+            <LogOut size={16} color="#be123c" />
+            <Text style={styles.logoutButtonText}>Trocar Paciente / Sair</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+      {/* BARRA INFERIOR UNIFICADA */}
+      <BottomTabBar
+        activeTab="Clínica"
+        onTabPress={(tab) => onTabPress?.(tab)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  rootContainer: {
+  root: {
     flex: 1,
     backgroundColor: "#f8fafc",
   },
-  headerVerifiedBadge: {
+  headerStatusBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(45, 212, 191, 0.15)",
+    backgroundColor: "rgba(45, 212, 191, 0.14)",
     borderWidth: 1,
     borderColor: "rgba(45, 212, 191, 0.3)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: 999,
     gap: 4,
   },
-  headerVerifiedText: {
+  headerStatusText: {
     color: "#2dd4bf",
-    fontSize: 10,
-    fontWeight: "500",
+    fontSize: 11,
+    fontWeight: "600",
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 28,
     gap: 14,
   },
-  patientCard: {
+  card: {
     backgroundColor: "#ffffff",
-    borderRadius: 20,
-    padding: 20,
-    alignItems: "center",
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: "#e2e8f0",
     shadowColor: "#0f172a",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
     elevation: 2,
+    gap: 12,
+  },
+  cardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  cardTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  iconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 1,
+  },
+  countdownPill: {
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  countdownText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#047857",
+  },
+  consultaLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+  },
+  consultaLoadingText: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+  consultaBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    gap: 8,
+  },
+  consultaDateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  consultaDateText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0f172a",
+    flex: 1,
+  },
+  consultaTimePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  consultaTimeText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  consultaMetaList: {
+    gap: 2,
+  },
+  consultaDoctorName: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#1e293b",
+  },
+  consultaSpecialty: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+  consultaTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 2,
+  },
+  tagPill: {
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tagPillText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  tagPillSuccess: {
+    backgroundColor: "#ecfdf5",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tagPillSuccessText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#047857",
+  },
+  consultaNotes: {
+    fontSize: 12,
+    color: "#475569",
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  emptyConsultaBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+    gap: 4,
+  },
+  emptyConsultaTitle: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#1e293b",
+  },
+  emptyConsultaSub: {
+    fontSize: 12,
+    color: "#64748b",
+    lineHeight: 17,
+  },
+  whatsappBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#0f766e",
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  whatsappBtnText: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#ffffff",
+  },
+  profileTypePill: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  profileTypeText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  protocolBlock: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    gap: 4,
+  },
+  protocolBlockHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  protocolBlockLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  protocolBlockValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+    lineHeight: 20,
+  },
+  protocolBlockSub: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+  protocolStatsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  protocolStatBox: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  protocolStatLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  protocolStatVal: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f766e",
+    marginTop: 3,
+  },
+  medsText: {
+    fontSize: 13,
+    color: "#1e293b",
+    lineHeight: 20,
+    marginTop: 2,
+  },
+  medsEmptyText: {
+    fontSize: 12.5,
+    color: "#64748b",
+    fontStyle: "italic",
+    marginTop: 2,
+  },
+  accountProfileRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
   },
   avatarTouchable: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 8,
     backgroundColor: "#f0fdfa",
     borderWidth: 2,
-    borderColor: "#0d9488",
-    shadowColor: "#0d9488",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 4,
+    borderColor: "#0f766e",
   },
   avatarImage: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
   },
   avatarPlaceholder: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: "#0d9488",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#0f766e",
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarLargeText: {
-    fontSize: 32,
-    fontWeight: "800",
+  avatarInitial: {
+    fontSize: 24,
+    fontWeight: "700",
     color: "#ffffff",
   },
   cameraBadge: {
     position: "absolute",
-    bottom: 0,
-    right: 0,
-    backgroundColor: "#0f766e",
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#0f172a",
     borderWidth: 2,
     borderColor: "#ffffff",
     alignItems: "center",
     justifyContent: "center",
-    elevation: 5,
   },
   uploadingOverlay: {
     position: "absolute",
@@ -660,247 +1133,102 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    borderRadius: 48,
+    borderRadius: 32,
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
     alignItems: "center",
     justifyContent: "center",
-  },
-  alterarFotoText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#0f766e",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
   },
   patientName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
     color: "#0f172a",
-    letterSpacing: 0.3,
-    textAlign: "center",
   },
-  prontuarioBadge: {
-    backgroundColor: "#f1f5f9",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    marginTop: 6,
-    marginBottom: 16,
-  },
-  prontuarioBadgeText: {
-    fontSize: 9.5,
-    fontWeight: "500",
-    color: "#475569",
-    letterSpacing: 0.5,
-  },
-  patientDetailsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-around",
-    width: "100%",
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-  },
-  patientDetailItem: {
-    alignItems: "center",
-  },
-  patientDetailLabel: {
-    fontSize: 9,
-    fontWeight: "500",
-    color: "#64748b",
-    letterSpacing: 0.5,
-  },
-  patientDetailValue: {
+  patientMetaText: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "#0f766e",
+    color: "#64748b",
     marginTop: 2,
   },
-  detailDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: "#e2e8f0",
-  },
-  objectiveCard: {
-    backgroundColor: "#f8fafc",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    marginTop: 10,
-    marginBottom: 6,
-  },
-  objectiveHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  objectiveIconBox: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: "#f0fdfa",
-    borderWidth: 1,
-    borderColor: "#ccfbf1",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 8,
-  },
-  objectiveLabel: {
-    fontSize: 9.5,
+  changePhotoLink: {
+    fontSize: 12,
     fontWeight: "700",
-    color: "#64748b",
-    letterSpacing: 0.5,
-  },
-  objectiveSublabel: {
-    fontSize: 9.5,
-    fontWeight: "600",
     color: "#0f766e",
-    marginTop: 1,
   },
-  objectiveText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#1e293b",
-    lineHeight: 18,
-  },
-  sectionCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 18,
-    padding: 16,
+  infoList: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#0f172a",
-    letterSpacing: 0.6,
-  },
-  doctorInfoRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    backgroundColor: "#f8fafc",
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-  },
-  doctorBadgeIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#ccfbf1",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  doctorName: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0f172a",
-    letterSpacing: 0.3,
-  },
-  doctorSpecialty: {
-    fontSize: 10.5,
-    fontWeight: "500",
-    color: "#0f766e",
-    marginTop: 1,
-  },
-  doctorFocus: {
-    fontSize: 9.5,
-    fontWeight: "400",
-    color: "#64748b",
-    marginTop: 3,
-  },
-  actionRowButton: {
+  infoRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+    gap: 12,
   },
-  actionRowLeft: {
+  infoRowLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  infoRowValue: {
+    fontSize: 12.5,
+    color: "#0f172a",
+    fontWeight: "700",
+    flexShrink: 1,
+    textAlign: "right",
+  },
+  inlinePhoneBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    flex: 1,
+    gap: 5,
   },
-  whatsappIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#ccfbf1",
+  inlinePhoneText: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  lgpdRow: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
   },
-  actionIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#f1f5f9",
+  lgpdLeft: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 8,
   },
-  actionRowTitle: {
-    fontSize: 12,
+  lgpdText: {
+    fontSize: 12.5,
     fontWeight: "600",
-    color: "#1e293b",
-    letterSpacing: 0.2,
-  },
-  actionRowSubtitle: {
-    fontSize: 9,
-    fontWeight: "400",
-    color: "#64748b",
-    marginTop: 1,
+    color: "#334155",
   },
   logoutButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#fef2f2",
+    backgroundColor: "#fff1f2",
     borderWidth: 1,
-    borderColor: "#fecaca",
-    borderRadius: 16,
-    paddingVertical: 14,
-    marginTop: 6,
+    borderColor: "#fecdd3",
+    borderRadius: 12,
+    paddingVertical: 13,
+    marginTop: 2,
   },
   logoutButtonText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#dc2626",
-    letterSpacing: 0.6,
-  },
-  bottomNavContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-around",
-    backgroundColor: "#ffffff",
-    borderTopWidth: 1,
-    borderTopColor: "#e2e8f0",
-    paddingVertical: 10,
-  },
-  bottomNavTab: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 4,
-  },
-  bottomNavLabel: {
-    fontSize: 10,
-    fontWeight: "500",
-    color: "#94a3b8",
-    marginTop: 2,
-    letterSpacing: 0.2,
-  },
-  bottomNavLabelActive: {
-    color: "#0f766e",
-    fontWeight: "600",
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#be123c",
   },
 });
+
+export default ProfileScreen;

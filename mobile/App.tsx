@@ -27,6 +27,7 @@ import {
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { BristolCheckinScreen } from "./src/screens/BristolCheckinScreen";
 import { GlicemiaCheckinScreen } from "./src/screens/GlicemiaCheckinScreen";
+import { MedidasCheckinScreen } from "./src/screens/MedidasCheckinScreen";
 import { DietaScreen } from "./src/screens/DietaScreen";
 import { SleepCheckInScreen } from "./src/screens/SleepCheckInScreen";
 import { MetasScreen } from "./src/screens/MetasScreen";
@@ -94,6 +95,7 @@ type ScreenRoute =
   | "home"
   | "bristol"
   | "glicemia"
+  | "medidas"
   | "dieta"
   | "sono"
   | "metas"
@@ -108,6 +110,7 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
   const [screenStack, setScreenStack] = useState<ScreenRoute[]>(["home"]);
   const stackRef = useRef<ScreenRoute[]>(["home"]);
   const [completedCheckins, setCompletedCheckins] = useState<string[]>([]);
+  const [refreshVersion, setRefreshVersion] = useState<number>(0);
 
   const currentScreen: ScreenRoute = screenStack[screenStack.length - 1] ?? "home";
   const hasAuthenticatedSession = Boolean(paciente) && !isInitializing;
@@ -194,14 +197,15 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
 
   const handleTabPress = useCallback(
     (tabName: string) => {
-      if (tabName === "Home" || tabName === "home") {
+      const key = tabName.trim().toLowerCase();
+      if (key === "hoje" || key === "home") {
         navigation.reset({ index: 0, routes: [{ name: "home" }] });
-      } else if (tabName === "Dieta") {
-        navigation.navigate("dieta");
-      } else if (tabName === "METAS" || tabName === "Metas") {
-        navigation.navigate("metas");
-      } else if (tabName === "Perfil") {
-        navigation.navigate("perfil");
+      } else if (key === "dieta") {
+        navigation.reset({ index: 1, routes: [{ name: "home" }, { name: "dieta" }] });
+      } else if (key === "evolução" || key === "evolucao" || key === "metas") {
+        navigation.reset({ index: 1, routes: [{ name: "home" }, { name: "metas" }] });
+      } else if (key === "clínica" || key === "clinica" || key === "perfil") {
+        navigation.reset({ index: 1, routes: [{ name: "home" }, { name: "perfil" }] });
       }
     },
     [navigation]
@@ -213,6 +217,8 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
         navigation.navigate("glicemia");
       } else if (id === "bristol") {
         navigation.navigate("bristol");
+      } else if (id === "medidas") {
+        navigation.navigate("medidas");
       } else if (id === "sono") {
         navigation.navigate("sono");
       }
@@ -221,8 +227,10 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
   );
 
   function handleCheckinSuccess(checkinId: string) {
-    setCompletedCheckins((prev) => (prev.includes(checkinId) ? prev : [...prev, checkinId]));
-    navigation.navigate("home");
+    setCompletedCheckins((prev) =>
+      prev.includes(checkinId) ? prev : [...prev, checkinId]
+    );
+    setRefreshVersion((v) => v + 1);
   }
 
   // Enquanto valida o SecureStore (Persistent Login), exibe tela de inicialização suave
@@ -249,26 +257,26 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
       {currentScreen === "home" ? (
         <HomeScreen
           completedCheckins={completedCheckins}
+          refreshKey={refreshVersion}
           onNavigateToCheckin={handleNavigateToCheckin}
           onTabPress={handleTabPress}
-          onNavigateToDieta={() => navigation.navigate("dieta")}
-          onNavigateToMetas={() => navigation.navigate("metas")}
+          onNavigateToDieta={() => handleTabPress("Dieta")}
+          onNavigateToMetas={() => handleTabPress("Evolução")}
         />
       ) : currentScreen === "metas" ? (
         <MetasScreen
           pacienteId={paciente.id}
           pacienteNome={paciente.nome}
-          onBack={handleBack}
+          refreshKey={refreshVersion}
           onTabPress={handleTabPress}
           onNavigateToCheckin={handleNavigateToCheckin}
-          onNavigateToDieta={() => navigation.navigate("dieta")}
+          onNavigateToDieta={() => handleTabPress("Dieta")}
         />
       ) : currentScreen === "perfil" ? (
         <ProfileScreen
-          onBack={handleBack}
           onTabPress={handleTabPress}
-          onNavigateToDieta={() => navigation.navigate("dieta")}
-          onNavigateToMetas={() => navigation.navigate("metas")}
+          onNavigateToDieta={() => handleTabPress("Dieta")}
+          onNavigateToMetas={() => handleTabPress("Evolução")}
         />
       ) : currentScreen === "glicemia" ? (
         <GlicemiaCheckinScreen
@@ -280,6 +288,12 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
           onBack={handleBack}
           onSuccess={() => handleCheckinSuccess("bristol")}
         />
+      ) : currentScreen === "medidas" ? (
+        <MedidasCheckinScreen
+          pacienteId={paciente.id}
+          onBack={handleBack}
+          onSuccess={() => handleCheckinSuccess("medidas")}
+        />
       ) : currentScreen === "sono" ? (
         <SleepCheckInScreen
           pacienteId={paciente.id}
@@ -290,7 +304,6 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
         <DietaScreen
           pacienteId={paciente.id}
           pacienteNome={paciente.nome}
-          onBack={handleBack}
           onTabPress={handleTabPress}
         />
       )}
@@ -300,12 +313,33 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
 
 function MainNavigator() {
   const { paciente, isInitializing } = usePatientAuth();
+  const isAuthenticated = Boolean(paciente) && !isInitializing;
+
   return (
-    <AppRouter
-      key={paciente?.id ?? "guest"}
-      paciente={paciente}
-      isInitializing={isInitializing}
-    />
+    <SafeAreaView
+      edges={
+        isAuthenticated
+          ? ["bottom", "left", "right"]
+          : ["top", "bottom", "left", "right"]
+      }
+      className="flex-1 w-full h-full"
+      style={styles.safeAreaContainer}
+      pointerEvents="box-none"
+    >
+      <StatusBar
+        barStyle={isAuthenticated ? "light-content" : "dark-content"}
+        {...(Platform.OS === "android"
+          ? { backgroundColor: isAuthenticated ? "#0f172a" : "#f8fafc" }
+          : {})}
+      />
+      <View style={styles.navigatorWrapper} pointerEvents="box-none">
+        <AppRouter
+          key={paciente?.id ?? "guest"}
+          paciente={paciente}
+          isInitializing={isInitializing}
+        />
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -317,19 +351,11 @@ export default function App() {
       pointerEvents="box-none"
     >
       <AppErrorBoundary>
-        <SafeAreaView className="flex-1 w-full h-full" style={styles.safeAreaContainer} pointerEvents="box-none">
-          <StatusBar
-            barStyle="dark-content"
-            {...(Platform.OS === "android" ? { backgroundColor: "#f8fafc" } : {})}
-          />
-          <PatientAuthProvider>
-            <DiarioAlimentarProvider>
-              <View style={styles.navigatorWrapper} pointerEvents="box-none">
-                <MainNavigator />
-              </View>
-            </DiarioAlimentarProvider>
-          </PatientAuthProvider>
-        </SafeAreaView>
+        <PatientAuthProvider>
+          <DiarioAlimentarProvider>
+            <MainNavigator />
+          </DiarioAlimentarProvider>
+        </PatientAuthProvider>
       </AppErrorBoundary>
     </SafeAreaProvider>
   );

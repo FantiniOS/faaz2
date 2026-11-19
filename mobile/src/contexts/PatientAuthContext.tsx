@@ -13,6 +13,10 @@ export interface PacienteLogado {
   especialidadeMedico?: string;
   focoClinico?: string;
   treatmentObjective?: string;
+  medicacoes?: string | null;
+  convenio?: string | null;
+  telefoneWhatsapp?: string | null;
+  email?: string | null;
   avatarUrl?: string | null;
 }
 
@@ -24,6 +28,7 @@ interface PatientAuthContextData {
   logout: () => Promise<void>;
   selecionarPaciente: (paciente: PacienteLogado, manterConectado?: boolean) => Promise<void>;
   atualizarAvatarUrl: (novaUrl: string) => void;
+  recarregarPerfilPaciente: () => Promise<void>;
 }
 
 const PatientAuthContext = createContext<PatientAuthContextData>(
@@ -34,6 +39,51 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
   const [paciente, setPaciente] = useState<PacienteLogado | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
+
+  const sincronizarPerfilRemoto = React.useCallback(async (pacienteId: string) => {
+    try {
+      const res = await api.get(`/pacientes/${encodeURIComponent(pacienteId)}`);
+      if (!res?.paciente) return;
+      const p = res.paciente;
+      setPaciente((prev) => {
+        const merged: PacienteLogado = {
+          id: p.id || prev?.id || pacienteId,
+          nome: p.fullName || p.nome || prev?.nome || "Paciente",
+          socialName: p.socialName ?? prev?.socialName ?? null,
+          cpf: p.cpf || prev?.cpf || "",
+          metaDiariaMl: p.metaDiariaMl || prev?.metaDiariaMl || 2500,
+          recordCode: p.recordCode || prev?.recordCode,
+          medicoResponsavel:
+            p.primaryDoctor?.fullName || prev?.medicoResponsavel || "Equipe Clínica FAAZ",
+          especialidadeMedico:
+            p.primaryDoctor?.specialty ||
+            prev?.especialidadeMedico ||
+            "Endocrinologia & Metabologia",
+          focoClinico:
+            p.treatmentObjective || p.clinicalFocus || prev?.focoClinico || "",
+          treatmentObjective:
+            p.treatmentObjective ||
+            p.clinicalFocus ||
+            prev?.treatmentObjective ||
+            "",
+          medicacoes: p.medicacoes !== undefined ? p.medicacoes : (prev?.medicacoes ?? null),
+          convenio: p.convenio ?? prev?.convenio ?? null,
+          telefoneWhatsapp: p.phoneWhatsapp ?? prev?.telefoneWhatsapp ?? null,
+          email: p.email ?? prev?.email ?? null,
+          avatarUrl: p.avatarUrl ?? p.photoUrl ?? prev?.avatarUrl ?? null,
+        };
+        secureStorage.setItem(USER_DATA_KEY, JSON.stringify(merged)).catch(() => {});
+        return merged;
+      });
+    } catch {
+      // Fallback silencioso mantendo cache local
+    }
+  }, []);
+
+  const recarregarPerfilPaciente = React.useCallback(async () => {
+    if (!paciente?.id) return;
+    await sincronizarPerfilRemoto(paciente.id);
+  }, [paciente?.id, sincronizarPerfilRemoto]);
 
   // Auto-login via SecureStore na inicialização do aplicativo
   useEffect(() => {
@@ -59,6 +109,8 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
             setPaciente(pacienteRecuperado);
             setAuthPatientId(pacienteRecuperado.id);
             setAuthToken(savedToken);
+            // Atualiza silenciosamente em segundo plano para trazer medicacoes/objetivo recentes
+            sincronizarPerfilRemoto(pacienteRecuperado.id);
           } else {
             // Tenta validar e buscar os dados atualizados do paciente no backend
             try {
@@ -67,14 +119,19 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
                 const fresh: PacienteLogado = {
                   id: res.paciente.id,
                   nome: res.paciente.fullName || res.paciente.nome,
+                  socialName: res.paciente.socialName ?? null,
                   cpf: res.paciente.cpf,
                   metaDiariaMl: res.paciente.metaDiariaMl || 2500,
                   recordCode: res.paciente.recordCode,
-                  medicoResponsavel: res.paciente.primaryDoctor?.fullName || "Dr. Carlos Fantini",
-                  especialidadeMedico: res.paciente.primaryDoctor?.specialty || "Endocrinologia & Nutrologia",
+                  medicoResponsavel: res.paciente.primaryDoctor?.fullName || "Equipe Clínica FAAZ",
+                  especialidadeMedico: res.paciente.primaryDoctor?.specialty || "Endocrinologia & Metabologia",
                   focoClinico: res.paciente.treatmentObjective || res.paciente.clinicalFocus,
                   treatmentObjective: res.paciente.treatmentObjective || res.paciente.clinicalFocus,
-                  avatarUrl: res.paciente.avatarUrl || null,
+                  medicacoes: res.paciente.medicacoes ?? null,
+                  convenio: res.paciente.convenio ?? null,
+                  telefoneWhatsapp: res.paciente.phoneWhatsapp ?? null,
+                  email: res.paciente.email ?? null,
+                  avatarUrl: res.paciente.avatarUrl || res.paciente.photoUrl || null,
                 };
                 setPaciente(fresh);
                 setAuthPatientId(fresh.id);
@@ -100,7 +157,7 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [sincronizarPerfilRemoto]);
 
   async function loginComCpf(
     cpf: string,
@@ -197,6 +254,7 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
         logout,
         selecionarPaciente,
         atualizarAvatarUrl,
+        recarregarPerfilPaciente,
       }}
     >
       {children}
@@ -215,6 +273,7 @@ export function usePatientAuth(): PatientAuthContextData {
       logout: async () => {},
       selecionarPaciente: async () => {},
       atualizarAvatarUrl: () => {},
+      recarregarPerfilPaciente: async () => {},
     };
   }
   return context;
