@@ -6,7 +6,44 @@ import { getRepository } from "@/lib/db/data-source";
 import {
   PatientEntity,
   PlanoAlimentarEntity,
+  type SubstituicaoItemRefeicao,
+  type UnidadeMedidaDieta,
 } from "@/lib/db/entities";
+
+function normalizarUnidade(val?: string | null): UnidadeMedidaDieta {
+  if (val === "ml" || val === "un") return val;
+  return "g";
+}
+
+function formatarSubstituicaoPrescrita(sub: SubstituicaoItemRefeicao) {
+  const alim = sub.alimento;
+  const qtd = Number(sub.quantidade) || 0;
+  const base = Number(alim?.porcaoBase) || 100;
+  const fator = base > 0 ? qtd / base : qtd / 100;
+
+  return {
+    id: sub.id,
+    itemRefeicaoId: sub.itemRefeicaoId,
+    alimentoId: sub.alimentoId ?? null,
+    nomeExibicao: sub.nomeExibicao,
+    quantidade: qtd,
+    unidade: normalizarUnidade(sub.unidade),
+    medidaCaseira: sub.medidaCaseira ?? null,
+    ordem: sub.ordem ?? 1,
+    thumbnailUrl: alim?.thumbnailUrl ?? null,
+    categoria: alim?.categoria ?? null,
+    caloriasPorcao: alim ? Math.round((Number(alim.calorias) || 0) * fator) : null,
+    proteinasPorcao: alim
+      ? parseFloat(((Number(alim.proteinas) || 0) * fator).toFixed(1))
+      : null,
+    carboidratosPorcao: alim
+      ? parseFloat(((Number(alim.carboidratos) || 0) * fator).toFixed(1))
+      : null,
+    gordurasPorcao: alim
+      ? parseFloat(((Number(alim.gorduras) || 0) * fator).toFixed(1))
+      : null,
+  };
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -78,6 +115,12 @@ export async function GET(req: NextRequest) {
           refeicoes: {
             itens: {
               alimento: true,
+              substituicoesPrescritas: {
+                alimento: true,
+              },
+              substituicoes: {
+                substituteFood: true,
+              },
             },
           },
         },
@@ -92,9 +135,8 @@ export async function GET(req: NextRequest) {
         paciente: {
           id: paciente.id,
           nome: paciente.fullName,
-          medico: paciente.primaryDoctor?.fullName || "Dr. Carlos Fantini",
-          especialidade:
-            paciente.primaryDoctor?.specialty || "Endocrinologia & Nutrologia",
+          medico: paciente.primaryDoctor?.fullName || null,
+          especialidade: paciente.primaryDoctor?.specialty || null,
         },
         plano: null,
       });
@@ -117,7 +159,9 @@ export async function GET(req: NextRequest) {
       let totalFibras = 0;
 
       const refeicoesOrdenadas = [...(variacao.refeicoes || [])].sort(
-        (a, b) => a.ordem - b.ordem,
+        (a, b) =>
+          a.ordem - b.ordem ||
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
       );
 
       const refeicoesComTotais = refeicoesOrdenadas.map((refeicao) => {
@@ -134,7 +178,8 @@ export async function GET(req: NextRequest) {
 
         const itensFormatados = itensOrdenados.map((item) => {
           const alimento = item.alimento;
-          const fator = item.quantidadeGramas / 100;
+          const base = Number(alimento?.porcaoBase) || 100;
+          const fator = base > 0 ? item.quantidadeGramas / base : item.quantidadeGramas / 100;
           const cal = Math.round((alimento?.calorias || 0) * fator);
           const prot = parseFloat(((alimento?.proteinas || 0) * fator).toFixed(1));
           const carb = parseFloat(
@@ -149,9 +194,25 @@ export async function GET(req: NextRequest) {
           mealFat += fat;
           mealFib += fib;
 
+          const subsPrescritas = [...(item.substituicoesPrescritas || [])]
+            .sort(
+              (a, b) =>
+                a.ordem - b.ordem ||
+                new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+            )
+            .map(formatarSubstituicaoPrescrita);
+
+          const subsPaciente = [...(item.substituicoes || [])].sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          );
+          const subRecente = subsPaciente[0] || null;
+
           return {
             id: item.id,
             quantidadeGramas: item.quantidadeGramas,
+            unidade: normalizarUnidade(item.unidade),
+            medidaCaseira: item.medidaCaseira ?? null,
             observacao: item.observacao,
             alimento: {
               id: alimento?.id || "",
@@ -164,6 +225,24 @@ export async function GET(req: NextRequest) {
               gordurasPorcao: fat,
               fibrasPorcao: fib,
             },
+            substituicoes: subsPrescritas,
+            substituicao: subRecente
+              ? {
+                  id: subRecente.id,
+                  prescribedDietItemId: subRecente.prescribedDietItemId,
+                  substituteFoodId: subRecente.substituteFoodId,
+                  substituteFoodName: subRecente.substituteFoodName,
+                  substituteThumbnailUrl:
+                    subRecente.substituteFood?.thumbnailUrl ?? null,
+                  quantityGrams: subRecente.quantityGrams,
+                  calories: subRecente.calories,
+                  proteins: subRecente.proteins,
+                  carbohydrates: subRecente.carbohydrates,
+                  fats: subRecente.fats,
+                  createdAt: subRecente.createdAt,
+                }
+              : null,
+            substituicoesPaciente: subsPaciente,
           };
         });
 
@@ -179,7 +258,8 @@ export async function GET(req: NextRequest) {
           nome: refeicao.nome,
           horario: refeicao.horario,
           ordem: refeicao.ordem,
-          observacoes: refeicao.observacoes,
+          opcional: Boolean(refeicao.opcional),
+          observacoes: refeicao.observacoes ?? null,
           pontos: roundMealCal,
           calorias: roundMealCal,
           totais: {
@@ -214,26 +294,33 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({
-      sucesso: true,
-      temPlano: true,
-      paciente: {
-        id: paciente.id,
-        nome: paciente.fullName,
-        medico: paciente.primaryDoctor?.fullName || "Dr. Carlos Fantini",
-        especialidade:
-          paciente.primaryDoctor?.specialty || "Endocrinologia & Nutrologia",
-        focoClinico: paciente.clinicalFocus,
+    return NextResponse.json(
+      {
+        sucesso: true,
+        temPlano: true,
+        paciente: {
+          id: paciente.id,
+          nome: paciente.fullName,
+          medico: paciente.primaryDoctor?.fullName || null,
+          especialidade: paciente.primaryDoctor?.specialty || null,
+          focoClinico: paciente.clinicalFocus,
+        },
+        plano: {
+          id: plano.id,
+          nome: plano.titulo,
+          titulo: plano.titulo,
+          objetivo: plano.objetivo,
+          caloriasAlvo: variacoesComTotais[0]?.totais?.calorias || 2000,
+          variacoes: variacoesComTotais,
+        },
       },
-      plano: {
-        id: plano.id,
-        nome: plano.titulo,
-        titulo: plano.titulo,
-        objetivo: plano.objetivo,
-        caloriasAlvo: variacoesComTotais[0]?.totais?.calorias || 2000,
-        variacoes: variacoesComTotais,
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          Pragma: "no-cache",
+        },
       },
-    });
+    );
   } catch (error: unknown) {
     console.error("[API_PACIENTE_DIETA_ERROR]", error);
     const detalhes = error instanceof Error ? error.message : String(error);

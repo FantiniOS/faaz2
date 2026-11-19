@@ -165,9 +165,9 @@ export async function GET(
           id: agendamento.id,
           pacienteId: agendamento.pacienteId,
           medicoId: agendamento.medicoId,
-          medicoNome: agendamento.medico?.nome || "Dr. Carlos Fantini",
+          medicoNome: agendamento.medico?.nome || "Equipe Clínica FAAZ",
           medicoEspecialidade:
-            agendamento.medico?.especialidade || "Endocrinologia & Nutrologia",
+            agendamento.medico?.especialidade || "Endocrinologia & Metabologia",
           medicoCorHex: agendamento.medico?.corHex || "#059669",
           dataHora: new Date(agendamento.dataHora).toISOString(),
           dataLocalIso: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,

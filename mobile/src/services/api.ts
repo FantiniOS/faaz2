@@ -220,6 +220,169 @@ export interface PacienteTreinosResponse {
   };
 }
 
+export type UnidadeMedidaDieta = "g" | "ml" | "un";
+export type CheckinRefeicaoStatus = "SEGUI" | "FIZ_TROCA" | "NAO_FIZ";
+
+export interface SubstituicaoPrescritaItem {
+  id: string;
+  itemRefeicaoId: string;
+  alimentoId: string | null;
+  nomeExibicao: string;
+  quantidade: number;
+  unidade: UnidadeMedidaDieta;
+  medidaCaseira: string | null;
+  ordem: number;
+  thumbnailUrl: string | null;
+  categoria?: string | null;
+  caloriasPorcao?: number | null;
+  proteinasPorcao?: number | null;
+  carboidratosPorcao?: number | null;
+  gordurasPorcao?: number | null;
+}
+
+export interface ItemRefeicaoApi {
+  id: string;
+  alimentoId?: string;
+  quantidadeGramas: number;
+  unidade?: UnidadeMedidaDieta;
+  medidaCaseira?: string | null;
+  observacao?: string | null;
+  alimento?: {
+    id?: string;
+    nome?: string;
+    categoria?: string | null;
+    thumbnailUrl?: string | null;
+    calorias?: number;
+    proteinas?: number;
+    carboidratos?: number;
+    gorduras?: number;
+    fibras?: number;
+    caloriasPorcao?: number;
+    proteinasPorcao?: number;
+    carboidratosPorcao?: number;
+    gordurasPorcao?: number;
+    fibrasPorcao?: number;
+  };
+  substituicoes?: SubstituicaoPrescritaItem[];
+  substituicao?: {
+    id: string;
+    prescribedDietItemId: string;
+    substituteFoodId?: string | null;
+    substituteFoodName: string;
+    substituteThumbnailUrl?: string | null;
+    quantityGrams: number;
+    calories: number;
+    proteins?: number | null;
+    carbohydrates?: number | null;
+    fats?: number | null;
+    createdAt?: string | Date;
+  } | null;
+}
+
+export interface RefeicaoApi {
+  id: string;
+  nome: string;
+  horario?: string | null;
+  ordem: number;
+  opcional?: boolean;
+  observacoes?: string | null;
+  calorias?: number;
+  totais?: {
+    calorias?: number;
+    proteinas?: number;
+    carboidratos?: number;
+    gorduras?: number;
+    fibras?: number;
+  };
+  itens?: ItemRefeicaoApi[];
+}
+
+export interface VariacaoDietaApi {
+  id: string;
+  nome: string;
+  descricao?: string | null;
+  ordem: number;
+  calorias?: number;
+  totais?: {
+    calorias?: number;
+    proteinas?: number;
+    carboidratos?: number;
+    gorduras?: number;
+    fibras?: number;
+  };
+  refeicoes?: RefeicaoApi[];
+}
+
+export interface PlanoAlimentarApi {
+  id: string;
+  nome?: string;
+  titulo: string;
+  objetivo?: string | null;
+  caloriasAlvo?: number | null;
+  variacoes: VariacaoDietaApi[];
+}
+
+export interface PacienteDietaResponse {
+  sucesso: boolean;
+  temPlano?: boolean;
+  mensagem?: string;
+  error?: string;
+  paciente?: {
+    id: string;
+    nome: string;
+    medico?: string | null;
+    especialidade?: string | null;
+    focoClinico?: string | null;
+  };
+  plano?: PlanoAlimentarApi | null;
+}
+
+export interface CheckinRefeicaoItem {
+  id: string;
+  pacienteId: string;
+  refeicaoId: string;
+  refeicaoNome?: string | null;
+  dataDia: string;
+  status: CheckinRefeicaoStatus;
+  opcaoEscolhida?: string | null;
+  trocas?: unknown[] | Record<string, unknown> | null;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+export interface CheckinRefeicaoResumo {
+  totalCheckins: number;
+  seguiu: number;
+  fezTroca: number;
+  naoFez: number;
+  percentualAdesao: number;
+  diasRegistrados: number;
+}
+
+export interface CheckinsRefeicoesResponse {
+  success: boolean;
+  dataReferencia: string;
+  totalDia: number;
+  checkins: CheckinRefeicaoItem[];
+  dias?: number;
+  historico?: CheckinRefeicaoItem[];
+  resumo?: CheckinRefeicaoResumo;
+}
+
+export interface RegistrarCheckinRefeicaoPayload {
+  pacienteId: string;
+  refeicaoId: string;
+  dataDia?: string;
+  status: CheckinRefeicaoStatus;
+  opcaoEscolhida?: string | null;
+  trocas?: unknown[] | Record<string, unknown> | null;
+}
+
+export interface RegistrarCheckinRefeicaoResponse {
+  success: boolean;
+  checkin: CheckinRefeicaoItem;
+}
+
 /**
  * Executa requisição HTTP tipada com headers, auth token e CORS
  */
@@ -378,11 +541,17 @@ export const api = {
     getProximaConsulta(pacienteId: string) {
       return api.get(`/pacientes/${encodeURIComponent(pacienteId)}/proxima-consulta`);
     },
-    getDieta(pacienteId?: string) {
+    getDieta<T = any>(pacienteId?: string): Promise<T> {
       const endpoint = pacienteId
         ? `/pacientes/${encodeURIComponent(pacienteId)}/dieta`
         : "/paciente/dieta";
-      return api.get(endpoint);
+      return api.get<T>(endpoint);
+    },
+    getDietaEstruturada(pacienteId?: string): Promise<PacienteDietaResponse> {
+      const endpoint = pacienteId
+        ? `/pacientes/${encodeURIComponent(pacienteId)}/dieta`
+        : "/paciente/dieta";
+      return api.get<PacienteDietaResponse>(endpoint);
     },
     registrarPesagem(pacienteId: string, peso: number) {
       return api.post(`/pacientes/${encodeURIComponent(pacienteId)}/pesagens`, {
@@ -535,6 +704,26 @@ export const api = {
       }>("/checkins/treino", {
         params: pacienteId ? { pacienteId } : undefined,
       });
+    },
+    getRefeicoes(
+      pacienteId: string,
+      data?: string,
+      options?: { historico?: boolean; dias?: number }
+    ) {
+      return api.get<CheckinsRefeicoesResponse>("/checkins/refeicoes", {
+        params: {
+          pacienteId,
+          ...(data ? { data } : {}),
+          ...(options?.historico ? { historico: true } : {}),
+          ...(options?.dias ? { dias: options.dias } : {}),
+        },
+      });
+    },
+    registrarRefeicao(payload: RegistrarCheckinRefeicaoPayload) {
+      return api.post<RegistrarCheckinRefeicaoResponse>(
+        "/checkins/refeicoes",
+        payload
+      );
     },
   },
 };

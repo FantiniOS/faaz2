@@ -19,10 +19,12 @@ import {
 } from "./habits";
 import {
   AlimentoEntity,
+  CheckinRefeicaoEntity,
   DietSubstitutionEntity,
   ItemRefeicaoEntity,
   PlanoAlimentarEntity,
   RefeicaoEntity,
+  SubstituicaoItemRefeicaoEntity,
   VariacaoDietaEntity,
 } from "./nutrition";
 import { OrganizationEntity } from "./organization";
@@ -51,10 +53,14 @@ export type {
 } from "./habits";
 export type {
   Alimento,
+  CheckinRefeicao,
   DietSubstitution,
   ItemRefeicao,
   PlanoAlimentar,
   Refeicao,
+  StatusCheckinRefeicao,
+  SubstituicaoItemRefeicao,
+  UnidadeMedidaDieta,
   VariacaoDieta,
 } from "./nutrition";
 export type { Organization } from "./organization";
@@ -67,6 +73,7 @@ export {
   BiometricMeasurementEntity,
   CheckinHidratacaoEntity,
   CheckinIntestinalEntity,
+  CheckinRefeicaoEntity,
   CheckInSonoEntity,
   DietSubstitutionEntity,
   DocumentTemplateEntity,
@@ -83,13 +90,14 @@ export {
   ProntuarioPacienteEntity,
   RefeicaoEntity,
   RegistroGlicemiaEntity,
+  SubstituicaoItemRefeicaoEntity,
   UserEntity,
   VariacaoDietaEntity,
   WorkoutLogEntity,
 };
 
 /**
- * Todas as entidades registradas no DataSource (Lotes 1 a 4).
+ * Todas as entidades registradas no DataSource (Lotes 1 a 5).
  */
 export const entities = [
   OrganizationEntity,
@@ -110,7 +118,9 @@ export const entities = [
   VariacaoDietaEntity,
   RefeicaoEntity,
   ItemRefeicaoEntity,
+  SubstituicaoItemRefeicaoEntity,
   DietSubstitutionEntity,
+  CheckinRefeicaoEntity,
   FoodEntity,
   CheckinIntestinalEntity,
   CheckinHidratacaoEntity,

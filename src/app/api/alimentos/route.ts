@@ -2,8 +2,11 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { Raw } from "typeorm";
+import { z } from "zod";
 import { getRepository } from "@/lib/db/data-source";
 import { AlimentoEntity } from "@/lib/db/entities";
+import { getSessao } from "@/lib/auth-session";
+import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 
 /**
  * GET /api/alimentos?q=termo
@@ -121,6 +124,134 @@ export async function GET(req: NextRequest) {
     console.error("Erro na busca de alimentos:", error);
     return NextResponse.json(
       { error: "Erro interno ao buscar banco de alimentos." },
+      { status: 500 },
+    );
+  }
+}
+
+const createAlimentoSchema = z.object({
+  nome: z
+    .string()
+    .trim()
+    .min(2, "Informe o nome do alimento ou suplemento (mín. 2 caracteres).")
+    .max(200, "O nome deve ter no máximo 200 caracteres."),
+  categoria: z.string().trim().max(100).optional().default("Suplementos"),
+  porcaoBase: z.coerce.number().positive("Porção base deve ser maior que zero.").max(5000).optional().default(100),
+  calorias: z.coerce.number().min(0, "Calorias não podem ser negativas.").max(10000),
+  proteinas: z.coerce.number().min(0).max(1000).optional().default(0),
+  carboidratos: z.coerce.number().min(0).max(1000).optional().default(0),
+  gorduras: z.coerce.number().min(0).max(1000).optional().default(0),
+  fibras: z.coerce.number().min(0).max(1000).optional().default(0),
+  fonte: z.string().trim().max(50).optional().default("CLINICA"),
+});
+
+/**
+ * POST /api/alimentos
+ * Cadastro rápido de suplementos e alimentos próprios fora da TACO (restrito à equipe clínica).
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const sessao = await getSessao();
+    if (!sessao) {
+      return NextResponse.json(
+        { error: "Não autenticado. Faça login para cadastrar alimentos." },
+        { status: 401 },
+      );
+    }
+
+    if (!podeAcessarDadosClinicos(sessao.cargo)) {
+      return NextResponse.json(
+        {
+          error:
+            "Acesso negado. Apenas profissionais clínicos podem cadastrar alimentos ou suplementos.",
+        },
+        { status: 403 },
+      );
+    }
+
+    const body = await req.json();
+    const parsed = createAlimentoSchema.safeParse(body);
+
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0]?.message || "Dados inválidos.";
+      return NextResponse.json(
+        { error: firstIssue, issues: parsed.error.flatten() },
+        { status: 400 },
+      );
+    }
+
+    const data = parsed.data;
+    const nomeLimpo = data.nome.replace(/\s+/g, " ").trim();
+    const normNovo = normalizeSearchText(nomeLimpo);
+
+    const alimentoRepo = await getRepository(AlimentoEntity);
+
+    // Verifica duplicata exata (case/accent-insensitive) para evitar erro ORA-00001
+    const existente = await alimentoRepo.findOne({
+      where: {
+        nome: Raw(
+          (alias) => `${oracleNormalizedExpr(alias)} = :norm`,
+          { norm: normNovo },
+        ),
+      },
+      select: ALIMENTO_SELECT,
+    });
+
+    if (existente) {
+      return NextResponse.json(
+        {
+          error: `Já existe um item cadastrado com nome equivalente: "${existente.nome}".`,
+          alimentoExistente: existente,
+        },
+        { status: 409 },
+      );
+    }
+
+    const criado = await alimentoRepo.save(
+      alimentoRepo.create({
+        nome: nomeLimpo,
+        categoria: data.categoria || "Suplementos",
+        porcaoBase: Math.round(data.porcaoBase * 100) / 100,
+        calorias: Math.round(data.calorias * 10) / 10,
+        proteinas: Math.round(data.proteinas * 10) / 10,
+        carboidratos: Math.round(data.carboidratos * 10) / 10,
+        gorduras: Math.round(data.gorduras * 10) / 10,
+        fibras: Math.round(data.fibras * 10) / 10,
+        fonte: data.fonte || "CLINICA",
+        thumbnailUrl: null,
+      }),
+    );
+
+    return NextResponse.json(
+      {
+        sucesso: true,
+        alimento: {
+          id: criado.id,
+          nome: criado.nome,
+          porcaoBase: criado.porcaoBase,
+          calorias: criado.calorias,
+          proteinas: criado.proteinas,
+          carboidratos: criado.carboidratos,
+          gorduras: criado.gorduras,
+          fibras: criado.fibras,
+          categoria: criado.categoria,
+          fonte: criado.fonte,
+          thumbnailUrl: criado.thumbnailUrl ?? null,
+        },
+      },
+      { status: 201 },
+    );
+  } catch (error: unknown) {
+    console.error("[POST /api/alimentos] Erro:", error);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("ORA-00001") || msg.includes("UQ_ALIMENTOS_NOME")) {
+      return NextResponse.json(
+        { error: "Já existe um alimento cadastrado com esse nome." },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Erro interno ao cadastrar alimento/suplemento." },
       { status: 500 },
     );
   }

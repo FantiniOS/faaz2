@@ -74,10 +74,8 @@ export async function POST(req: NextRequest) {
           cpf: paciente.cpf,
           metaDiariaMl: paciente.metaDiariaMl || 2500,
           recordCode: paciente.recordCode,
-          medicoResponsavel:
-            paciente.primaryDoctor?.fullName || "Dr. Carlos Fantini",
-          especialidadeMedico:
-            paciente.primaryDoctor?.specialty || "Endocrinologia & Nutrologia",
+          medicoResponsavel: paciente.primaryDoctor?.fullName || null,
+          especialidadeMedico: paciente.primaryDoctor?.specialty || null,
           focoClinico:
             paciente.treatmentObjective ||
             paciente.clinicalFocus ||

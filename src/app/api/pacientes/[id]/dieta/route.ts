@@ -9,7 +9,10 @@ import {
   PatientEntity,
   PlanoAlimentarEntity,
   RefeicaoEntity,
+  SubstituicaoItemRefeicaoEntity,
   VariacaoDietaEntity,
+  type SubstituicaoItemRefeicao,
+  type UnidadeMedidaDieta,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
@@ -19,11 +22,46 @@ interface RouteParams {
 }
 
 const REFEICOES_BASE = [
-  { nome: "Desjejum / Café da Manhã", horario: "07:30", ordem: 1 },
-  { nome: "Almoço", horario: "12:30", ordem: 2 },
-  { nome: "Lanche da Tarde", horario: "16:00", ordem: 3 },
-  { nome: "Jantar", horario: "19:30", ordem: 4 },
+  { nome: "Desjejum / Café da Manhã", horario: "07:30", ordem: 1, opcional: false },
+  { nome: "Almoço", horario: "12:30", ordem: 2, opcional: false },
+  { nome: "Lanche da Tarde", horario: "16:00", ordem: 3, opcional: false },
+  { nome: "Jantar", horario: "19:30", ordem: 4, opcional: false },
 ];
+
+function normalizarUnidade(val?: unknown): UnidadeMedidaDieta {
+  if (val === "ml" || val === "un") return val;
+  return "g";
+}
+
+function formatarSubstituicaoPrescrita(sub: SubstituicaoItemRefeicao) {
+  const alim = sub.alimento;
+  const qtd = Number(sub.quantidade) || 0;
+  const base = Number(alim?.porcaoBase) || 100;
+  const fator = base > 0 ? qtd / base : qtd / 100;
+
+  return {
+    id: sub.id,
+    itemRefeicaoId: sub.itemRefeicaoId,
+    alimentoId: sub.alimentoId ?? null,
+    nomeExibicao: sub.nomeExibicao,
+    quantidade: qtd,
+    unidade: normalizarUnidade(sub.unidade),
+    medidaCaseira: sub.medidaCaseira ?? null,
+    ordem: sub.ordem ?? 1,
+    thumbnailUrl: alim?.thumbnailUrl ?? null,
+    categoria: alim?.categoria ?? null,
+    caloriasPorcao: alim ? Math.round((Number(alim.calorias) || 0) * fator) : null,
+    proteinasPorcao: alim
+      ? parseFloat(((Number(alim.proteinas) || 0) * fator).toFixed(1))
+      : null,
+    carboidratosPorcao: alim
+      ? parseFloat(((Number(alim.carboidratos) || 0) * fator).toFixed(1))
+      : null,
+    gordurasPorcao: alim
+      ? parseFloat(((Number(alim.gorduras) || 0) * fator).toFixed(1))
+      : null,
+  };
+}
 
 async function carregarPlanoCompleto(pacienteId: string) {
   const planoRepo = await getRepository(PlanoAlimentarEntity);
@@ -34,6 +72,9 @@ async function carregarPlanoCompleto(pacienteId: string) {
         refeicoes: {
           itens: {
             alimento: true,
+            substituicoesPrescritas: {
+              alimento: true,
+            },
             substituicoes: {
               substituteFood: true,
             },
@@ -46,7 +87,8 @@ async function carregarPlanoCompleto(pacienteId: string) {
 
 /**
  * GET /api/pacientes/[id]/dieta
- * Retorna o plano alimentar ativo com todas as Variações de Cardápio e suas Refeições.
+ * Retorna o plano alimentar ativo com Variações, Refeições (opcional/observacoes),
+ * Itens (unidade/medidaCaseira) e Substituições prescritas 1:N com thumbnailUrl.
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
@@ -124,6 +166,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                 nome: ref.nome,
                 horario: ref.horario,
                 ordem: ref.ordem,
+                opcional: ref.opcional,
               }),
             );
           }
@@ -133,21 +176,47 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       plano = await carregarPlanoCompleto(id);
     }
 
-    if (!plano) {
-      return NextResponse.json(
-        { error: "Erro ao inicializar plano alimentar." },
-        { status: 500 },
-      );
+    if (plano && (!plano.variacoes || plano.variacoes.length === 0)) {
+      await withTransaction(async (manager) => {
+        const variacaoRepo = manager.getRepository(VariacaoDietaEntity);
+        const refeicaoRepo = manager.getRepository(RefeicaoEntity);
+
+        const variacao = await variacaoRepo.save(
+          variacaoRepo.create({
+            planoAlimentarId: plano!.id,
+            nome: "Opção 1 (Padrão)",
+            descricao: "Cardápio principal",
+            ordem: 1,
+            ativo: true,
+          }),
+        );
+
+        for (const ref of REFEICOES_BASE) {
+          await refeicaoRepo.save(
+            refeicaoRepo.create({
+              variacaoDietaId: variacao.id,
+              nome: ref.nome,
+              horario: ref.horario,
+              ordem: ref.ordem,
+              opcional: ref.opcional,
+            }),
+          );
+        }
+      });
+
+      plano = await carregarPlanoCompleto(id);
     }
 
-    const variacoesOrdenadas = [...(plano.variacoes || [])].sort(
-      (a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() ||
-        a.ordem - b.ordem ||
-        a.id.localeCompare(b.id),
-    );
+    const variacoesAtivas = (plano?.variacoes || [])
+      .filter((v) => v.ativo !== false)
+      .sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() ||
+          a.ordem - b.ordem ||
+          a.id.localeCompare(b.id),
+      );
 
-    const variacoesComTotais = variacoesOrdenadas.map((variacao) => {
+    const variacoesComTotais = variacoesAtivas.map((variacao) => {
       let totalCalorias = 0;
       let totalProteinas = 0;
       let totalCarboidratos = 0;
@@ -155,7 +224,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       let totalFibras = 0;
 
       const refeicoesOrdenadas = [...(variacao.refeicoes || [])].sort(
-        (a, b) => a.ordem - b.ordem,
+        (a, b) =>
+          a.ordem - b.ordem ||
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
       );
 
       const refeicoesComTotais = refeicoesOrdenadas.map((refeicao) => {
@@ -172,9 +243,6 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
         const itensFormatados = itensOrdenados.map((item) => {
           const alimento = item.alimento;
-          const qtd = Number(item.quantidadeGramas) || 0;
-          const fator = qtd > 0 ? qtd / 100 : 1;
-
           const basePortion = Number(alimento?.porcaoBase) || 100;
           const baseKcal = Number(alimento?.calorias) || 0;
           const baseProt = Number(alimento?.proteinas) || 0;
@@ -182,11 +250,15 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           const baseFat = Number(alimento?.gorduras) || 0;
           const baseFib = Number(alimento?.fibras) || 0;
 
+          const fator =
+            basePortion > 0
+              ? item.quantidadeGramas / basePortion
+              : item.quantidadeGramas / 100;
           const cal = Math.round(baseKcal * fator);
-          const prot = parseFloat(((baseProt / 100) * qtd).toFixed(1));
-          const carb = parseFloat(((baseCarb / 100) * qtd).toFixed(1));
-          const fat = parseFloat(((baseFat / 100) * qtd).toFixed(1));
-          const fib = parseFloat(((baseFib / 100) * qtd).toFixed(1));
+          const prot = parseFloat((baseProt * fator).toFixed(1));
+          const carb = parseFloat((baseCarb * fator).toFixed(1));
+          const fat = parseFloat((baseFat * fator).toFixed(1));
+          const fib = parseFloat((baseFib * fator).toFixed(1));
 
           mealCal += cal;
           mealProt += prot;
@@ -194,21 +266,35 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           mealFat += fat;
           mealFib += fib;
 
-          const subsOrdenadas = [...(item.substituicoes || [])].sort(
+          // Substituições 1:N prescritas pela médica (SUBSTITUICOES_ITENS_REFEICAO)
+          const subsPrescritas = [...(item.substituicoesPrescritas || [])]
+            .sort(
+              (a, b) =>
+                a.ordem - b.ordem ||
+                new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+            )
+            .map(formatarSubstituicaoPrescrita);
+
+          // Substituições legadas registradas pelo paciente (DIET_SUBSTITUTIONS)
+          const subsPacienteOrdenadas = [...(item.substituicoes || [])].sort(
             (a, b) =>
               new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
           );
-          const subRecente = subsOrdenadas[0] || null;
+          const subRecente = subsPacienteOrdenadas[0] || null;
 
           return {
             id: item.id,
+            alimentoId: item.alimentoId,
             quantidadeGramas: item.quantidadeGramas,
+            unidade: normalizarUnidade(item.unidade),
+            medidaCaseira: item.medidaCaseira ?? null,
             observacao: item.observacao,
             alimento: {
               ...alimento,
               id: alimento?.id || "",
               nome: alimento?.nome || "Alimento",
               categoria: alimento?.categoria || "Geral",
+              thumbnailUrl: alimento?.thumbnailUrl ?? null,
               porcaoBase: basePortion,
               calorias: baseKcal,
               proteinas: baseProt,
@@ -229,14 +315,15 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
               gordurasPorcao: fat,
               fibrasPorcao: fib,
             },
-            substituicoes: subsOrdenadas,
+            substituicoes: subsPrescritas,
             substituicao: subRecente
               ? {
                   id: subRecente.id,
                   prescribedDietItemId: subRecente.prescribedDietItemId,
                   substituteFoodId: subRecente.substituteFoodId,
                   substituteFoodName: subRecente.substituteFoodName,
-                  substituteThumbnailUrl: subRecente.substituteFood?.thumbnailUrl ?? null,
+                  substituteThumbnailUrl:
+                    subRecente.substituteFood?.thumbnailUrl ?? null,
                   quantityGrams: subRecente.quantityGrams,
                   calories: subRecente.calories,
                   proteins: subRecente.proteins,
@@ -245,6 +332,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                   createdAt: subRecente.createdAt,
                 }
               : null,
+            substituicoesPaciente: subsPacienteOrdenadas,
           };
         });
 
@@ -261,7 +349,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           nome: refeicao.nome,
           horario: refeicao.horario,
           ordem: refeicao.ordem,
-          observacoes: refeicao.observacoes,
+          opcional: Boolean(refeicao.opcional),
+          observacoes: refeicao.observacoes ?? null,
           pontos: roundMealCal,
           calorias: roundMealCal,
           totais: {
@@ -283,6 +372,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         nome: variacao.nome,
         descricao: variacao.descricao,
         ordem: variacao.ordem,
+        ativo: variacao.ativo !== false,
         pontos: roundTotalCal,
         calorias: roundTotalCal,
         totais: {
@@ -297,23 +387,30 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       };
     });
 
-    return NextResponse.json({
-      sucesso: true,
-      temPlano: true,
-      paciente: {
-        id: paciente.id,
-        nome: paciente.fullName,
-        medico: paciente.primaryDoctor?.fullName || "Dr. Carlos Fantini",
-        especialidade:
-          paciente.primaryDoctor?.specialty || "Endocrinologia & Nutrologia",
+    return NextResponse.json(
+      {
+        sucesso: true,
+        temPlano: true,
+        paciente: {
+          id: paciente.id,
+          nome: paciente.fullName,
+          medico: paciente.primaryDoctor?.fullName || null,
+          especialidade: paciente.primaryDoctor?.specialty || null,
+        },
+        plano: {
+          ...plano,
+          nome: plano?.titulo,
+          titulo: plano?.titulo,
+          variacoes: variacoesComTotais,
+        },
       },
-      plano: {
-        ...plano,
-        nome: plano.titulo,
-        titulo: plano.titulo,
-        variacoes: variacoesComTotais,
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          Pragma: "no-cache",
+        },
       },
-    });
+    );
   } catch (error) {
     console.error("Erro ao carregar dieta:", error);
     return NextResponse.json(
@@ -325,6 +422,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
 /**
  * POST /api/pacientes/[id]/dieta
+ * Ações: criar_variacao | criar_refeicao | adicionar_item | adicionar_substituicao_prescrita | substituir_item
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
@@ -362,6 +460,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         const variacaoRepo = manager.getRepository(VariacaoDietaEntity);
         const refeicaoRepo = manager.getRepository(RefeicaoEntity);
         const itemRepo = manager.getRepository(ItemRefeicaoEntity);
+        const subPrescRepo = manager.getRepository(SubstituicaoItemRefeicaoEntity);
 
         const existentes = await variacaoRepo.find({
           where: { planoAlimentarId },
@@ -386,29 +485,54 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         if (clonarDeVariacaoId) {
           const varOrigem = await variacaoRepo.findOne({
             where: { id: clonarDeVariacaoId },
-            relations: { refeicoes: { itens: true } },
+            relations: {
+              refeicoes: {
+                itens: {
+                  substituicoesPrescritas: true,
+                },
+              },
+            },
           });
 
           if (varOrigem && varOrigem.refeicoes && varOrigem.refeicoes.length > 0) {
-            for (const ref of varOrigem.refeicoes) {
+            const refsOrig = [...varOrigem.refeicoes].sort(
+              (a, b) => a.ordem - b.ordem,
+            );
+            for (const ref of refsOrig) {
               const novaRef = await refeicaoRepo.save(
                 refeicaoRepo.create({
                   variacaoDietaId: criada.id,
                   nome: ref.nome,
                   horario: ref.horario,
                   ordem: ref.ordem,
+                  opcional: Boolean(ref.opcional),
                   observacoes: ref.observacoes,
                 }),
               );
               for (const it of ref.itens || []) {
-                await itemRepo.save(
+                const novoIt = await itemRepo.save(
                   itemRepo.create({
                     refeicaoId: novaRef.id,
                     alimentoId: it.alimentoId,
                     quantidadeGramas: it.quantidadeGramas,
+                    unidade: normalizarUnidade(it.unidade),
+                    medidaCaseira: it.medidaCaseira ?? null,
                     observacao: it.observacao,
                   }),
                 );
+                for (const sp of it.substituicoesPrescritas || []) {
+                  await subPrescRepo.save(
+                    subPrescRepo.create({
+                      itemRefeicaoId: novoIt.id,
+                      alimentoId: sp.alimentoId,
+                      nomeExibicao: sp.nomeExibicao,
+                      quantidade: sp.quantidade,
+                      unidade: normalizarUnidade(sp.unidade),
+                      medidaCaseira: sp.medidaCaseira,
+                      ordem: sp.ordem,
+                    }),
+                  );
+                }
               }
             }
           } else {
@@ -419,6 +543,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
                   nome: ref.nome,
                   horario: ref.horario,
                   ordem: ref.ordem,
+                  opcional: ref.opcional,
                 }),
               );
             }
@@ -431,21 +556,44 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
                 nome: ref.nome,
                 horario: ref.horario,
                 ordem: ref.ordem,
+                opcional: ref.opcional,
               }),
             );
           }
         }
 
-        return variacaoRepo.findOne({
+        const carregada = await variacaoRepo.findOne({
           where: { id: criada.id },
           relations: {
             refeicoes: {
               itens: {
                 alimento: true,
+                substituicoesPrescritas: { alimento: true },
               },
             },
           },
         });
+
+        if (!carregada) return null;
+
+        return {
+          ...carregada,
+          refeicoes: [...(carregada.refeicoes || [])]
+            .sort((a, b) => a.ordem - b.ordem)
+            .map((r) => ({
+              ...r,
+              opcional: Boolean(r.opcional),
+              observacoes: r.observacoes ?? null,
+              itens: (r.itens || []).map((it) => ({
+                ...it,
+                unidade: normalizarUnidade(it.unidade),
+                medidaCaseira: it.medidaCaseira ?? null,
+                substituicoes: (it.substituicoesPrescritas || [])
+                  .sort((a, b) => a.ordem - b.ordem)
+                  .map(formatarSubstituicaoPrescrita),
+              })),
+            })),
+        };
       });
 
       return NextResponse.json({
@@ -454,7 +602,177 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // 2. SUBSTITUIR ITEM (TROCA EFETUADA PELO PACIENTE / MÉDICA)
+    // 1.5 CRIAR NOVA REFEIÇÃO NA VARIAÇÃO
+    if (acao === "criar_refeicao") {
+      const {
+        variacaoDietaId,
+        nome = "Nova Refeição",
+        horario = "15:00",
+        opcional = false,
+        observacoes = null,
+      } = body;
+
+      if (!variacaoDietaId) {
+        return NextResponse.json(
+          { error: "variacaoDietaId é obrigatório." },
+          { status: 400 },
+        );
+      }
+
+      const variacaoRepo = await getRepository(VariacaoDietaEntity);
+      const variacao = await variacaoRepo.findOne({
+        where: {
+          id: variacaoDietaId,
+          planoAlimentar: { pacienteId: id },
+        },
+        relations: { planoAlimentar: true },
+      });
+
+      if (!variacao) {
+        return NextResponse.json(
+          { error: "Variação não encontrada para este paciente." },
+          { status: 404 },
+        );
+      }
+
+      const refeicaoRepo = await getRepository(RefeicaoEntity);
+      const existentes = await refeicaoRepo.find({
+        where: { variacaoDietaId },
+        select: { id: true, ordem: true },
+      });
+      const maxOrdem = existentes.reduce(
+        (max, r) => (r.ordem > max ? r.ordem : max),
+        0,
+      );
+
+      const criada = await refeicaoRepo.save(
+        refeicaoRepo.create({
+          variacaoDietaId,
+          nome: String(nome).trim().slice(0, 100) || "Nova Refeição",
+          horario: horario ? String(horario).trim().slice(0, 10) : null,
+          ordem: maxOrdem + 1,
+          opcional: Boolean(opcional),
+          observacoes: observacoes ? String(observacoes).trim() : null,
+        }),
+      );
+
+      return NextResponse.json(
+        {
+          sucesso: true,
+          refeicao: {
+            id: criada.id,
+            variacaoDietaId: criada.variacaoDietaId,
+            nome: criada.nome,
+            horario: criada.horario,
+            ordem: criada.ordem,
+            opcional: Boolean(criada.opcional),
+            observacoes: criada.observacoes ?? null,
+            itens: [],
+          },
+        },
+        { status: 201 },
+      );
+    }
+
+    // 1.8 ADICIONAR SUBSTITUIÇÃO PRESCRITA (1:N) A UM ITEM DA REFEIÇÃO
+    if (acao === "adicionar_substituicao_prescrita") {
+      const {
+        itemRefeicaoId,
+        alimentoId,
+        nomeExibicao,
+        quantidade = 100,
+        unidade = "g",
+        medidaCaseira = null,
+      } = body;
+
+      if (!itemRefeicaoId) {
+        return NextResponse.json(
+          { error: "itemRefeicaoId é obrigatório." },
+          { status: 400 },
+        );
+      }
+
+      const [itemRepo, alimentoRepo, subPrescRepo] = await Promise.all([
+        getRepository(ItemRefeicaoEntity),
+        getRepository(AlimentoEntity),
+        getRepository(SubstituicaoItemRefeicaoEntity),
+      ]);
+
+      const itemExistente = await itemRepo.findOne({
+        where: {
+          id: itemRefeicaoId,
+          refeicao: { variacaoDieta: { planoAlimentar: { pacienteId: id } } },
+        },
+        relations: { refeicao: { variacaoDieta: { planoAlimentar: true } } },
+      });
+
+      if (!itemExistente) {
+        return NextResponse.json(
+          { error: "Item da refeição não encontrado para este paciente." },
+          { status: 404 },
+        );
+      }
+
+      let resolvedNome =
+        typeof nomeExibicao === "string" ? nomeExibicao.trim() : "";
+      const validAlimentoId =
+        typeof alimentoId === "string" && alimentoId.trim()
+          ? alimentoId.trim()
+          : null;
+
+      if (validAlimentoId && !resolvedNome) {
+        const alimDb = await alimentoRepo.findOne({
+          where: { id: validAlimentoId },
+          select: { id: true, nome: true },
+        });
+        if (alimDb) resolvedNome = alimDb.nome;
+      }
+
+      if (!resolvedNome) {
+        return NextResponse.json(
+          { error: "Informe o alimento substituto ou nome de exibição." },
+          { status: 400 },
+        );
+      }
+
+      const existentes = await subPrescRepo.find({
+        where: { itemRefeicaoId },
+        select: { id: true, ordem: true },
+      });
+      const maxOrdem = existentes.reduce(
+        (max, s) => (s.ordem > max ? s.ordem : max),
+        0,
+      );
+
+      const salva = await subPrescRepo.save(
+        subPrescRepo.create({
+          itemRefeicaoId,
+          alimentoId: validAlimentoId,
+          nomeExibicao: resolvedNome.slice(0, 200),
+          quantidade: Math.max(0, Number(quantidade) || 0),
+          unidade: normalizarUnidade(unidade),
+          medidaCaseira: medidaCaseira
+            ? String(medidaCaseira).trim().slice(0, 120)
+            : null,
+          ordem: maxOrdem + 1,
+        }),
+      );
+
+      const carregada = await subPrescRepo.findOneOrFail({
+        where: { id: salva.id },
+        relations: { alimento: true },
+      });
+
+      return NextResponse.json(
+        {
+          sucesso: true,
+          substituicaoPrescrita: formatarSubstituicaoPrescrita(carregada),
+        },
+        { status: 201 },
+      );
+    }
+
+    // 2. SUBSTITUIR ITEM (TROCA EFETUADA PELO PACIENTE — LEGADO RETROCOMPATÍVEL)
     if (acao === "substituir_item") {
       const {
         prescribedDietItemId,
@@ -534,7 +852,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // 3. ADICIONAR ITEM À REFEIÇÃO
-    const { refeicaoId, alimentoId, quantidadeGramas = 100, observacao } = body;
+    const {
+      refeicaoId,
+      alimentoId,
+      quantidadeGramas = 100,
+      unidade = "g",
+      medidaCaseira = null,
+      observacao,
+    } = body;
 
     if (!refeicaoId || !alimentoId) {
       return NextResponse.json(
@@ -548,7 +873,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       itemRepo.create({
         refeicaoId,
         alimentoId,
-        quantidadeGramas: Number(quantidadeGramas) || 100,
+        quantidadeGramas: Math.max(0, Number(quantidadeGramas) || 100),
+        unidade: normalizarUnidade(unidade),
+        medidaCaseira: medidaCaseira
+          ? String(medidaCaseira).trim().slice(0, 120)
+          : null,
         observacao: observacao ? String(observacao).trim().toUpperCase() : null,
       }),
     );
@@ -567,6 +896,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     const itemFormatado = {
       ...novoItem,
+      unidade: normalizarUnidade(novoItem.unidade),
+      medidaCaseira: novoItem.medidaCaseira ?? null,
+      substituicoes: [],
+      substituicao: null,
       alimento: {
         ...alim,
         porcaoBase: basePortion,
@@ -600,7 +933,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
 /**
  * PUT / PATCH /api/pacientes/[id]/dieta
- * Atualiza o nome/título do Plano Alimentar, dados de uma variação ou item da refeição
+ * Atualiza plano, variação, refeição, item ou substituição prescrita 1:N.
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
@@ -617,11 +950,15 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     const body = await req.json();
     const acao =
       body.acao ||
-      (body.itemId
-        ? "atualizar_item"
-        : body.variacaoId
-          ? "atualizar_variacao"
-          : "atualizar_plano");
+      (body.substituicaoPrescritaId
+        ? "atualizar_substituicao_prescrita"
+        : body.itemId
+          ? "atualizar_item"
+          : body.refeicaoId
+            ? "atualizar_refeicao"
+            : body.variacaoId
+              ? "atualizar_variacao"
+              : "atualizar_plano");
 
     if (acao === "atualizar_plano") {
       const { planoId, nome, titulo, objetivo } = body;
@@ -716,7 +1053,144 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ sucesso: true, variacao: varAtualizada });
     }
 
-    const { itemId, quantidadeGramas, observacao } = body;
+    if (acao === "atualizar_refeicao") {
+      const { refeicaoId, nome, horario, opcional, observacoes, ordem } = body;
+      if (!refeicaoId) {
+        return NextResponse.json(
+          { error: "refeicaoId obrigatório." },
+          { status: 400 },
+        );
+      }
+
+      const refeicaoRepo = await getRepository(RefeicaoEntity);
+      const existingRef = await refeicaoRepo.findOne({
+        where: {
+          id: refeicaoId,
+          variacaoDieta: { planoAlimentar: { pacienteId: id } },
+        },
+        relations: { variacaoDieta: { planoAlimentar: true } },
+      });
+
+      if (!existingRef) {
+        return NextResponse.json(
+          { error: "Refeição não encontrada para este paciente." },
+          { status: 404 },
+        );
+      }
+
+      if (nome !== undefined) {
+        const trimmed = String(nome).trim();
+        if (!trimmed) {
+          return NextResponse.json(
+            { error: "O nome da refeição não pode ficar vazio." },
+            { status: 400 },
+          );
+        }
+        existingRef.nome = trimmed.slice(0, 100);
+      }
+      if (horario !== undefined) {
+        existingRef.horario = horario
+          ? String(horario).trim().slice(0, 10)
+          : null;
+      }
+      if (opcional !== undefined) {
+        existingRef.opcional = Boolean(opcional);
+      }
+      if (observacoes !== undefined) {
+        existingRef.observacoes = observacoes
+          ? String(observacoes).trim()
+          : null;
+      }
+      if (ordem !== undefined && Number.isFinite(Number(ordem))) {
+        existingRef.ordem = Math.max(1, Math.round(Number(ordem)));
+      }
+
+      const atualizada = await refeicaoRepo.save(existingRef);
+
+      return NextResponse.json({
+        sucesso: true,
+        refeicao: {
+          id: atualizada.id,
+          nome: atualizada.nome,
+          horario: atualizada.horario,
+          ordem: atualizada.ordem,
+          opcional: Boolean(atualizada.opcional),
+          observacoes: atualizada.observacoes ?? null,
+        },
+      });
+    }
+
+    if (acao === "atualizar_substituicao_prescrita") {
+      const {
+        substituicaoPrescritaId,
+        nomeExibicao,
+        quantidade,
+        unidade,
+        medidaCaseira,
+        ordem,
+      } = body;
+
+      if (!substituicaoPrescritaId) {
+        return NextResponse.json(
+          { error: "substituicaoPrescritaId obrigatório." },
+          { status: 400 },
+        );
+      }
+
+      const subPrescRepo = await getRepository(SubstituicaoItemRefeicaoEntity);
+      const existingSub = await subPrescRepo.findOne({
+        where: {
+          id: substituicaoPrescritaId,
+          itemRefeicao: {
+            refeicao: { variacaoDieta: { planoAlimentar: { pacienteId: id } } },
+          },
+        },
+        relations: {
+          alimento: true,
+          itemRefeicao: {
+            refeicao: { variacaoDieta: { planoAlimentar: true } },
+          },
+        },
+      });
+
+      if (!existingSub) {
+        return NextResponse.json(
+          { error: "Substituição prescrita não encontrada." },
+          { status: 404 },
+        );
+      }
+
+      if (nomeExibicao !== undefined && String(nomeExibicao).trim()) {
+        existingSub.nomeExibicao = String(nomeExibicao).trim().slice(0, 200);
+      }
+      if (quantidade !== undefined) {
+        existingSub.quantidade = Math.max(0, Number(quantidade) || 0);
+      }
+      if (unidade !== undefined) {
+        existingSub.unidade = normalizarUnidade(unidade);
+      }
+      if (medidaCaseira !== undefined) {
+        existingSub.medidaCaseira = medidaCaseira
+          ? String(medidaCaseira).trim().slice(0, 120)
+          : null;
+      }
+      if (ordem !== undefined && Number.isFinite(Number(ordem))) {
+        existingSub.ordem = Math.max(1, Math.round(Number(ordem)));
+      }
+
+      const saved = await subPrescRepo.save(existingSub);
+      const reloaded = await subPrescRepo.findOneOrFail({
+        where: { id: saved.id },
+        relations: { alimento: true },
+      });
+
+      return NextResponse.json({
+        sucesso: true,
+        substituicaoPrescrita: formatarSubstituicaoPrescrita(reloaded),
+      });
+    }
+
+    const { itemId, quantidadeGramas, unidade, medidaCaseira, observacao } = body;
     if (!itemId) {
       return NextResponse.json(
         { error: "itemId obrigatório." },
@@ -731,6 +1205,14 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         ...(quantidadeGramas !== undefined && {
           quantidadeGramas: Math.max(0, Number(quantidadeGramas)),
         }),
+        ...(unidade !== undefined && {
+          unidade: normalizarUnidade(unidade),
+        }),
+        ...(medidaCaseira !== undefined && {
+          medidaCaseira: medidaCaseira
+            ? String(medidaCaseira).trim().slice(0, 120)
+            : null,
+        }),
         ...(observacao !== undefined && {
           observacao: observacao ? String(observacao).trim().toUpperCase() : null,
         }),
@@ -739,12 +1221,24 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
 
     const itemAtualizado = await itemRepo.findOne({
       where: { id: itemId },
-      relations: { alimento: true },
+      relations: {
+        alimento: true,
+        substituicoesPrescritas: { alimento: true },
+      },
     });
 
     return NextResponse.json({
       sucesso: true,
-      item: itemAtualizado,
+      item: itemAtualizado
+        ? {
+            ...itemAtualizado,
+            unidade: normalizarUnidade(itemAtualizado.unidade),
+            medidaCaseira: itemAtualizado.medidaCaseira ?? null,
+            substituicoes: (itemAtualizado.substituicoesPrescritas || [])
+              .sort((a, b) => a.ordem - b.ordem)
+              .map(formatarSubstituicaoPrescrita),
+          }
+        : null,
     });
   } catch (error) {
     console.error("Erro no PUT dieta:", error);
@@ -760,7 +1254,7 @@ export async function PATCH(req: NextRequest, context: RouteParams) {
 }
 
 /**
- * DELETE /api/pacientes/[id]/dieta?itemId=... OU ?variacaoId=...
+ * DELETE /api/pacientes/[id]/dieta?itemId=... | ?variacaoId=... | ?refeicaoId=... | ?substituicaoPrescritaId=...
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
@@ -777,6 +1271,62 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     const { searchParams } = new URL(req.url);
     const itemId = searchParams.get("itemId");
     const variacaoId = searchParams.get("variacaoId");
+    const refeicaoId = searchParams.get("refeicaoId");
+    const substituicaoPrescritaId = searchParams.get("substituicaoPrescritaId");
+
+    if (substituicaoPrescritaId) {
+      const subPrescRepo = await getRepository(SubstituicaoItemRefeicaoEntity);
+      const sub = await subPrescRepo.findOne({
+        where: {
+          id: substituicaoPrescritaId,
+          itemRefeicao: {
+            refeicao: { variacaoDieta: { planoAlimentar: { pacienteId: id } } },
+          },
+        },
+        relations: {
+          itemRefeicao: {
+            refeicao: { variacaoDieta: { planoAlimentar: true } },
+          },
+        },
+      });
+
+      if (!sub) {
+        return NextResponse.json(
+          { error: "Substituição prescrita não encontrada." },
+          { status: 404 },
+        );
+      }
+
+      await subPrescRepo.delete({ id: sub.id });
+      return NextResponse.json({
+        sucesso: true,
+        removidaSubstituicaoId: sub.id,
+      });
+    }
+
+    if (refeicaoId) {
+      const refeicaoRepo = await getRepository(RefeicaoEntity);
+      const refeicao = await refeicaoRepo.findOne({
+        where: {
+          id: refeicaoId,
+          variacaoDieta: { planoAlimentar: { pacienteId: id } },
+        },
+        relations: { variacaoDieta: { planoAlimentar: true } },
+      });
+
+      if (!refeicao) {
+        return NextResponse.json(
+          { error: "Refeição não encontrada para este paciente." },
+          { status: 404 },
+        );
+      }
+
+      await refeicaoRepo.delete({ id: refeicao.id });
+      return NextResponse.json({
+        sucesso: true,
+        removidaRefeicaoId: refeicao.id,
+      });
+    }
 
     if (variacaoId) {
       const variacaoRepo = await getRepository(VariacaoDietaEntity);
@@ -820,13 +1370,16 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     }
 
     return NextResponse.json(
-      { error: "itemId ou variacaoId são obrigatórios." },
+      {
+        error:
+          "itemId, variacaoId, refeicaoId ou substituicaoPrescritaId é obrigatório.",
+      },
       { status: 400 },
     );
   } catch (error) {
     console.error("Erro no DELETE dieta:", error);
     return NextResponse.json(
-      { error: "Erro ao remover item/variação." },
+      { error: "Erro ao remover registro da dieta." },
       { status: 500 },
     );
   }

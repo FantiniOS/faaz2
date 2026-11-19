@@ -7,8 +7,6 @@ import {
   Trash2,
   Clock,
   Flame,
-  Scale,
-  Sparkles,
   Save,
   CheckCircle2,
   Loader2,
@@ -18,15 +16,39 @@ import {
   Sun,
   Moon,
   Cookie,
-  Copy,
   Layers,
   Edit3,
   RefreshCw,
   RotateCcw,
+  ArrowLeftRight,
+  MessageSquareText,
+  X,
 } from "lucide-react";
-import { AlimentoCombobox, AlimentoOption } from "@/components/AlimentoCombobox";
+import {
+  AlimentoCombobox,
+  AlimentoOption,
+  AlimentoAddExtra,
+  UnidadeMedidaOption,
+} from "@/components/AlimentoCombobox";
 import { FoodThumbnail } from "@/components/FoodThumbnail";
 import { DietVariations } from "@/components/DietVariations";
+
+export interface SubstituicaoPrescritaState {
+  id: string;
+  itemRefeicaoId: string;
+  alimentoId?: string | null;
+  nomeExibicao: string;
+  quantidade: number;
+  unidade: UnidadeMedidaOption;
+  medidaCaseira?: string | null;
+  ordem: number;
+  thumbnailUrl?: string | null;
+  categoria?: string | null;
+  caloriasPorcao?: number | null;
+  proteinasPorcao?: number | null;
+  carboidratosPorcao?: number | null;
+  gordurasPorcao?: number | null;
+}
 
 export interface DietSubstitutionState {
   id: string;
@@ -47,9 +69,13 @@ export interface ItemRefeicaoState {
   id: string;
   alimentoId: string;
   quantidadeGramas: number;
+  unidade?: UnidadeMedidaOption;
+  medidaCaseira?: string | null;
   observacao?: string | null;
   alimento: AlimentoOption;
-  substituicoes?: DietSubstitutionState[];
+  /** Substituições 1:N prescritas pela médica (SUBSTITUICOES_ITENS_REFEICAO) */
+  substituicoes?: SubstituicaoPrescritaState[];
+  /** Substituição legada registrada pelo paciente (DIET_SUBSTITUTIONS) */
   substituicao?: DietSubstitutionState | null;
 }
 
@@ -58,6 +84,7 @@ export interface RefeicaoState {
   nome: string;
   horario?: string | null;
   ordem: number;
+  opcional?: boolean;
   observacoes?: string | null;
   itens: ItemRefeicaoState[];
 }
@@ -85,6 +112,14 @@ interface DietaTabProps {
   pacienteNome: string;
 }
 
+const PRESETS_NOVA_REFEICAO = [
+  { nome: "Água + Suplemento", horario: "07:45", opcional: false },
+  { nome: "Colação / Lanche Manhã", horario: "10:00", opcional: false },
+  { nome: "Sobremesa", horario: "12:30", opcional: false },
+  { nome: "Pré-Treino", horario: "17:00", opcional: false },
+  { nome: "Ceia", horario: "21:30", opcional: true },
+];
+
 function getRefeicaoIcon(nome: string) {
   const n = nome.toLowerCase();
   if (n.includes("desjejum") || n.includes("manhã") || n.includes("café")) {
@@ -96,60 +131,65 @@ function getRefeicaoIcon(nome: string) {
   if (n.includes("jantar") || n.includes("noite")) {
     return <Moon className="w-4 h-4 text-indigo-500" />;
   }
-  if (n.includes("ceia")) {
+  if (n.includes("ceia") || n.includes("sobremesa")) {
     return <Cookie className="w-4 h-4 text-purple-500" />;
   }
   return <Apple className="w-4 h-4 text-emerald-600" />;
 }
 
 /**
- * Extrai valores base de nutrientes por porção de 100g com suporte universal
- * aos nomes em português (proteinas, carboidratos, gorduras, calorias)
- * e em inglês da Tabela TACO / Prisma (protein/proteins, carbohydrate/carbohydrates, lipid/lipids/fats, calories).
+ * Extrai valores base de nutrientes por porção base (100g/ml) com suporte universal
+ * aos nomes em português e inglês da Tabela TACO.
  */
-export function getAlimentoBaseNutrientes(alimento?: any) {
+export function getAlimentoBaseNutrientes(alimento?: Partial<AlimentoOption> | null) {
   if (!alimento) {
     return { porcaoBase: 100, kcal: 0, protein: 0, carbo: 0, fat: 0, fibers: 0 };
   }
-  const porcaoBase = Number(alimento.porcaoBase ?? alimento.basePortion) || 100;
+  const alimAny = alimento as Record<string, unknown>;
+  const porcaoBase = Number(alimento.porcaoBase ?? alimAny.basePortion) || 100;
 
-  // Calorias base
-  const kcal = Number(
-    alimento.caloriasBase ?? alimento.calorias ?? alimento.calories ?? alimento.energyKcal
-  ) || 0;
+  const kcal =
+    Number(
+      alimento.caloriasBase ??
+        alimento.calorias ??
+        alimento.calories ??
+        alimAny.energyKcal
+    ) || 0;
 
-  // Proteínas (proteinas, protein, proteins)
-  const protein = Number(
-    alimento.proteinas ?? alimento.protein ?? alimento.proteins
-  ) || 0;
+  const protein =
+    Number(alimento.proteinas ?? alimento.protein ?? alimento.proteins) || 0;
 
-  // Carboidratos (carboidratos, carbohydrate, carbohydrates, carbs)
-  const carbo = Number(
-    alimento.carboidratos ?? alimento.carbohydrate ?? alimento.carbohydrates ?? alimento.carbs
-  ) || 0;
+  const carbo =
+    Number(
+      alimento.carboidratos ??
+        alimento.carbohydrate ??
+        alimento.carbohydrates ??
+        alimAny.carbs
+    ) || 0;
 
-  // Gorduras / Lipídeos (gorduras, lipid, lipids, fats, fat)
-  const fat = Number(
-    alimento.gorduras ?? alimento.lipid ?? alimento.lipids ?? alimento.fats ?? alimento.fat
-  ) || 0;
+  const fat =
+    Number(
+      alimento.gorduras ??
+        alimento.lipid ??
+        alimento.lipids ??
+        alimento.fats ??
+        alimAny.fat
+    ) || 0;
 
-  // Fibras
-  const fibers = Number(
-    alimento.fibras ?? alimento.fiber ?? alimento.fibers
-  ) || 0;
+  const fibers = Number(alimento.fibras ?? alimAny.fiber ?? alimAny.fibers) || 0;
 
   return { porcaoBase, kcal, protein, carbo, fat, fibers };
 }
 
 /**
- * Realiza o cálculo nutricional proporcional estrito com base no peso (gramas):
- * - calcProtein = (item.protein / 100) * gramas
- * - calcCarbo   = (item.carbohydrate / 100) * gramas
- * - calcFat     = (item.lipid / 100) * gramas
- * Com fallbacks robustos para 0.
+ * Realiza o cálculo nutricional proporcional estrito com base na quantidade.
  */
-export function calcularNutrientesItem(alimento?: any, quantidadeGramas: number = 100) {
-  const { porcaoBase, kcal, protein, carbo, fat, fibers } = getAlimentoBaseNutrientes(alimento);
+export function calcularNutrientesItem(
+  alimento?: Partial<AlimentoOption> | null,
+  quantidadeGramas: number = 100
+) {
+  const { porcaoBase, kcal, protein, carbo, fat, fibers } =
+    getAlimentoBaseNutrientes(alimento);
   const gramas = Math.max(0, Number(quantidadeGramas) || 0);
   const base = porcaoBase > 0 ? porcaoBase : 100;
 
@@ -186,7 +226,46 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
   const [clonarDeId, setClonarDeId] = useState<string>("");
   const [criandoVariacao, setCriandoVariacao] = useState(false);
 
+  // Adicionar nova refeição inline
+  const [isAddRefeicaoOpen, setIsAddRefeicaoOpen] = useState(false);
+  const [novaRefNome, setNovaRefNome] = useState("");
+  const [novaRefHorario, setNovaRefHorario] = useState("15:00");
+  const [novaRefOpcional, setNovaRefOpcional] = useState(false);
+  const [criandoRefeicao, setCriandoRefeicao] = useState(false);
+
+  // Controle de qual item está com o inline "+ Troca" aberto
+  const [openSwapItemId, setOpenSwapItemId] = useState<string | null>(null);
+
   // 1. Carrega o plano alimentar com as variações
+  const aplicarDadosPlano = useCallback(
+    (dataPlano: { plano?: PlanoAlimentarState | null }) => {
+      const loadedVariacoes: VariacaoDietaState[] = Array.isArray(
+        dataPlano.plano?.variacoes
+      )
+        ? dataPlano.plano.variacoes
+        : [];
+      setPlano(dataPlano.plano ?? null);
+      if (dataPlano.plano) {
+        setNomePlano(
+          dataPlano.plano.nome ||
+            dataPlano.plano.titulo ||
+            "Plano Alimentar Individualizado"
+        );
+      }
+      setVariacoes(loadedVariacoes);
+
+      if (loadedVariacoes.length > 0) {
+        setActiveVariacaoId((prev) => {
+          if (prev && loadedVariacoes.some((v) => v.id === prev)) {
+            return prev;
+          }
+          return loadedVariacoes[0].id;
+        });
+      }
+    },
+    []
+  );
+
   const carregarDados = useCallback(async () => {
     try {
       setCarregando(true);
@@ -201,43 +280,61 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
       }
 
       const dataPlano = await resPlano.json();
-      const loadedVariacoes: VariacaoDietaState[] = Array.isArray(
-        dataPlano.plano?.variacoes
-      )
-        ? dataPlano.plano.variacoes
-        : [];
-      setPlano(dataPlano.plano);
-      if (dataPlano.plano) {
-        setNomePlano(
-          dataPlano.plano.nome ||
-            dataPlano.plano.titulo ||
-            "Plano Alimentar Individualizado"
-        );
-      }
-      setVariacoes(loadedVariacoes);
-
-      // Define a primeira variação como ativa por padrão
-      if (loadedVariacoes.length > 0) {
-        setActiveVariacaoId((prev) => {
-          if (prev && loadedVariacoes.some((v) => v.id === prev)) {
-            return prev;
-          }
-          return loadedVariacoes[0].id;
-        });
-      }
-    } catch (err: any) {
+      aplicarDadosPlano(dataPlano);
+    } catch (err: unknown) {
       console.error("Erro ao carregar dados da dieta:", err);
-      setErro(err.message || "Erro de conexão ao carregar dieta.");
+      setErro(
+        err instanceof Error
+          ? err.message
+          : "Erro de conexão ao carregar dieta."
+      );
     } finally {
       setCarregando(false);
     }
-  }, [pacienteId]);
+  }, [pacienteId, aplicarDadosPlano]);
 
   useEffect(() => {
-    carregarDados();
-  }, [carregarDados]);
+    let ativo = true;
 
-  // Variação atualmente selecionada na interface
+    async function inicializarDieta() {
+      try {
+        const resPlano = await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+          cache: "no-store",
+        });
+
+        if (!ativo) return;
+
+        if (!resPlano.ok) {
+          throw new Error("Não foi possível carregar o plano alimentar.");
+        }
+
+        const dataPlano = await resPlano.json();
+        if (!ativo) return;
+
+        setErro(null);
+        aplicarDadosPlano(dataPlano);
+      } catch (err: unknown) {
+        if (!ativo) return;
+        console.error("Erro ao carregar dados da dieta:", err);
+        setErro(
+          err instanceof Error
+            ? err.message
+            : "Erro de conexão ao carregar dieta."
+        );
+      } finally {
+        if (ativo) {
+          setCarregando(false);
+        }
+      }
+    }
+
+    void inicializarDieta();
+
+    return () => {
+      ativo = false;
+    };
+  }, [pacienteId, aplicarDadosPlano]);
+
   const variacaoAtiva = useMemo(() => {
     if (!variacoes.length) return null;
     return (
@@ -245,52 +342,209 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     );
   }, [variacoes, activeVariacaoId]);
 
-  // 2. Manipulações reativas de alimentos na variação ativa
-  const handleAlterarQuantidade = (
+  // ==========================================================================
+  // MANIPULAÇÃO DE REFEIÇÕES (nome, horário, opcional, observações, criar, excluir)
+  // ==========================================================================
+
+  const atualizarRefeicaoLocal = (
     refeicaoId: string,
-    itemId: string,
-    novaQtd: number
+    patch: Partial<RefeicaoState>
   ) => {
     if (!variacaoAtiva) return;
+    const targetVarId = variacaoAtiva.id;
     setVariacoes((prev) =>
-      prev.map((v) => {
-        if (v.id !== variacaoAtiva.id) return v;
-        return {
-          ...v,
-          refeicoes: v.refeicoes.map((ref) => {
-            if (ref.id !== refeicaoId) return ref;
-            return {
-              ...ref,
-              itens: ref.itens.map((it) => {
-                if (it.id !== itemId) return it;
-                return {
-                  ...it,
-                  quantidadeGramas: Math.max(0, novaQtd),
-                };
-              }),
-            };
-          }),
-        };
-      })
+      prev.map((v) =>
+        v.id !== targetVarId
+          ? v
+          : {
+              ...v,
+              refeicoes: v.refeicoes.map((r) =>
+                r.id !== refeicaoId ? r : { ...r, ...patch }
+              ),
+            }
+      )
     );
+  };
+
+  const persistirRefeicao = async (
+    refeicaoId: string,
+    patch: Partial<Pick<RefeicaoState, "nome" | "horario" | "opcional" | "observacoes">>
+  ) => {
+    try {
+      await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "atualizar_refeicao",
+          refeicaoId,
+          ...patch,
+        }),
+      });
+    } catch (err) {
+      console.error("Erro ao atualizar refeição:", err);
+    }
+  };
+
+  const handleCriarRefeicao = async (preset?: {
+    nome: string;
+    horario: string;
+    opcional: boolean;
+  }) => {
+    if (!variacaoAtiva || criandoRefeicao) return;
+    const nomeFinal = (preset?.nome ?? novaRefNome).trim();
+    if (!nomeFinal) return;
+    const horarioFinal = (preset?.horario ?? novaRefHorario).trim() || "15:00";
+    const opcionalFinal = preset ? preset.opcional : novaRefOpcional;
+    const targetVarId = variacaoAtiva.id;
+
+    try {
+      setCriandoRefeicao(true);
+      const res = await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "criar_refeicao",
+          variacaoDietaId: targetVarId,
+          nome: nomeFinal,
+          horario: horarioFinal,
+          opcional: opcionalFinal,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.refeicao) {
+          setVariacoes((prev) =>
+            prev.map((v) =>
+              v.id !== targetVarId
+                ? v
+                : { ...v, refeicoes: [...v.refeicoes, json.refeicao] }
+            )
+          );
+          setNovaRefNome("");
+          setNovaRefHorario("15:00");
+          setNovaRefOpcional(false);
+          setIsAddRefeicaoOpen(false);
+          setMensagemSucesso(`Refeição "${json.refeicao.nome}" adicionada!`);
+          setTimeout(() => setMensagemSucesso(null), 2500);
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao criar refeição:", err);
+    } finally {
+      setCriandoRefeicao(false);
+    }
+  };
+
+  const handleRemoverRefeicao = async (refeicao: RefeicaoState) => {
+    if (!variacaoAtiva) return;
+    if (
+      refeicao.itens.length > 0 &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Remover a refeição "${refeicao.nome}" e seus ${refeicao.itens.length} alimento(s)?`
+      )
+    ) {
+      return;
+    }
+
+    const targetVarId = variacaoAtiva.id;
+    setVariacoes((prev) =>
+      prev.map((v) =>
+        v.id !== targetVarId
+          ? v
+          : { ...v, refeicoes: v.refeicoes.filter((r) => r.id !== refeicao.id) }
+      )
+    );
+
+    try {
+      await fetch(
+        `/api/pacientes/${pacienteId}/dieta?refeicaoId=${encodeURIComponent(refeicao.id)}`,
+        { method: "DELETE" }
+      );
+    } catch (err) {
+      console.error("Erro ao remover refeição:", err);
+    }
+  };
+
+  // ==========================================================================
+  // MANIPULAÇÃO DE ITENS (quantidade, unidade, medidaCaseira, adicionar, remover)
+  // ==========================================================================
+
+  const atualizarItemLocal = (
+    refeicaoId: string,
+    itemId: string,
+    patch: Partial<ItemRefeicaoState>
+  ) => {
+    if (!variacaoAtiva) return;
+    const targetVarId = variacaoAtiva.id;
+    setVariacoes((prev) =>
+      prev.map((v) =>
+        v.id !== targetVarId
+          ? v
+          : {
+              ...v,
+              refeicoes: v.refeicoes.map((ref) =>
+                ref.id !== refeicaoId
+                  ? ref
+                  : {
+                      ...ref,
+                      itens: ref.itens.map((it) =>
+                        it.id !== itemId ? it : { ...it, ...patch }
+                      ),
+                    }
+              ),
+            }
+      )
+    );
+  };
+
+  const persistirItem = async (
+    itemId: string,
+    patch: {
+      quantidadeGramas?: number;
+      unidade?: UnidadeMedidaOption;
+      medidaCaseira?: string | null;
+    }
+  ) => {
+    if (itemId.startsWith("temp-")) return;
+    try {
+      await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "atualizar_item",
+          itemId,
+          ...patch,
+        }),
+      });
+    } catch (err) {
+      console.error("Erro ao atualizar item:", err);
+    }
   };
 
   const handleAdicionarAlimento = async (
     refeicaoId: string,
     alimento: AlimentoOption,
-    quantidadeGramas: number
+    quantidadeGramas: number,
+    extra?: AlimentoAddExtra
   ) => {
     if (!variacaoAtiva) return;
     const targetVariacaoId = variacaoAtiva.id;
     const tempId = `temp-${Date.now()}`;
+    const unidadeFinal: UnidadeMedidaOption = extra?.unidade || "g";
+    const medidaFinal = extra?.medidaCaseira ?? null;
+
     const novoItem: ItemRefeicaoState = {
       id: tempId,
       alimentoId: alimento.id,
       quantidadeGramas: quantidadeGramas || 100,
+      unidade: unidadeFinal,
+      medidaCaseira: medidaFinal,
       alimento,
+      substituicoes: [],
+      substituicao: null,
     };
 
-    // Atualização otimista
     setVariacoes((prev) =>
       prev.map((v) => {
         if (v.id !== targetVariacaoId) return v;
@@ -316,6 +570,8 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
           refeicaoId,
           alimentoId: alimento.id,
           quantidadeGramas: quantidadeGramas || 100,
+          unidade: unidadeFinal,
+          medidaCaseira: medidaFinal,
         }),
       });
 
@@ -336,7 +592,10 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                         ? {
                             ...it,
                             id: json.item.id,
+                            unidade: json.item.unidade || unidadeFinal,
+                            medidaCaseira: json.item.medidaCaseira ?? medidaFinal,
                             alimento: json.item.alimento || it.alimento,
+                            substituicoes: json.item.substituicoes || [],
                           }
                         : it
                     ),
@@ -356,7 +615,6 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     if (!variacaoAtiva) return;
     const targetVariacaoId = variacaoAtiva.id;
 
-    // Remoção otimista
     setVariacoes((prev) =>
       prev.map((v) => {
         if (v.id !== targetVariacaoId) return v;
@@ -385,7 +643,181 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     }
   };
 
-  const handleRemoverSubstituicao = async (
+  // ==========================================================================
+  // SUBSTITUIÇÕES PRESCRITAS 1:N POR ITEM (SUBSTITUICOES_ITENS_REFEICAO)
+  // ==========================================================================
+
+  const handleAdicionarSubstituicaoPrescrita = async (
+    refeicaoId: string,
+    itemId: string,
+    alimento: AlimentoOption,
+    quantidade: number,
+    extra?: AlimentoAddExtra
+  ) => {
+    if (!variacaoAtiva || itemId.startsWith("temp-")) return;
+    const targetVarId = variacaoAtiva.id;
+    const unidadeFinal: UnidadeMedidaOption = extra?.unidade || "g";
+    const medidaFinal = extra?.medidaCaseira ?? null;
+
+    try {
+      const res = await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "adicionar_substituicao_prescrita",
+          itemRefeicaoId: itemId,
+          alimentoId: alimento.id,
+          nomeExibicao: alimento.nome,
+          quantidade: quantidade || 100,
+          unidade: unidadeFinal,
+          medidaCaseira: medidaFinal,
+        }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.substituicaoPrescrita) {
+          setVariacoes((prev) =>
+            prev.map((v) =>
+              v.id !== targetVarId
+                ? v
+                : {
+                    ...v,
+                    refeicoes: v.refeicoes.map((r) =>
+                      r.id !== refeicaoId
+                        ? r
+                        : {
+                            ...r,
+                            itens: r.itens.map((it) =>
+                              it.id !== itemId
+                                ? it
+                                : {
+                                    ...it,
+                                    substituicoes: [
+                                      ...(it.substituicoes || []),
+                                      json.substituicaoPrescrita,
+                                    ],
+                                  }
+                            ),
+                          }
+                    ),
+                  }
+            )
+          );
+          setOpenSwapItemId(null);
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao adicionar substituição prescrita:", err);
+    }
+  };
+
+  const atualizarSubPrescritaLocal = (
+    refeicaoId: string,
+    itemId: string,
+    subId: string,
+    patch: Partial<SubstituicaoPrescritaState>
+  ) => {
+    if (!variacaoAtiva) return;
+    const targetVarId = variacaoAtiva.id;
+    setVariacoes((prev) =>
+      prev.map((v) =>
+        v.id !== targetVarId
+          ? v
+          : {
+              ...v,
+              refeicoes: v.refeicoes.map((r) =>
+                r.id !== refeicaoId
+                  ? r
+                  : {
+                      ...r,
+                      itens: r.itens.map((it) =>
+                        it.id !== itemId
+                          ? it
+                          : {
+                              ...it,
+                              substituicoes: (it.substituicoes || []).map((s) =>
+                                s.id !== subId ? s : { ...s, ...patch }
+                              ),
+                            }
+                      ),
+                    }
+              ),
+            }
+      )
+    );
+  };
+
+  const persistirSubPrescrita = async (
+    subId: string,
+    patch: {
+      quantidade?: number;
+      unidade?: UnidadeMedidaOption;
+      medidaCaseira?: string | null;
+    }
+  ) => {
+    try {
+      await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "atualizar_substituicao_prescrita",
+          substituicaoPrescritaId: subId,
+          ...patch,
+        }),
+      });
+    } catch (err) {
+      console.error("Erro ao atualizar substituição prescrita:", err);
+    }
+  };
+
+  const handleRemoverSubPrescrita = async (
+    refeicaoId: string,
+    itemId: string,
+    subId: string
+  ) => {
+    if (!variacaoAtiva) return;
+    const targetVarId = variacaoAtiva.id;
+
+    setVariacoes((prev) =>
+      prev.map((v) =>
+        v.id !== targetVarId
+          ? v
+          : {
+              ...v,
+              refeicoes: v.refeicoes.map((r) =>
+                r.id !== refeicaoId
+                  ? r
+                  : {
+                      ...r,
+                      itens: r.itens.map((it) =>
+                        it.id !== itemId
+                          ? it
+                          : {
+                              ...it,
+                              substituicoes: (it.substituicoes || []).filter(
+                                (s) => s.id !== subId
+                              ),
+                            }
+                      ),
+                    }
+              ),
+            }
+      )
+    );
+
+    try {
+      await fetch(
+        `/api/pacientes/${pacienteId}/dieta?substituicaoPrescritaId=${encodeURIComponent(subId)}`,
+        { method: "DELETE" }
+      );
+    } catch (err) {
+      console.error("Erro ao remover substituição prescrita:", err);
+    }
+  };
+
+  // Reverter substituição legada do paciente (DIET_SUBSTITUTIONS)
+  const handleRemoverSubstituicaoPaciente = async (
     refeicaoId: string,
     itemId: string,
     subId: string
@@ -408,7 +840,6 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                   return {
                     ...it,
                     substituicao: null,
-                    substituicoes: [],
                   };
                 }),
               };
@@ -421,7 +852,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     }
   };
 
-  // 2.5 Atualizar título da variação no estado principal (imutável) + persistir no banco
+  // 2.5 Atualizar título da variação
   const handleUpdateVariationTitle = useCallback(
     async (variacaoId: string, novoTitulo: string) => {
       const trimmed = novoTitulo.trim();
@@ -452,7 +883,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     [pacienteId]
   );
 
-  // 2.6 Excluir variação de dieta com validação de mínimo de 1 variação
+  // 2.6 Excluir variação de dieta
   const handleExcluirVariacao = useCallback(
     async (variacaoId: string) => {
       if (variacoes.length <= 1) {
@@ -497,7 +928,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     [pacienteId, variacoes]
   );
 
-  // 3. Salvar alterações pendentes (Nome do Plano, Variações e Quantidades)
+  // 3. Salvar todas as alterações pendentes
   const handleSalvarPlano = async () => {
     if (!plano || !variacaoAtiva) return;
     try {
@@ -514,7 +945,6 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
 
       const updates: Array<Promise<Response>> = [];
 
-      // 3.1 Persiste o novo Nome/Título do Plano Alimentar no Oracle
       updates.push(
         fetch(`/api/pacientes/${pacienteId}/dieta`, {
           method: "PUT",
@@ -543,6 +973,21 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
       }
 
       for (const ref of variacaoAtiva.refeicoes) {
+        updates.push(
+          fetch(`/api/pacientes/${pacienteId}/dieta`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              acao: "atualizar_refeicao",
+              refeicaoId: ref.id,
+              nome: ref.nome,
+              horario: ref.horario ?? null,
+              opcional: Boolean(ref.opcional),
+              observacoes: ref.observacoes ?? null,
+            }),
+          })
+        );
+
         for (const item of ref.itens) {
           if (!item.id.startsWith("temp-")) {
             updates.push(
@@ -553,9 +998,27 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                   acao: "atualizar_item",
                   itemId: item.id,
                   quantidadeGramas: item.quantidadeGramas,
+                  unidade: item.unidade || "g",
+                  medidaCaseira: item.medidaCaseira ?? null,
                 }),
               })
             );
+
+            for (const sub of item.substituicoes || []) {
+              updates.push(
+                fetch(`/api/pacientes/${pacienteId}/dieta`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    acao: "atualizar_substituicao_prescrita",
+                    substituicaoPrescritaId: sub.id,
+                    quantidade: sub.quantidade,
+                    unidade: sub.unidade || "g",
+                    medidaCaseira: sub.medidaCaseira ?? null,
+                  }),
+                })
+              );
+            }
           }
         }
       }
@@ -576,7 +1039,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
         delete pendingRenamesRef.current[variacaoId];
       }
 
-      setMensagemSucesso("Plano, variações e quantidades salvos com sucesso!");
+      setMensagemSucesso("Plano, refeições, medidas e trocas salvos com sucesso!");
       setTimeout(() => setMensagemSucesso(null), 3000);
     } catch (err) {
       console.error("Erro ao salvar dieta:", err);
@@ -625,7 +1088,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
   };
 
   // ==========================================================================
-  // MOTOR DE CÁLCULO REATIVO (Zero Atrito com useMemo por Variação)
+  // MOTOR DE CÁLCULO REATIVO (preservado 100% intacto)
   // ==========================================================================
 
   const totaisPorRefeicao = useMemo(() => {
@@ -642,7 +1105,6 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     > = {};
 
     for (const ref of variacaoAtiva.refeicoes) {
-      // Itera com .reduce() sobre os valores calculados proporcionalmente com as gramas
       const totaisRef = ref.itens.reduce(
         (acc, item) => {
           const nut = calcularNutrientesItem(item.alimento, item.quantidadeGramas);
@@ -687,7 +1149,9 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
 
         accRef.calorias += Math.round(totaisRef.calorias);
         accRef.proteinas = Number((accRef.proteinas + totaisRef.proteinas).toFixed(1));
-        accRef.carboidratos = Number((accRef.carboidratos + totaisRef.carboidratos).toFixed(1));
+        accRef.carboidratos = Number(
+          (accRef.carboidratos + totaisRef.carboidratos).toFixed(1)
+        );
         accRef.gorduras = Number((accRef.gorduras + totaisRef.gorduras).toFixed(1));
         return accRef;
       },
@@ -755,7 +1219,8 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Prescrição nutricional de <span className="font-semibold text-slate-600">{pacienteNome}</span>
+              Prescrição nutricional de{" "}
+              <span className="font-semibold text-slate-600">{pacienteNome}</span>
             </p>
           </div>
         </div>
@@ -791,7 +1256,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
       </div>
 
       {/* ======================================================== */}
-      {/* NAVEGAÇÃO HORIZONTAL DE VARIAÇÕES (TABS CRUD)             */}
+      {/* NAVEGAÇÃO HORIZONTAL DE VARIAÇÕES (TABS CRUD) */}
       {/* ======================================================== */}
       <DietVariations
         variacoes={variacoes}
@@ -826,27 +1291,77 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
               key={refeicao.id}
               className="relative bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-visible transition-all hover:border-slate-300 focus-within:z-30 hover:z-20"
             >
-              {/* CABEÇALHO DA REFEIÇÃO COM SUBTOTAL */}
-              <div className="px-5 py-3 bg-slate-50/70 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 rounded-t-2xl">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-lg bg-white border border-slate-200 shadow-2xs">
+              {/* CABEÇALHO FLEXÍVEL DA REFEIÇÃO COM SUBTOTAL */}
+              <div className="px-4 sm:px-5 py-2.5 bg-slate-50/70 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 rounded-t-2xl">
+                <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[220px]">
+                  <div className="p-1.5 rounded-lg bg-white border border-slate-200 shadow-2xs shrink-0">
                     {getRefeicaoIcon(refeicao.nome)}
                   </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                      <span>{refeicao.nome}</span>
-                      {refeicao.horario && (
-                        <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold text-slate-400">
-                          <Clock className="w-3 h-3" />
-                          {refeicao.horario}
-                        </span>
-                      )}
-                    </h3>
+
+                  {/* Nome editável da refeição */}
+                  <input
+                    type="text"
+                    value={refeicao.nome}
+                    onChange={(e) =>
+                      atualizarRefeicaoLocal(refeicao.id, {
+                        nome: e.target.value,
+                      })
+                    }
+                    onBlur={(e) => {
+                      const trimmed = e.target.value.trim();
+                      if (trimmed) {
+                        persistirRefeicao(refeicao.id, { nome: trimmed });
+                      }
+                    }}
+                    aria-label="Nome da refeição"
+                    className="text-xs font-bold text-slate-800 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-200 focus:border-teal-500 rounded-md px-1.5 py-0.5 outline-none transition-all min-w-[140px] max-w-[230px]"
+                  />
+
+                  {/* Horário livre editável */}
+                  <div className="inline-flex items-center gap-1 bg-white/80 hover:bg-white border border-slate-200/80 focus-within:border-teal-500 rounded-md px-1.5 py-0.5">
+                    <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={refeicao.horario || ""}
+                      onChange={(e) =>
+                        atualizarRefeicaoLocal(refeicao.id, {
+                          horario: e.target.value.slice(0, 10),
+                        })
+                      }
+                      onBlur={(e) =>
+                        persistirRefeicao(refeicao.id, {
+                          horario: e.target.value.trim() || null,
+                        })
+                      }
+                      placeholder="07:30"
+                      aria-label="Horário da refeição"
+                      className="w-12 font-mono text-[11px] font-semibold text-slate-600 bg-transparent outline-none"
+                    />
                   </div>
+
+                  {/* Toggle discreto Opcional */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextOpcional = !refeicao.opcional;
+                      atualizarRefeicaoLocal(refeicao.id, {
+                        opcional: nextOpcional,
+                      });
+                      persistirRefeicao(refeicao.id, { opcional: nextOpcional });
+                    }}
+                    title="Marcar ou desmarcar esta refeição como opcional"
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors cursor-pointer ${
+                      refeicao.opcional
+                        ? "bg-purple-50 text-purple-700 border-purple-200"
+                        : "bg-white text-slate-400 border-slate-200 hover:text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    {refeicao.opcional ? "Opcional" : "Obrigatória"}
+                  </button>
                 </div>
 
-                {/* Subtotais da Refeição */}
-                <div className="flex items-center gap-3">
+                {/* Subtotais da Refeição + Remover Refeição */}
+                <div className="flex items-center gap-2.5">
                   <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
                     <span className="text-slate-700">
                       P: <strong className="text-emerald-700">{totais.proteinas}g</strong>
@@ -865,11 +1380,20 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                     <Flame className="w-3.5 h-3.5 text-amber-500" />
                     {totais.calorias} kcal
                   </span>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemoverRefeicao(refeicao)}
+                    title="Remover refeição desta variação"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
 
               {/* LISTA DE ALIMENTOS DA REFEIÇÃO */}
-              <div className="p-4 space-y-2">
+              <div className="p-4 space-y-2.5">
                 {refeicao.itens.length === 0 ? (
                   <p className="text-xs text-slate-400 italic py-2 text-center">
                     Nenhum alimento cadastrado nesta refeição ainda.
@@ -877,10 +1401,16 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                 ) : (
                   <div className="divide-y divide-slate-100">
                     {refeicao.itens.map((item) => {
-                      const sub = item.substituicao || item.substituicoes?.[0] || null;
-                      const hasSub = !!sub;
+                      const patientSub = item.substituicao || null;
+                      const hasPatientSub = Boolean(patientSub);
+                      const prescribedSubs = item.substituicoes || [];
+                      const isAddingSwap = openSwapItemId === item.id;
+                      const itemUnidade: UnidadeMedidaOption = item.unidade || "g";
 
-                      const nutItem = calcularNutrientesItem(item.alimento, item.quantidadeGramas);
+                      const nutItem = calcularNutrientesItem(
+                        item.alimento,
+                        item.quantidadeGramas
+                      );
                       const calItem = nutItem.calorias;
                       const protItem = nutItem.proteinas.toFixed(1);
                       const carbItem = nutItem.carboidratos.toFixed(1);
@@ -888,15 +1418,15 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                       const baseNut = getAlimentoBaseNutrientes(item.alimento);
 
                       return (
-                        <div key={item.id} className="py-2.5 space-y-1.5 transition-all">
+                        <div key={item.id} className="py-2.5 space-y-2 transition-all">
                           {/* LINHA DO ALIMENTO ORIGINAL / PRESCRITO */}
                           <div
-                            className={`flex flex-wrap items-center justify-between gap-3 group transition-opacity ${
-                              hasSub ? "line-through text-slate-400 opacity-60" : ""
+                            className={`flex flex-wrap items-center justify-between gap-2.5 group transition-opacity ${
+                              hasPatientSub ? "line-through text-slate-400 opacity-60" : ""
                             }`}
                           >
                             {/* Miniatura, Nome e Categoria */}
-                            <div className="flex items-center gap-3 flex-1 min-w-[200px]">
+                            <div className="flex items-center gap-3 flex-1 min-w-[190px]">
                               <FoodThumbnail
                                 nome={item.alimento.nome}
                                 categoria={item.alimento.categoria}
@@ -905,60 +1435,110 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                                   item.alimento.imageUrl ||
                                   item.alimento.fotoUrl
                                 }
-                                className={`w-10 h-10 shrink-0 ${hasSub ? "grayscale opacity-75" : ""}`}
+                                className={`w-10 h-10 shrink-0 ${
+                                  hasPatientSub ? "grayscale opacity-75" : ""
+                                }`}
                               />
                               <div className="min-w-0">
                                 <span
                                   className={`text-xs font-bold block truncate ${
-                                    hasSub ? "line-through text-slate-400 opacity-60" : "text-slate-800"
+                                    hasPatientSub
+                                      ? "line-through text-slate-400 opacity-60"
+                                      : "text-slate-800"
                                   }`}
                                 >
                                   {item.alimento.nome}
                                 </span>
                                 <span
                                   className={`text-[10px] block truncate ${
-                                    hasSub ? "line-through text-slate-400 opacity-60" : "text-slate-400"
+                                    hasPatientSub
+                                      ? "line-through text-slate-400 opacity-60"
+                                      : "text-slate-400"
                                   }`}
                                 >
-                                  {baseNut.kcal} kcal / 100g
+                                  {baseNut.kcal} kcal / {baseNut.porcaoBase}g
                                   {item.alimento.categoria && ` • ${item.alimento.categoria}`}
                                 </span>
                               </div>
                             </div>
 
-                            {/* Input de Quantidade em Gramas */}
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <div className="relative flex items-center">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step={5}
-                                  disabled={hasSub}
-                                  value={item.quantidadeGramas}
-                                  onChange={(e) =>
-                                    handleAlterarQuantidade(
-                                      refeicao.id,
-                                      item.id,
+                            {/* Quantidade + Unidade (g/ml/un) + Medida Caseira */}
+                            <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                              <input
+                                type="number"
+                                min={0}
+                                step={itemUnidade === "un" ? 1 : 5}
+                                disabled={hasPatientSub}
+                                value={item.quantidadeGramas}
+                                onChange={(e) =>
+                                  atualizarItemLocal(refeicao.id, item.id, {
+                                    quantidadeGramas: Math.max(
+                                      0,
                                       Number(e.target.value) || 0
-                                    )
-                                  }
-                                  className={`w-20 pl-2 pr-6 py-1 border rounded-lg text-xs font-mono font-bold outline-none text-right transition-colors ${
-                                    hasSub
-                                      ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
-                                      : "bg-slate-50 focus:bg-white border-slate-200 focus:border-teal-500 text-slate-800"
-                                  }`}
-                                />
-                                <span className="absolute right-2 text-[10px] font-bold text-slate-400 pointer-events-none">
-                                  g
-                                </span>
-                              </div>
+                                    ),
+                                  })
+                                }
+                                onBlur={(e) =>
+                                  persistirItem(item.id, {
+                                    quantidadeGramas: Math.max(
+                                      0,
+                                      Number(e.target.value) || 0
+                                    ),
+                                  })
+                                }
+                                aria-label="Quantidade"
+                                className={`w-16 px-2 py-1 border rounded-lg text-xs font-mono font-bold outline-none text-right transition-colors ${
+                                  hasPatientSub
+                                    ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                    : "bg-slate-50 focus:bg-white border-slate-200 focus:border-teal-500 text-slate-800"
+                                }`}
+                              />
+
+                              <select
+                                value={itemUnidade}
+                                disabled={hasPatientSub}
+                                onChange={(e) => {
+                                  const nextUn = e.target.value as UnidadeMedidaOption;
+                                  atualizarItemLocal(refeicao.id, item.id, {
+                                    unidade: nextUn,
+                                  });
+                                  persistirItem(item.id, { unidade: nextUn });
+                                }}
+                                aria-label="Unidade"
+                                className="px-1.5 py-1 bg-slate-50 focus:bg-white border border-slate-200 focus:border-teal-500 rounded-lg text-[11px] font-mono font-bold text-slate-700 outline-none cursor-pointer disabled:opacity-50"
+                              >
+                                <option value="g">g</option>
+                                <option value="ml">ml</option>
+                                <option value="un">un</option>
+                              </select>
+
+                              <input
+                                type="text"
+                                value={item.medidaCaseira || ""}
+                                disabled={hasPatientSub}
+                                onChange={(e) =>
+                                  atualizarItemLocal(refeicao.id, item.id, {
+                                    medidaCaseira: e.target.value.slice(0, 120),
+                                  })
+                                }
+                                onBlur={(e) =>
+                                  persistirItem(item.id, {
+                                    medidaCaseira: e.target.value.trim() || null,
+                                  })
+                                }
+                                placeholder="Medida caseira..."
+                                aria-label="Medida caseira"
+                                className="w-36 px-2 py-1 bg-slate-50 focus:bg-white border border-slate-200 focus:border-teal-500 rounded-lg text-[11px] text-slate-700 placeholder:text-slate-400 outline-none transition-colors disabled:opacity-50"
+                              />
                             </div>
 
-                            {/* Macros Calculados Instantaneamente */}
-                            <div className="flex items-center gap-3 shrink-0">
+                            {/* Macros Calculados Instantaneamente + Botões (+ Troca / Remover) */}
+                            <div className="flex items-center gap-2 shrink-0">
                               <div
-                                className={`text-[11px] font-mono font-semibold hidden sm:flex items-center gap-1.5 ${
-                                  hasSub ? "line-through text-slate-400 opacity-60" : "text-slate-500"
+                                className={`text-[11px] font-mono font-semibold hidden xl:flex items-center gap-1.5 ${
+                                  hasPatientSub
+                                    ? "line-through text-slate-400 opacity-60"
+                                    : "text-slate-500"
                                 }`}
                               >
                                 <span>P: {protItem}g</span>
@@ -970,7 +1550,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
 
                               <span
                                 className={`inline-flex items-center gap-1 font-mono text-xs font-bold px-2 py-0.5 rounded border min-w-[70px] justify-end ${
-                                  hasSub
+                                  hasPatientSub
                                     ? "bg-slate-100 text-slate-400 border-slate-200 line-through opacity-60"
                                     : "text-amber-800 bg-amber-50/70 border-amber-200/50"
                                 }`}
@@ -978,6 +1558,26 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                                 <Flame className="w-3 h-3 text-amber-500" />
                                 {calItem} kcal
                               </span>
+
+                              {/* Botão discreto + Troca (1:N prescrita pela médica) */}
+                              <button
+                                type="button"
+                                disabled={item.id.startsWith("temp-")}
+                                onClick={() =>
+                                  setOpenSwapItemId((prev) =>
+                                    prev === item.id ? null : item.id
+                                  )
+                                }
+                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer disabled:opacity-40 ${
+                                  isAddingSwap
+                                    ? "bg-teal-700 text-white border-teal-700"
+                                    : "bg-teal-50/80 text-teal-800 border-teal-200 hover:bg-teal-100"
+                                }`}
+                                title="Adicionar opção de troca prescrita para este alimento"
+                              >
+                                <ArrowLeftRight className="w-3 h-3" />
+                                <span>+ Troca</span>
+                              </button>
 
                               {/* Botão Remover */}
                               <button
@@ -991,24 +1591,182 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                             </div>
                           </div>
 
-                          {/* IMEDIATAMENTE ABAIXO NO MESMO BLOCO: ALIMENTO SUBSTITUTO ESCOLHIDO PELO PACIENTE */}
-                          {hasSub && sub && (
+                          {/* OPÇÕES DE TROCA PRESCRITAS (1:N) PELA MÉDICA */}
+                          {(prescribedSubs.length > 0 || isAddingSwap) && (
+                            <div className="ml-4 sm:ml-8 pl-3 border-l-2 border-teal-300/80 space-y-1.5">
+                              {prescribedSubs.map((sub, subIdx) => (
+                                <div
+                                  key={sub.id}
+                                  className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-teal-50/50 border border-teal-200/70"
+                                >
+                                  <div className="flex items-center gap-2 min-w-[160px] flex-1">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-teal-700 bg-white px-1.5 py-0.5 rounded border border-teal-200 shrink-0">
+                                      ou {subIdx + 1}
+                                    </span>
+                                    <FoodThumbnail
+                                      nome={sub.nomeExibicao}
+                                      categoria={sub.categoria}
+                                      imageUrl={sub.thumbnailUrl}
+                                      className="w-7 h-7 rounded-md shrink-0"
+                                    />
+                                    <span className="text-xs font-semibold text-slate-800 truncate">
+                                      {sub.nomeExibicao}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step={sub.unidade === "un" ? 1 : 5}
+                                      value={sub.quantidade}
+                                      onChange={(e) =>
+                                        atualizarSubPrescritaLocal(
+                                          refeicao.id,
+                                          item.id,
+                                          sub.id,
+                                          {
+                                            quantidade: Math.max(
+                                              0,
+                                              Number(e.target.value) || 0
+                                            ),
+                                          }
+                                        )
+                                      }
+                                      onBlur={(e) =>
+                                        persistirSubPrescrita(sub.id, {
+                                          quantidade: Math.max(
+                                            0,
+                                            Number(e.target.value) || 0
+                                          ),
+                                        })
+                                      }
+                                      className="w-14 px-1.5 py-0.5 bg-white border border-teal-200 focus:border-teal-500 rounded-md text-[11px] font-mono font-bold text-slate-800 text-right outline-none"
+                                    />
+
+                                    <select
+                                      value={sub.unidade || "g"}
+                                      onChange={(e) => {
+                                        const nextUn = e.target
+                                          .value as UnidadeMedidaOption;
+                                        atualizarSubPrescritaLocal(
+                                          refeicao.id,
+                                          item.id,
+                                          sub.id,
+                                          { unidade: nextUn }
+                                        );
+                                        persistirSubPrescrita(sub.id, {
+                                          unidade: nextUn,
+                                        });
+                                      }}
+                                      className="px-1 py-0.5 bg-white border border-teal-200 focus:border-teal-500 rounded-md text-[11px] font-mono font-bold text-slate-700 outline-none cursor-pointer"
+                                    >
+                                      <option value="g">g</option>
+                                      <option value="ml">ml</option>
+                                      <option value="un">un</option>
+                                    </select>
+
+                                    <input
+                                      type="text"
+                                      value={sub.medidaCaseira || ""}
+                                      onChange={(e) =>
+                                        atualizarSubPrescritaLocal(
+                                          refeicao.id,
+                                          item.id,
+                                          sub.id,
+                                          {
+                                            medidaCaseira: e.target.value.slice(
+                                              0,
+                                              120
+                                            ),
+                                          }
+                                        )
+                                      }
+                                      onBlur={(e) =>
+                                        persistirSubPrescrita(sub.id, {
+                                          medidaCaseira:
+                                            e.target.value.trim() || null,
+                                        })
+                                      }
+                                      placeholder="Medida caseira..."
+                                      className="w-32 px-2 py-0.5 bg-white border border-teal-200 focus:border-teal-500 rounded-md text-[11px] text-slate-700 placeholder:text-slate-400 outline-none"
+                                    />
+
+                                    {sub.caloriasPorcao != null && (
+                                      <span className="text-[10px] font-mono font-bold text-teal-800 bg-white px-1.5 py-0.5 rounded border border-teal-200/80">
+                                        {sub.caloriasPorcao} kcal
+                                      </span>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleRemoverSubPrescrita(
+                                          refeicao.id,
+                                          item.id,
+                                          sub.id
+                                        )
+                                      }
+                                      title="Remover opção de troca"
+                                      className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+
+                              {isAddingSwap && (
+                                <div className="p-2.5 rounded-xl bg-slate-50 border border-dashed border-teal-300">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-teal-800">
+                                      Nova opção de troca para {item.alimento.nome}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setOpenSwapItemId(null)}
+                                      className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 cursor-pointer"
+                                    >
+                                      Fechar
+                                    </button>
+                                  </div>
+                                  <AlimentoCombobox
+                                    compact
+                                    showUnitAndMeasure
+                                    placeholder="Buscar alimento substituto (ex: tapioca, pão, whey)..."
+                                    buttonLabel="Salvar troca"
+                                    onAddAlimento={(alimento, qtd, extra) =>
+                                      handleAdicionarSubstituicaoPrescrita(
+                                        refeicao.id,
+                                        item.id,
+                                        alimento,
+                                        qtd,
+                                        extra
+                                      )
+                                    }
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* SUBSTITUIÇÃO LEGADA ESCOLHIDA PELO PACIENTE (DIET_SUBSTITUTIONS) */}
+                          {hasPatientSub && patientSub && (
                             <div className="ml-3 sm:ml-6 pl-3 border-l-2 border-emerald-400">
                               <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex flex-wrap items-center justify-between gap-3 shadow-xs animate-in fade-in slide-in-from-top-1 duration-200">
-                                {/* Informações do Alimento Substituto */}
                                 <div className="flex items-center gap-2.5 flex-1 min-w-[200px]">
                                   <FoodThumbnail
-                                    nome={sub.substituteFoodName}
+                                    nome={patientSub.substituteFoodName}
                                     imageUrl={
-                                      sub.substituteThumbnailUrl ||
-                                      sub.substituteFood?.thumbnailUrl
+                                      patientSub.substituteThumbnailUrl ||
+                                      patientSub.substituteFood?.thumbnailUrl
                                     }
                                     className="w-9 h-9 shrink-0 ring-1 ring-emerald-300 shadow-2xs"
                                   />
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className="text-xs font-bold text-emerald-950 block truncate">
-                                        {sub.substituteFoodName}
+                                        {patientSub.substituteFoodName}
                                       </span>
                                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                                         <RefreshCw className="w-2.5 h-2.5 text-emerald-600" />
@@ -1016,33 +1774,37 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                                       </span>
                                     </div>
                                     <span className="text-[10px] text-emerald-700/80 block mt-0.5">
-                                      Consumo registrado: <strong>{sub.quantityGrams}g</strong>
+                                      Consumo registrado:{" "}
+                                      <strong>{patientSub.quantityGrams}g</strong>
                                     </span>
                                   </div>
                                 </div>
 
-                                {/* Macros e Calorias do Substituto */}
                                 <div className="flex items-center gap-3 shrink-0">
-                                  {(sub.proteins != null || sub.carbohydrates != null) && (
+                                  {(patientSub.proteins != null ||
+                                    patientSub.carbohydrates != null) && (
                                     <div className="text-[11px] font-mono font-medium text-emerald-700 hidden sm:flex items-center gap-1.5">
-                                      <span>P: {sub.proteins ?? 0}g</span>
+                                      <span>P: {patientSub.proteins ?? 0}g</span>
                                       <span className="text-emerald-300">•</span>
-                                      <span>C: {sub.carbohydrates ?? 0}g</span>
+                                      <span>C: {patientSub.carbohydrates ?? 0}g</span>
                                       <span className="text-emerald-300">•</span>
-                                      <span>G: {sub.fats ?? 0}g</span>
+                                      <span>G: {patientSub.fats ?? 0}g</span>
                                     </div>
                                   )}
 
                                   <span className="inline-flex items-center gap-1 font-mono text-xs font-bold text-emerald-900 bg-white/90 px-2.5 py-0.5 rounded-lg border border-emerald-300 shadow-2xs min-w-[70px] justify-end">
                                     <Flame className="w-3 h-3 text-emerald-600" />
-                                    {sub.calories} kcal
+                                    {patientSub.calories} kcal
                                   </span>
 
-                                  {/* Botão para Reverter Substituição */}
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      handleRemoverSubstituicao(refeicao.id, item.id, sub.id)
+                                      handleRemoverSubstituicaoPaciente(
+                                        refeicao.id,
+                                        item.id,
+                                        patientSub.id
+                                      )
                                     }
                                     className="p-1 rounded-md text-emerald-600 hover:text-emerald-900 hover:bg-emerald-100/80 transition-colors cursor-pointer"
                                     title="Desfazer substituição e restaurar visualização do prescrito"
@@ -1059,16 +1821,128 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                   </div>
                 )}
 
-                {/* LINHA COMPACTA DE BUSCA E ADIÇÃO: [ Busca ] -> [ Input Gramas ] -> [ Botão + ] */}
+                {/* LINHA COMPACTA DE BUSCA E ADIÇÃO COM UNIDADE + MEDIDA CASEIRA */}
                 <AlimentoCombobox
-                  onAddAlimento={(alimento, gramas) =>
-                    handleAdicionarAlimento(refeicao.id, alimento, gramas)
+                  showUnitAndMeasure
+                  onAddAlimento={(alimento, gramas, extra) =>
+                    handleAdicionarAlimento(refeicao.id, alimento, gramas, extra)
                   }
                 />
+
+                {/* OBSERVAÇÕES DE PREPARO DA REFEIÇÃO */}
+                <div className="pt-2 border-t border-slate-100/80 flex items-center gap-2">
+                  <MessageSquareText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={refeicao.observacoes || ""}
+                    onChange={(e) =>
+                      atualizarRefeicaoLocal(refeicao.id, {
+                        observacoes: e.target.value,
+                      })
+                    }
+                    onBlur={(e) =>
+                      persistirRefeicao(refeicao.id, {
+                        observacoes: e.target.value.trim() || null,
+                      })
+                    }
+                    placeholder="Observações de preparo (ex: se optar pela tapioca, faça crepioca acrescentando 1 ovo)..."
+                    aria-label="Observações de preparo da refeição"
+                    className="w-full text-[11px] text-slate-600 placeholder:text-slate-400 bg-transparent hover:bg-slate-50 focus:bg-white border border-transparent hover:border-slate-200 focus:border-teal-500 rounded-lg px-2 py-1 outline-none transition-all"
+                  />
+                </div>
               </div>
             </div>
           );
         })}
+
+        {/* BOTÃO / PAINEL COMPACTO PARA ADICIONAR NOVA REFEIÇÃO NA VARIAÇÃO */}
+        {variacaoAtiva && (
+          <div className="bg-white/80 rounded-2xl border border-dashed border-slate-300 p-3.5">
+            {!isAddRefeicaoOpen ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddRefeicaoOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Adicionar Refeição</span>
+                </button>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    Atalhos:
+                  </span>
+                  {PRESETS_NOVA_REFEICAO.map((preset) => (
+                    <button
+                      key={preset.nome}
+                      type="button"
+                      disabled={criandoRefeicao}
+                      onClick={() => handleCriarRefeicao(preset)}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-600 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 border border-slate-200 hover:border-teal-200 transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      + {preset.horario} {preset.nome}
+                      {preset.opcional ? " (Opcional)" : ""}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  autoFocus
+                  value={novaRefNome}
+                  onChange={(e) => setNovaRefNome(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && novaRefNome.trim()) {
+                      e.preventDefault();
+                      handleCriarRefeicao();
+                    }
+                  }}
+                  placeholder="Nome da refeição (ex: Água + Suplemento, Sobremesa, Ceia)"
+                  className="flex-1 min-w-[220px] px-3 py-1.5 text-xs bg-white border border-slate-200 focus:border-teal-500 rounded-lg outline-none text-slate-800"
+                />
+                <input
+                  type="text"
+                  value={novaRefHorario}
+                  onChange={(e) => setNovaRefHorario(e.target.value.slice(0, 10))}
+                  placeholder="15:00"
+                  className="w-20 px-2.5 py-1.5 text-xs font-mono font-bold bg-white border border-slate-200 focus:border-teal-500 rounded-lg outline-none text-slate-700"
+                />
+                <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 px-2 py-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={novaRefOpcional}
+                    onChange={(e) => setNovaRefOpcional(e.target.checked)}
+                    className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                  />
+                  <span>Opcional</span>
+                </label>
+                <button
+                  type="button"
+                  disabled={!novaRefNome.trim() || criandoRefeicao}
+                  onClick={() => handleCriarRefeicao()}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-teal-700 hover:bg-teal-800 text-white cursor-pointer disabled:opacity-50"
+                >
+                  {criandoRefeicao ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5" />
+                  )}
+                  <span>Criar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddRefeicaoOpen(false)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ======================================================== */}
@@ -1152,7 +2026,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
               <button
                 type="button"
                 onClick={() => setIsNovaVariacaoModalOpen(false)}
-                className="text-slate-400 hover:text-white"
+                className="text-slate-400 hover:text-white cursor-pointer"
               >
                 ✕
               </button>
@@ -1161,7 +2035,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
             <div className="p-5 space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Nome da Variação (ex: Opção 3, Dia de Treino, Fim de Semana (Flexível)) *
+                  Nome da Variação (ex: Opção 3, Dia de Treino, Fim de Semana) *
                 </label>
                 <input
                   type="text"
@@ -1195,10 +2069,12 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                   onChange={(e) => setClonarDeId(e.target.value)}
                   className="w-full px-3 py-2 text-xs border border-slate-200 focus:border-teal-500 rounded-xl outline-none bg-white text-slate-800"
                 >
-                  <option value="">Refeições em branco (Desjejum, Almoço, Lanche, Jantar)</option>
+                  <option value="">
+                    Refeições em branco (Desjejum, Almoço, Lanche, Jantar)
+                  </option>
                   {variacoes.map((v) => (
                     <option key={v.id} value={v.id}>
-                      Clonar alimentos da "{v.nome}"
+                      Clonar alimentos da &quot;{v.nome}&quot;
                     </option>
                   ))}
                 </select>
@@ -1209,7 +2085,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
               <button
                 type="button"
                 onClick={() => setIsNovaVariacaoModalOpen(false)}
-                className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-200/60"
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-200/60 cursor-pointer"
               >
                 Cancelar
               </button>
@@ -1217,7 +2093,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
                 type="button"
                 disabled={!nomeNovaVariacao.trim() || criandoVariacao}
                 onClick={handleCriarNovaVariacao}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold bg-teal-700 hover:bg-teal-800 text-white shadow-2xs disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold bg-teal-700 hover:bg-teal-800 text-white shadow-2xs disabled:opacity-50 cursor-pointer"
               >
                 {criandoVariacao ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />

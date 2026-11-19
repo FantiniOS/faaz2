@@ -17,36 +17,9 @@ const ROTAS_CLINICAS_SENSIVEIS = [
   "/api/checkins/glicemia",
   "/api/checkins/intestino",
   "/api/checkins/hidratacao",
+  "/api/checkins/refeicoes",
   "/api/checkins/auditoria",
   "/dashboard/prontuarios",
-];
-
-// Rotas administrativas (gestão de equipe)
-const ROTAS_ADMINISTRATIVAS = [
-  "/api/equipe",
-  "/dashboard/equipe",
-  "/configuracoes/equipe",
-  "/api/usuarios",
-];
-
-// Rotas públicas que NÃO exigem autenticação
-const ROTAS_PUBLICAS = [
-  "/login",
-  "/api/auth/login",
-  "/api/auth/logout",
-  "/api/auth/paciente",   // Autenticação do App Mobile do Paciente via CPF
-  "/api/checkins",       // API pública para o app móvel
-  "/api/checkin-intestinal",
-];
-
-// Rotas protegidas que exigem autenticação mas não são clínicas
-const ROTAS_PROTEGIDAS_PADRAO = [
-  "/dashboard",
-  "/agenda",
-  "/alertas",
-  "/api/auth/me",
-  "/api/pacientes",
-  "/api/busca",
 ];
 
 /**
@@ -62,6 +35,7 @@ async function extrairSessao(request: NextRequest) {
       userId: payload.userId as string,
       nome: payload.nome as string,
       cargo: payload.cargo as string,
+      role: typeof payload.role === "string" ? payload.role : undefined,
       email: payload.email as string,
     };
   } catch {
@@ -99,8 +73,8 @@ export async function proxy(request: NextRequest) {
   // 3. BLOQUEIO RIGOROSO DE DADOS CLÍNICOS PARA O PERFIL DE SECRETÁRIA (LGPD e RBAC)
   const isSecretaria =
     sessao?.cargo === "SECRETARIA" ||
-    (sessao as any)?.role === "SECRETARIA" ||
-    (sessao as any)?.role === "RECEPTIONIST";
+    sessao?.role === "SECRETARIA" ||
+    sessao?.role === "RECEPTIONIST";
 
   if (isSecretaria) {
     const isRotaClinica =
@@ -248,6 +222,7 @@ export const config = {
     "/api/checkins/glicemia",
     "/api/checkins/intestino",
     "/api/checkins/hidratacao",
+    "/api/checkins/refeicoes",
     "/api/checkins/auditoria",
     "/configuracoes",
     "/configuracoes/:path*",

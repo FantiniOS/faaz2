@@ -413,7 +413,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
             evolucao && String(evolucao).trim().length > 0
               ? String(evolucao).trim().toUpperCase()
               : "CONSULTA E ATENDIMENTO CLÍNICO REGISTRADO.",
-          medicoResponsavel: sessao?.nome || "Dr. Carlos Fantini",
+          medicoResponsavel: sessao?.nome || "Equipe Clínica FAAZ",
         }),
       );
     }

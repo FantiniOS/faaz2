@@ -147,9 +147,9 @@ export async function GET(request: NextRequest) {
         pacientePlanoFaaz: Boolean(item.paciente?.planoFaaz),
         paciente: item.paciente,
         medicoId: item.medicoId,
-        medicoNome: item.medico?.nome || "Dr. Carlos Fantini",
+        medicoNome: item.medico?.nome || "Equipe Clínica FAAZ",
         medicoEspecialidade:
-          item.medico?.especialidade || "Endocrinologia & Nutrologia",
+          item.medico?.especialidade || "Endocrinologia & Metabologia",
         medicoCorHex: item.medico?.corHex || "#059669",
         medico: item.medico,
         especialidade:
@@ -418,9 +418,9 @@ export async function POST(request: NextRequest) {
           pacientePlanoFaaz: Boolean(criado.paciente?.planoFaaz),
           paciente: criado.paciente,
           medicoId: criado.medicoId,
-          medicoNome: criado.medico?.nome || "Dr. Carlos Fantini",
+          medicoNome: criado.medico?.nome || "Equipe Clínica FAAZ",
           medicoEspecialidade:
-            criado.medico?.especialidade || "Endocrinologia & Nutrologia",
+            criado.medico?.especialidade || "Endocrinologia & Metabologia",
           medicoCorHex: criado.medico?.corHex || "#059669",
           medico: criado.medico,
           especialidade:

@@ -4,12 +4,16 @@ import {
   clob,
   float,
   integer,
+  json,
   timestampTz,
   uuidPrimary,
   uuidRef,
   varchar,
 } from "./columns";
 import type { Patient } from "./patient";
+
+export type UnidadeMedidaDieta = "g" | "ml" | "un";
+export type StatusCheckinRefeicao = "SEGUI" | "FIZ_TROCA" | "NAO_FIZ";
 
 // ============================================================================
 // 23. ALIMENTOS (Banco de Alimentos e Nutrientes Base - TACO / UNICAMP)
@@ -166,12 +170,14 @@ export interface Refeicao {
   nome: string;
   horario: string | null;
   ordem: number;
+  opcional: boolean;
   observacoes: string | null;
   createdAt: Date;
   updatedAt: Date;
 
   variacaoDieta?: VariacaoDieta;
   itens?: ItemRefeicao[];
+  checkins?: CheckinRefeicao[];
 }
 
 export const RefeicaoEntity = new EntitySchema<Refeicao>({
@@ -183,6 +189,7 @@ export const RefeicaoEntity = new EntitySchema<Refeicao>({
     nome: varchar("NOME", 100),
     horario: varchar("HORARIO", 10, true),
     ordem: { ...integer("ORDEM"), default: 1 },
+    opcional: { ...bool("OPCIONAL"), default: false },
     observacoes: clob("OBSERVACOES"),
     createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
     updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
@@ -200,17 +207,24 @@ export const RefeicaoEntity = new EntitySchema<Refeicao>({
       target: "ItemRefeicao",
       inverseSide: "refeicao",
     },
+    checkins: {
+      type: "one-to-many",
+      target: "CheckinRefeicao",
+      inverseSide: "refeicao",
+    },
   },
 });
 
 // ============================================================================
-// 26. ITENS_REFEICOES (Vínculo de Refeição ao Alimento com Quantidade em Gramas)
+// 26. ITENS_REFEICOES (Vínculo de Refeição ao Alimento com Quantidade/Medida)
 // ============================================================================
 export interface ItemRefeicao {
   id: string;
   refeicaoId: string;
   alimentoId: string;
   quantidadeGramas: number;
+  unidade: UnidadeMedidaDieta;
+  medidaCaseira: string | null;
   observacao: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -218,6 +232,7 @@ export interface ItemRefeicao {
   refeicao?: Refeicao;
   alimento?: Alimento;
   substituicoes?: DietSubstitution[];
+  substituicoesPrescritas?: SubstituicaoItemRefeicao[];
 }
 
 export const ItemRefeicaoEntity = new EntitySchema<ItemRefeicao>({
@@ -228,6 +243,8 @@ export const ItemRefeicaoEntity = new EntitySchema<ItemRefeicao>({
     refeicaoId: uuidRef("REFEICAO_ID"),
     alimentoId: uuidRef("ALIMENTO_ID"),
     quantidadeGramas: { ...float("QUANTIDADE_GRAMAS", false), default: 100 },
+    unidade: { ...varchar("UNIDADE", 16), default: "g" },
+    medidaCaseira: varchar("MEDIDA_CASEIRA", 120, true),
     observacao: varchar("OBSERVACAO", 160, true),
     createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
     updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
@@ -250,6 +267,113 @@ export const ItemRefeicaoEntity = new EntitySchema<ItemRefeicao>({
       type: "one-to-many",
       target: "DietSubstitution",
       inverseSide: "prescribedDietItem",
+    },
+    substituicoesPrescritas: {
+      type: "one-to-many",
+      target: "SubstituicaoItemRefeicao",
+      inverseSide: "itemRefeicao",
+    },
+  },
+});
+
+// ============================================================================
+// 26.1 SUBSTITUICOES_ITENS_REFEICAO (Opções 1:N prescritas pela médica)
+// ============================================================================
+export interface SubstituicaoItemRefeicao {
+  id: string;
+  itemRefeicaoId: string;
+  alimentoId: string | null;
+  nomeExibicao: string;
+  quantidade: number;
+  unidade: UnidadeMedidaDieta;
+  medidaCaseira: string | null;
+  ordem: number;
+  createdAt: Date;
+  updatedAt: Date;
+
+  itemRefeicao?: ItemRefeicao;
+  alimento?: Alimento | null;
+}
+
+export const SubstituicaoItemRefeicaoEntity =
+  new EntitySchema<SubstituicaoItemRefeicao>({
+    name: "SubstituicaoItemRefeicao",
+    tableName: "SUBSTITUICOES_ITENS_REFEICAO",
+    columns: {
+      id: uuidPrimary,
+      itemRefeicaoId: uuidRef("ITEM_REFEICAO_ID"),
+      alimentoId: uuidRef("ALIMENTO_ID", true),
+      nomeExibicao: varchar("NOME_EXIBICAO", 200),
+      quantidade: { ...float("QUANTIDADE", false), default: 100 },
+      unidade: { ...varchar("UNIDADE", 16), default: "g" },
+      medidaCaseira: varchar("MEDIDA_CASEIRA", 120, true),
+      ordem: { ...integer("ORDEM"), default: 1 },
+      createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
+      updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
+    },
+    relations: {
+      itemRefeicao: {
+        type: "many-to-one",
+        target: "ItemRefeicao",
+        inverseSide: "substituicoesPrescritas",
+        joinColumn: { name: "ITEM_REFEICAO_ID" },
+        onDelete: "CASCADE",
+      },
+      alimento: {
+        type: "many-to-one",
+        target: "Alimento",
+        joinColumn: { name: "ALIMENTO_ID" },
+        nullable: true,
+        onDelete: "SET NULL",
+      },
+    },
+  });
+
+// ============================================================================
+// 32. CHECKINS_REFEICOES (Check-in leve de 3 segundos pelo App Mobile)
+// ============================================================================
+export interface CheckinRefeicao {
+  id: string;
+  pacienteId: string;
+  refeicaoId: string;
+  dataDia: string;
+  status: StatusCheckinRefeicao;
+  opcaoEscolhida: string | null;
+  trocasJson: unknown[] | Record<string, unknown> | null;
+  criadoEm: Date;
+  atualizadoEm: Date;
+
+  paciente?: Patient;
+  refeicao?: Refeicao;
+}
+
+export const CheckinRefeicaoEntity = new EntitySchema<CheckinRefeicao>({
+  name: "CheckinRefeicao",
+  tableName: "CHECKINS_REFEICOES",
+  columns: {
+    id: uuidPrimary,
+    pacienteId: uuidRef("PACIENTE_ID"),
+    refeicaoId: uuidRef("REFEICAO_ID"),
+    dataDia: varchar("DATA_DIA", 10),
+    status: varchar("STATUS", 20),
+    opcaoEscolhida: varchar("OPCAO_ESCOLHIDA", 120, true),
+    trocasJson: json("TROCAS_JSON", true),
+    criadoEm: { ...timestampTz("CRIADO_EM"), createDate: true },
+    atualizadoEm: { ...timestampTz("ATUALIZADO_EM"), updateDate: true },
+  },
+  relations: {
+    paciente: {
+      type: "many-to-one",
+      target: "Patient",
+      joinColumn: { name: "PACIENTE_ID" },
+      onDelete: "CASCADE",
+    },
+    refeicao: {
+      type: "many-to-one",
+      target: "Refeicao",
+      inverseSide: "checkins",
+      joinColumn: { name: "REFEICAO_ID" },
+      onDelete: "CASCADE",
     },
   },
 });
