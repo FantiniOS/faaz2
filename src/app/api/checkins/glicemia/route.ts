@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { Between, IsNull, Raw } from "typeorm";
+import { Between, IsNull, MoreThanOrEqual, Raw } from "typeorm";
 import { z } from "zod";
 import { getRepository } from "@/lib/db/data-source";
 import { PatientEntity, RegistroGlicemiaEntity } from "@/lib/db/entities";
@@ -197,7 +197,15 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const pacienteId = searchParams.get("pacienteId");
     const limitParam = searchParams.get("limit");
-    const limit = limitParam ? parseInt(limitParam, 10) : 50;
+    const parsedLimit = limitParam ? parseInt(limitParam, 10) : 50;
+    const limit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
+    const incluirHistorico = searchParams.get("historico") === "true";
+    const diasParam = searchParams.get("dias");
+    const parsedDias = diasParam ? parseInt(diasParam, 10) : 30;
+    const dias = Number.isFinite(parsedDias)
+      ? Math.min(90, Math.max(1, parsedDias))
+      : 30;
 
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
@@ -269,6 +277,83 @@ export async function GET(req: NextRequest) {
       alertasHoje.map((a) => a.pacienteId),
     ).size;
 
+    let historicoPayload: {
+      dias: number;
+      historico: Array<{
+        id: string;
+        valor: number;
+        momento: string;
+        momentoLegivel: string;
+        dataRegistro: string;
+        isCritico: boolean;
+        tipoAlerta: "HIPOGLICEMIA" | "HIPERGLICEMIA" | "NORMAL";
+      }>;
+      resumo: {
+        media: number | null;
+        totalMedicoes: number;
+        dentroDaMeta: number;
+        alertas: number;
+      };
+    } | null = null;
+
+    if (incluirHistorico) {
+      const inicioPeriodo = new Date();
+      inicioPeriodo.setDate(inicioPeriodo.getDate() - dias);
+      inicioPeriodo.setHours(0, 0, 0, 0);
+
+      const historicoLimit = limitParam ? Math.min(limit, 500) : 500;
+      const historicoDb = await glicemiaRepo.find({
+        where: {
+          dataRegistro: MoreThanOrEqual(inicioPeriodo),
+          ...(resolvedId ? { pacienteId: resolvedId } : {}),
+        },
+        order: { dataRegistro: "DESC" },
+        take: historicoLimit,
+      });
+
+      const historico = historicoDb.map((r) => {
+        const valor = Number(r.valor);
+        const isCritico = valor < 70 || valor > 180;
+        const tipoAlerta: "HIPOGLICEMIA" | "HIPERGLICEMIA" | "NORMAL" =
+          valor < 70
+            ? "HIPOGLICEMIA"
+            : valor > 180
+              ? "HIPERGLICEMIA"
+              : "NORMAL";
+        return {
+          id: r.id,
+          valor,
+          momento: r.momento,
+          momentoLegivel: formatarMomentoGlicemia(r.momento),
+          dataRegistro: new Date(r.dataRegistro).toISOString(),
+          isCritico,
+          tipoAlerta,
+        };
+      });
+
+      const totalMedicoes = historico.length;
+      const alertas = historico.filter((item) => item.isCritico).length;
+      const dentroDaMeta = totalMedicoes - alertas;
+      const media =
+        totalMedicoes > 0
+          ? Math.round(
+              historico.reduce((acc, item) => acc + item.valor, 0) /
+                totalMedicoes,
+            )
+          : null;
+
+      historicoPayload = {
+        dias,
+        historico,
+        resumo: {
+          media,
+          totalMedicoes,
+          dentroDaMeta,
+          alertas,
+        },
+      };
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -277,6 +362,7 @@ export async function GET(req: NextRequest) {
         totalRegistrosHoje: registrosHoje.length,
         alertasHoje,
         registrosHoje,
+        ...(historicoPayload ?? {}),
       },
       {
         headers: {

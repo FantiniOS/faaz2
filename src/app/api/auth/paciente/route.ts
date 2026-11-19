@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { IsNull } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
-import { PatientEntity } from "@/lib/db/entities";
+import { PatientEntity, ProntuarioPacienteEntity } from "@/lib/db/entities";
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,6 +55,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+    const prontuario = await prontuarioRepo.findOne({
+      where: { pacienteId: paciente.id },
+      select: { id: true, medicacoes: true },
+    });
+    const medicacoes = prontuario?.medicacoes?.trim() || null;
+
     // Retorna os dados do paciente para salvar no estado global do app mobile
     return NextResponse.json(
       {
@@ -79,6 +86,7 @@ export async function POST(req: NextRequest) {
             paciente.treatmentObjective ||
             paciente.clinicalFocus ||
             "Otimização Metabólica & Saúde Integrativa",
+          medicacoes,
           avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
         },
       },

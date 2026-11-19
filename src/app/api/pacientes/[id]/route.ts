@@ -7,11 +7,16 @@ import {
   CheckinHidratacaoEntity,
   CheckinIntestinalEntity,
   PatientEntity,
+  ProntuarioPacienteEntity,
   type BiologicalSex,
   type PatientStatus,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
-import { podeCadastrarPacientes, podeExcluirPacientes } from "@/lib/auth-rbac";
+import {
+  podeAcessarDadosClinicos,
+  podeCadastrarPacientes,
+  podeExcluirPacientes,
+} from "@/lib/auth-rbac";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -45,7 +50,22 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    return NextResponse.json({ paciente });
+    let medicacoes: string | null = null;
+    if (!sessao || podeAcessarDadosClinicos(sessao.cargo)) {
+      const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+      const prontuario = await prontuarioRepo.findOne({
+        where: { pacienteId: paciente.id },
+        select: { id: true, medicacoes: true },
+      });
+      medicacoes = prontuario?.medicacoes?.trim() || null;
+    }
+
+    return NextResponse.json({
+      paciente: {
+        ...paciente,
+        medicacoes,
+      },
+    });
   } catch (error: unknown) {
     console.error("[PACIENTES/[ID]/GET] Erro:", error);
     const details = error instanceof Error ? error.message : String(error);

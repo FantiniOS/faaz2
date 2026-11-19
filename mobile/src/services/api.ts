@@ -87,6 +87,139 @@ export interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: any;
 }
 
+export interface GlicemiaHistoricoItem {
+  id: string;
+  valor: number;
+  momento: string;
+  momentoLegivel?: string;
+  dataRegistro: string;
+  isCritico: boolean;
+  tipoAlerta?: "HIPOGLICEMIA" | "HIPERGLICEMIA" | "NORMAL";
+}
+
+export interface GlicemiaResumoPeriodo {
+  media: number | null;
+  totalMedicoes: number;
+  dentroDaMeta: number;
+  alertas: number;
+}
+
+export interface GlicemiaHistoricoResponse {
+  success: boolean;
+  dias?: number;
+  totalAlertasHoje?: number;
+  totalRegistrosHoje?: number;
+  alertasHoje?: GlicemiaHistoricoItem[];
+  registrosHoje?: GlicemiaHistoricoItem[];
+  historico?: GlicemiaHistoricoItem[];
+  resumo?: GlicemiaResumoPeriodo;
+}
+
+export interface IntestinoCheckinItem {
+  id: string;
+  pacienteId: string;
+  tipoBristol: number;
+  categoria: "constipacao" | "ideal" | "diarreia" | string;
+  sintomas: string[];
+  data: string;
+  pacienteNome?: string;
+}
+
+export interface IntestinoHistoricoResponse {
+  success: boolean;
+  dataReferencia?: string;
+  temRegistroHoje?: boolean;
+  count?: number;
+  countHoje?: number;
+  ultimoRegistroHoje?: IntestinoCheckinItem | null;
+  countIdealHoje?: number;
+  countConstipacaoHoje?: number;
+  countDiarreiaHoje?: number;
+  data?: IntestinoCheckinItem[];
+  registrosHoje?: IntestinoCheckinItem[];
+  historico?: IntestinoCheckinItem[];
+}
+
+export interface MeasurementItem {
+  id: string;
+  measuredAt: string;
+  bodyFatPercentage: number | null;
+  waist: number | null;
+  abdomen: number | null;
+  hips: number | null;
+  rightArm: number | null;
+  leftArm: number | null;
+  rightThigh: number | null;
+  leftThigh: number | null;
+  notes: string | null;
+  createdBy: string | null;
+}
+
+export interface BiometricMeasurementItem {
+  id: string;
+  measuredAt: string;
+  weightKg: number;
+  bmi: number;
+  waistCircumferenceCm?: number | null;
+  bodyFatPercentage?: number | null;
+  skeletalMuscleKg?: number | null;
+  sourceType?: string;
+  isValidatedByStaff?: boolean;
+  createdAt?: string;
+}
+
+export interface PacienteMedidasResponse {
+  sucesso: boolean;
+  total: number;
+  medicoes: BiometricMeasurementItem[];
+  measurements: MeasurementItem[];
+}
+
+export interface RegistrarMedidaPayload {
+  measuredAt?: string;
+  bodyFatPercentage?: number | string | null;
+  waist?: number | string | null;
+  abdomen?: number | string | null;
+  hips?: number | string | null;
+  rightArm?: number | string | null;
+  leftArm?: number | string | null;
+  rightThigh?: number | string | null;
+  leftThigh?: number | string | null;
+  notes?: string | null;
+}
+
+export interface RegistrarMedidaResponse {
+  sucesso: boolean;
+  success?: boolean;
+  mensagem?: string;
+  measurement: MeasurementItem;
+}
+
+export interface PacienteTreinosResponse {
+  sucesso: boolean;
+  paciente?: {
+    id: string;
+    nome: string;
+  };
+  diretrizes: {
+    workoutType: string;
+    workoutFrequency: number;
+    workoutDuration: number;
+    workoutRestrictions: string;
+  };
+  adesao: {
+    diasAtivosUltimos30Dias: number;
+    metaEsperada30Dias: number;
+    porcentagemAdesao: number;
+    frequenciaSemanal: number;
+    totalLogs: number;
+    historicoCheckins: Array<{
+      id: string;
+      data: string;
+    }>;
+  };
+}
+
 /**
  * Executa requisição HTTP tipada com headers, auth token e CORS
  */
@@ -259,6 +392,22 @@ export const api = {
     getPesagens(pacienteId: string) {
       return api.get(`/pacientes/${encodeURIComponent(pacienteId)}/pesagens`);
     },
+    getMedidas(pacienteId: string) {
+      return api.get<PacienteMedidasResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/medicoes`
+      );
+    },
+    registrarMedida(pacienteId: string, payload: RegistrarMedidaPayload) {
+      return api.post<RegistrarMedidaResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/medicoes`,
+        payload
+      );
+    },
+    getTreinos(pacienteId: string) {
+      return api.get<PacienteTreinosResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/treinos`
+      );
+    },
     uploadAvatar(pacienteId: string, imageBase64: string, mimeType: string = "image/jpeg") {
       return api.post(`/pacientes/${encodeURIComponent(pacienteId)}/avatar`, {
         imageBase64,
@@ -333,6 +482,15 @@ export const api = {
     }) {
       return api.post("/checkins/glicemia", payload);
     },
+    getHistoricoGlicemia(pacienteId: string, dias: number = 30) {
+      return api.get<GlicemiaHistoricoResponse>("/checkins/glicemia", {
+        params: {
+          pacienteId,
+          historico: true,
+          dias,
+        },
+      });
+    },
     registrarIntestino(payload: {
       pacienteId: string;
       tipoBristol: number;
@@ -340,6 +498,15 @@ export const api = {
       sintomas?: string[];
     }) {
       return api.post("/checkins/intestino", payload);
+    },
+    getHistoricoIntestino(pacienteId: string, limit: number = 50) {
+      return api.get<IntestinoHistoricoResponse>("/checkins/intestino", {
+        params: {
+          pacienteId,
+          historico: true,
+          limit,
+        },
+      });
     },
     getTreinoHoje(pacienteId?: string) {
       return api.get<{

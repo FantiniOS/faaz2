@@ -151,6 +151,9 @@ export async function proxy(request: NextRequest) {
     (pathname.startsWith("/api/pacientes/") &&
       pathname.endsWith("/pesagens")) ||
     (pathname.startsWith("/api/pacientes/") &&
+      pathname.endsWith("/medicoes") &&
+      request.method === "POST") ||
+    (pathname.startsWith("/api/pacientes/") &&
       pathname.endsWith("/avatar")) ||
     pathname === "/api/paciente/dieta" ||
     pathname.startsWith("/api/paciente/") ||
