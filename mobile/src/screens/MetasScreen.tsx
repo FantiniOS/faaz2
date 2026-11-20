@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -148,6 +148,15 @@ export function MetasScreen({
   const [treinos, setTreinos] = useState<PacienteTreinosResponse | null>(null);
 
   const [chartWidth, setChartWidth] = useState<number>(280);
+  const inFlightRef = useRef<boolean>(false);
+  const mountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const carregarEvolucao = useCallback(async () => {
     if (!realPacienteId) {
@@ -155,68 +164,90 @@ export function MetasScreen({
       return;
     }
 
-    const [metasRes, medidasRes, glicemiaRes, intestinoRes, treinosRes] =
-      await Promise.allSettled([
+    // Trava inFlight: evita disparos duplicados simultâneos ao abrir/atualizar Evolução
+    if (inFlightRef.current) {
+      return;
+    }
+    inFlightRef.current = true;
+
+    try {
+      // Micro-onda 1 (máx. 2 chamadas simultâneas): peso/objetivo + medidas corporais
+      const [metasRes, medidasRes] = await Promise.allSettled([
         api.pacientes.getMetas(realPacienteId),
         api.pacientes.getMedidas(realPacienteId),
-        api.checkins.getHistoricoGlicemia(realPacienteId, 30),
-        api.checkins.getHistoricoIntestino(realPacienteId, 50),
-        api.pacientes.getTreinos(realPacienteId),
       ]);
+      if (!mountedRef.current) return;
 
-    if (metasRes.status === "fulfilled" && metasRes.value) {
-      const m = metasRes.value;
-      if (m.metas?.treatmentObjective || m.metas?.focoMetabolico) {
-        setObjetivoClinico(
-          m.metas.treatmentObjective || m.metas.focoMetabolico
+      if (metasRes.status === "fulfilled" && metasRes.value) {
+        const m = metasRes.value;
+        if (m.metas?.treatmentObjective || m.metas?.focoMetabolico) {
+          setObjetivoClinico(
+            m.metas.treatmentObjective || m.metas.focoMetabolico
+          );
+        }
+        if (m.pesoEvolucao) {
+          setPesoEvolucao({
+            pesoInicialKg: Number(m.pesoEvolucao.pesoInicialKg) || 0,
+            pesoAtualKg: Number(m.pesoEvolucao.pesoAtualKg) || 0,
+            pesoAlvoKg: Number(m.pesoEvolucao.pesoAlvoKg) || 0,
+            imcAtual: Number(m.pesoEvolucao.imcAtual) || 0,
+            historico: Array.isArray(m.pesoEvolucao.historico)
+              ? m.pesoEvolucao.historico
+              : [],
+          });
+        }
+      }
+
+      if (medidasRes.status === "fulfilled" && medidasRes.value) {
+        setMeasurements(
+          Array.isArray(medidasRes.value.measurements)
+            ? medidasRes.value.measurements
+            : []
         );
       }
-      if (m.pesoEvolucao) {
-        setPesoEvolucao({
-          pesoInicialKg: Number(m.pesoEvolucao.pesoInicialKg) || 0,
-          pesoAtualKg: Number(m.pesoEvolucao.pesoAtualKg) || 0,
-          pesoAlvoKg: Number(m.pesoEvolucao.pesoAlvoKg) || 0,
-          imcAtual: Number(m.pesoEvolucao.imcAtual) || 0,
-          historico: Array.isArray(m.pesoEvolucao.historico)
-            ? m.pesoEvolucao.historico
-            : [],
-        });
+
+      // Micro-onda 2 (máx. 2 chamadas simultâneas): glicemia + intestino (Bristol)
+      const [glicemiaRes, intestinoRes] = await Promise.allSettled([
+        api.checkins.getHistoricoGlicemia(realPacienteId, 30),
+        api.checkins.getHistoricoIntestino(realPacienteId, 50),
+      ]);
+      if (!mountedRef.current) return;
+
+      if (glicemiaRes.status === "fulfilled" && glicemiaRes.value) {
+        if (glicemiaRes.value.resumo) {
+          setGlicemiaResumo(glicemiaRes.value.resumo);
+        }
+        setGlicemiaHistorico(
+          Array.isArray(glicemiaRes.value.historico)
+            ? glicemiaRes.value.historico
+            : []
+        );
+      }
+
+      if (intestinoRes.status === "fulfilled" && intestinoRes.value) {
+        const hist = Array.isArray(intestinoRes.value.historico)
+          ? intestinoRes.value.historico
+          : Array.isArray(intestinoRes.value.registrosHoje)
+            ? intestinoRes.value.registrosHoje
+            : [];
+        setIntestinoHistorico(hist);
+      }
+
+      // Micro-onda 3 (1 chamada): histórico de treinos
+      const [treinosRes] = await Promise.allSettled([
+        api.pacientes.getTreinos(realPacienteId),
+      ]);
+      if (!mountedRef.current) return;
+
+      if (treinosRes.status === "fulfilled" && treinosRes.value?.sucesso) {
+        setTreinos(treinosRes.value);
+      }
+    } finally {
+      inFlightRef.current = false;
+      if (mountedRef.current) {
+        setIsInitialLoading(false);
       }
     }
-
-    if (medidasRes.status === "fulfilled" && medidasRes.value) {
-      setMeasurements(
-        Array.isArray(medidasRes.value.measurements)
-          ? medidasRes.value.measurements
-          : []
-      );
-    }
-
-    if (glicemiaRes.status === "fulfilled" && glicemiaRes.value) {
-      if (glicemiaRes.value.resumo) {
-        setGlicemiaResumo(glicemiaRes.value.resumo);
-      }
-      setGlicemiaHistorico(
-        Array.isArray(glicemiaRes.value.historico)
-          ? glicemiaRes.value.historico
-          : []
-      );
-    }
-
-    if (intestinoRes.status === "fulfilled" && intestinoRes.value) {
-      const hist = Array.isArray(intestinoRes.value.historico)
-        ? intestinoRes.value.historico
-        : Array.isArray(intestinoRes.value.registrosHoje)
-          ? intestinoRes.value.registrosHoje
-          : [];
-      setIntestinoHistorico(hist);
-    }
-
-    if (treinosRes.status === "fulfilled" && treinosRes.value?.sucesso) {
-      setTreinos(treinosRes.value);
-    }
-
-    setIsInitialLoading(false);
   }, [realPacienteId]);
 
   useEffect(() => {
