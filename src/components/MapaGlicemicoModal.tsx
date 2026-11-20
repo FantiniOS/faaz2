@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -16,7 +22,7 @@ import {
   Table2,
   X,
 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
+import AuthContext, { type UsuarioLogado } from "@/contexts/AuthContext";
 import { formatarDataBR } from "@/lib/date-br";
 import {
   formatarNomeArquivoMapaGlicemico,
@@ -114,7 +120,29 @@ export function MapaGlicemicoModal({
   protocoloAtual,
   onProtocoloChange,
 }: MapaGlicemicoModalProps) {
-  const { usuario } = useAuth();
+  const authContext = useContext(AuthContext);
+  const [fetchedSessionUser, setFetchedSessionUser] =
+    useState<UsuarioLogado | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || authContext?.usuario) return;
+    let active = true;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data?.autenticado && data?.usuario) {
+          setFetchedSessionUser(data.usuario as UsuarioLogado);
+        }
+      })
+      .catch(() => {
+        // Fallback institucional limpo caso a sessão não esteja disponível
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, authContext?.usuario]);
+
+  const usuario = authContext?.usuario ?? fetchedSessionUser;
 
   const [subAba, setSubAba] = useState<SubAbaMapaGlicemico>(initialTab);
   const [dias, setDias] = useState<7 | 14 | 30>(14);

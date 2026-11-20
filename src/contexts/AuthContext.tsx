@@ -60,7 +60,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    recarregar();
+    let mounted = true;
+    void Promise.resolve().then(() => {
+      if (!mounted) return;
+      if (typeof window !== "undefined") {
+        const path = window.location.pathname;
+        if (
+          path === "/login" ||
+          path.startsWith("/login/") ||
+          path.startsWith("/app")
+        ) {
+          setCarregando(false);
+          return;
+        }
+      }
+      void recarregar();
+    });
+    return () => {
+      mounted = false;
+    };
   }, [recarregar]);
 
   const login = async (email: string, senha: string) => {
@@ -99,12 +117,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useAuth() {
+const FALLBACK_AUTH_CONTEXT: AuthContextType = {
+  usuario: null,
+  carregando: false,
+  login: async () => ({
+    sucesso: false,
+    erro: "AuthProvider não inicializado.",
+  }),
+  logout: async () => {},
+  recarregar: async () => {},
+};
+
+export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth deve ser usado dentro de um AuthProvider");
-  }
-  return context;
+  return context ?? FALLBACK_AUTH_CONTEXT;
 }
 
 export default AuthContext;

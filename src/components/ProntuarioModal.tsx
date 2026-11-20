@@ -4327,9 +4327,9 @@ export function ProntuarioModal({
           />
         )}
 
-        {paciente && (
+        {paciente && isOpen && isMapaGlicemicoOpen && (
           <MapaGlicemicoModal
-            isOpen={isOpen && isMapaGlicemicoOpen}
+            isOpen={true}
             onClose={() => setIsMapaGlicemicoOpen(false)}
             pacienteId={paciente.id}
             pacienteNome={pacienteNome}
