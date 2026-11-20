@@ -163,42 +163,127 @@ function formatBristolResumo(item: IntestinoCheckinItem): {
   };
 }
 
-function formatMedidaResumo(m: MeasurementItem | null): {
-  valor: string;
-  subtitulo: string;
-} {
-  if (!m) {
-    return { valor: "Registrar", subtitulo: "Cintura, abdômen e mais" };
+interface MedidasConsolidadasHome {
+  temDados: boolean;
+  dataCurta: string | null;
+  waist: number | null;
+  abdomen: number | null;
+  hips: number | null;
+  waistTexto: string;
+  abdomenTexto: string;
+  hipsTexto: string;
+  valorMeiaLargura: string;
+  subtituloMeiaLargura: string;
+}
+
+function formatCmBr(val: number | null): string {
+  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+    return "--";
   }
-  const dataCurta = new Date(m.measuredAt).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-  });
-  if (m.waist !== null && m.waist !== undefined) {
+  return `${Number(val).toFixed(1).replace(".", ",")} cm`;
+}
+
+function formatNum1Br(val: number): string {
+  return Number(val).toFixed(1).replace(".", ",");
+}
+
+function consolidarMedidasHome(
+  list: MeasurementItem[]
+): MedidasConsolidadasHome {
+  if (!Array.isArray(list) || list.length === 0) {
     return {
-      valor: `${Number(m.waist).toFixed(1).replace(".", ",")} cm`,
-      subtitulo: `Cintura • ${dataCurta}`,
+      temDados: false,
+      dataCurta: null,
+      waist: null,
+      abdomen: null,
+      hips: null,
+      waistTexto: "--",
+      abdomenTexto: "--",
+      hipsTexto: "--",
+      valorMeiaLargura: "Registrar",
+      subtituloMeiaLargura: "Cintura, abdômen e quadril",
     };
   }
-  if (m.abdomen !== null && m.abdomen !== undefined) {
-    return {
-      valor: `${Number(m.abdomen).toFixed(1).replace(".", ",")} cm`,
-      subtitulo: `Abdômen • ${dataCurta}`,
-    };
+
+  const ordenadas = [...list].sort(
+    (a, b) =>
+      new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime()
+  );
+
+  const pickLatest = (
+    key: "waist" | "abdomen" | "hips" | "bodyFatPercentage"
+  ): number | null => {
+    for (const item of ordenadas) {
+      const raw = item[key];
+      if (raw !== null && raw !== undefined && !Number.isNaN(Number(raw))) {
+        const num = Number(raw);
+        if (num > 0) return num;
+      }
+    }
+    return null;
+  };
+
+  const waist = pickLatest("waist");
+  const abdomen = pickLatest("abdomen");
+  const hips = pickLatest("hips");
+  const bodyFat = pickLatest("bodyFatPercentage");
+
+  const newestDate = new Date(ordenadas[0].measuredAt);
+  const dataCurta = !Number.isNaN(newestDate.getTime())
+    ? newestDate.toLocaleDateString("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+      })
+    : null;
+
+  const temAlgumaCircunferencia =
+    waist !== null || abdomen !== null || hips !== null;
+  const temDados = temAlgumaCircunferencia || bodyFat !== null;
+
+  // Layout meia largura (quando a grade 2x2 tem 4 cards com Glicemia ativa):
+  // Prioriza Cintura em destaque e linha secundária compacta "Abd 85,0 • Quad 101,0"
+  let valorMeiaLargura = "Registrar";
+  let subtituloMeiaLargura = "Cintura, abdômen e quadril";
+
+  if (waist !== null) {
+    valorMeiaLargura = `${formatNum1Br(waist)} cm`;
+    const secundarios: string[] = [];
+    if (abdomen !== null) secundarios.push(`Abd ${formatNum1Br(abdomen)}`);
+    if (hips !== null) secundarios.push(`Quad ${formatNum1Br(hips)}`);
+    subtituloMeiaLargura =
+      secundarios.length > 0
+        ? secundarios.join(" • ")
+        : dataCurta
+          ? `Cintura • ${dataCurta}`
+          : "Cintura";
+  } else if (abdomen !== null) {
+    valorMeiaLargura = `${formatNum1Br(abdomen)} cm`;
+    subtituloMeiaLargura =
+      hips !== null
+        ? `Abdômen • Quad ${formatNum1Br(hips)}`
+        : dataCurta
+          ? `Abdômen • ${dataCurta}`
+          : "Abdômen";
+  } else if (hips !== null) {
+    valorMeiaLargura = `${formatNum1Br(hips)} cm`;
+    subtituloMeiaLargura = dataCurta ? `Quadril • ${dataCurta}` : "Quadril";
+  } else if (bodyFat !== null) {
+    valorMeiaLargura = `${formatNum1Br(bodyFat)}%`;
+    subtituloMeiaLargura = dataCurta ? `Gordura • ${dataCurta}` : "Gordura";
   }
-  if (m.bodyFatPercentage !== null && m.bodyFatPercentage !== undefined) {
-    return {
-      valor: `${Number(m.bodyFatPercentage).toFixed(1).replace(".", ",")}%`,
-      subtitulo: `Gordura • ${dataCurta}`,
-    };
-  }
-  if (m.hips !== null && m.hips !== undefined) {
-    return {
-      valor: `${Number(m.hips).toFixed(1).replace(".", ",")} cm`,
-      subtitulo: `Quadril • ${dataCurta}`,
-    };
-  }
-  return { valor: "Registrado", subtitulo: `Em ${dataCurta}` };
+
+  return {
+    temDados,
+    dataCurta,
+    waist,
+    abdomen,
+    hips,
+    waistTexto: formatCmBr(waist),
+    abdomenTexto: formatCmBr(abdomen),
+    hipsTexto: formatCmBr(hips),
+    valorMeiaLargura,
+    subtituloMeiaLargura,
+  };
 }
 
 const SLOT_LABELS: Record<MomentoClinicoGlicemia, string> = {
@@ -342,7 +427,7 @@ export function HomeScreen({
 
   const [ultimoBristolHoje, setUltimoBristolHoje] =
     useState<IntestinoCheckinItem | null>(null);
-  const [ultimaMedida, setUltimaMedida] = useState<MeasurementItem | null>(null);
+  const [listaMedidas, setListaMedidas] = useState<MeasurementItem[]>([]);
   const [mediuHoje, setMediuHoje] = useState<boolean>(false);
 
   useEffect(() => {
@@ -489,11 +574,17 @@ export function HomeScreen({
       const list = Array.isArray(medidasRes.value.measurements)
         ? medidasRes.value.measurements
         : [];
+      setListaMedidas(list);
       if (list.length > 0) {
-        setUltimaMedida(list[0]);
-        setMediuHoje(new Date(list[0].measuredAt).toDateString() === hojeStr);
+        const maisRecente = [...list].sort(
+          (a, b) =>
+            new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime()
+        )[0];
+        setMediuHoje(
+          Boolean(maisRecente) &&
+            new Date(maisRecente.measuredAt).toDateString() === hojeStr
+        );
       } else {
-        setUltimaMedida(null);
         setMediuHoje(false);
       }
     }
@@ -791,7 +882,10 @@ export function HomeScreen({
   const bristolResumo = ultimoBristolHoje
     ? formatBristolResumo(ultimoBristolHoje)
     : null;
-  const medidaResumo = formatMedidaResumo(ultimaMedida);
+  const medidasConsolidadas = useMemo(
+    () => consolidarMedidasHome(listaMedidas),
+    [listaMedidas]
+  );
 
   const headerPaddingTop = Math.max(
     insets.top + 8,
@@ -1281,7 +1375,7 @@ export function HomeScreen({
             </Text>
           </TouchableOpacity>
 
-          {/* 4. MEDIDAS */}
+          {/* 4. MEDIDAS (LAYOUT ADAPTATIVO: 3 COLUNAS EM LARGURA TOTAL OU COMPACTO EM 2x2) */}
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => onNavigateToCheckin?.("medidas")}
@@ -1290,30 +1384,113 @@ export function HomeScreen({
               !protocoloGlicemico?.ativo && { width: "100%" },
             ]}
           >
-            <View style={styles.tileTopRow}>
-              <View style={[styles.tileIconBox, { backgroundColor: "#f0f9ff" }]}>
-                <Ruler size={16} color="#0284c7" />
-              </View>
-              {ultimaMedida ? (
-                <View
-                  style={[
-                    styles.miniBadge,
-                    { backgroundColor: "#f1f5f9", borderColor: "#cbd5e1" },
-                  ]}
-                >
-                  <Text style={[styles.miniBadgeText, { color: "#334155" }]}>
-                    Salvo
-                  </Text>
+            {!protocoloGlicemico?.ativo ? (
+              <>
+                <View style={styles.medidasFullHeaderRow}>
+                  <View style={styles.medidasFullHeaderLeft}>
+                    <View
+                      style={[
+                        styles.tileIconBox,
+                        { backgroundColor: "#f0f9ff" },
+                      ]}
+                    >
+                      <Ruler size={16} color="#0284c7" />
+                    </View>
+                    <Text style={styles.tileLabel}>Medidas</Text>
+                  </View>
+
+                  <View style={styles.medidasFullHeaderRight}>
+                    {medidasConsolidadas.dataCurta ? (
+                      <Text style={styles.medidasDateText}>
+                        {medidasConsolidadas.dataCurta}
+                      </Text>
+                    ) : null}
+                    {medidasConsolidadas.temDados ? (
+                      <View
+                        style={[
+                          styles.miniBadge,
+                          {
+                            backgroundColor: "#f1f5f9",
+                            borderColor: "#cbd5e1",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[styles.miniBadgeText, { color: "#334155" }]}
+                        >
+                          Salvo
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.medidasEmptyHint}>
+                        Toque para registrar
+                      </Text>
+                    )}
+                  </View>
                 </View>
-              ) : null}
-            </View>
-            <Text style={styles.tileLabel}>Medidas</Text>
-            <Text style={styles.tileValue} numberOfLines={1}>
-              {medidaResumo.valor}
-            </Text>
-            <Text style={styles.tileSub} numberOfLines={1}>
-              {medidaResumo.subtitulo}
-            </Text>
+
+                <View style={styles.medidasColsRow}>
+                  <View style={styles.medidaColItem}>
+                    <Text style={styles.medidaColLabel}>Cintura</Text>
+                    <Text style={styles.medidaColValue} numberOfLines={1}>
+                      {medidasConsolidadas.waistTexto}
+                    </Text>
+                  </View>
+
+                  <View style={styles.medidaColDivider} />
+
+                  <View style={styles.medidaColItem}>
+                    <Text style={styles.medidaColLabel}>Abdômen</Text>
+                    <Text style={styles.medidaColValue} numberOfLines={1}>
+                      {medidasConsolidadas.abdomenTexto}
+                    </Text>
+                  </View>
+
+                  <View style={styles.medidaColDivider} />
+
+                  <View style={styles.medidaColItem}>
+                    <Text style={styles.medidaColLabel}>Quadril</Text>
+                    <Text style={styles.medidaColValue} numberOfLines={1}>
+                      {medidasConsolidadas.hipsTexto}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.tileTopRow}>
+                  <View
+                    style={[styles.tileIconBox, { backgroundColor: "#f0f9ff" }]}
+                  >
+                    <Ruler size={16} color="#0284c7" />
+                  </View>
+                  {medidasConsolidadas.temDados ? (
+                    <View
+                      style={[
+                        styles.miniBadge,
+                        { backgroundColor: "#f1f5f9", borderColor: "#cbd5e1" },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.miniBadgeText, { color: "#334155" }]}
+                      >
+                        Salvo
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.tileLabel}>Medidas</Text>
+                <Text
+                  style={[styles.tileValue, styles.tabularValue]}
+                  numberOfLines={1}
+                >
+                  {medidasConsolidadas.valorMeiaLargura}
+                </Text>
+                <Text style={styles.tileSub} numberOfLines={1}>
+                  {medidasConsolidadas.subtituloMeiaLargura}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -2145,6 +2322,64 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#64748b",
     marginTop: 3,
+  },
+  tabularValue: {
+    fontVariant: ["tabular-nums"],
+  },
+  medidasFullHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 11,
+    gap: 8,
+  },
+  medidasFullHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  medidasFullHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  medidasDateText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+    fontVariant: ["tabular-nums"],
+  },
+  medidasEmptyHint: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#0284c7",
+  },
+  medidasColsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 2,
+  },
+  medidaColItem: {
+    flex: 1,
+    gap: 3,
+  },
+  medidaColDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: "#e2e8f0",
+    marginHorizontal: 12,
+  },
+  medidaColLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  medidaColValue: {
+    fontSize: 15.5,
+    fontWeight: "700",
+    color: "#0f172a",
+    fontVariant: ["tabular-nums"],
   },
   mealShortcutCard: {
     backgroundColor: "#ffffff",
