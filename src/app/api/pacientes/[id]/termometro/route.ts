@@ -11,18 +11,21 @@ import {
   CheckinRefeicaoEntity,
   MeasurementEntity,
   PatientEntity,
+  ProtocoloGlicemicoEntity,
   RegistroGlicemiaEntity,
   WorkoutLogEntity,
   type CheckinIntestinal,
   type CheckinRefeicao,
   type Measurement,
   type Patient,
+  type ProtocoloGlicemico,
   type RegistroGlicemia,
   type WorkoutLog,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { getDataDiaBR, getIntervaloDiasBR } from "@/lib/date-br";
+import { serializeProtocoloGlicemico } from "@/lib/mapa-glicemico";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -123,6 +126,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     const loaded = {
       paciente: null as Patient | null,
+      protocoloGlicemico: null as ProtocoloGlicemico | null,
       checkinsRefeicoes: [] as CheckinRefeicao[],
       registrosGlicemia: [] as RegistroGlicemia[],
       checkinsIntestinais: [] as CheckinIntestinal[],
@@ -149,6 +153,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                 },
               }),
             { label: "termometro:paciente" }
+          );
+        },
+        async () => {
+          loaded.protocoloGlicemico = await withRepositoryRetry(
+            ProtocoloGlicemicoEntity,
+            (repo) => repo.findOne({ where: { pacienteId: id } }),
+            { label: "termometro:protocolo-glicemico" }
           );
         },
         async () => {
@@ -190,6 +201,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                 select: {
                   id: true,
                   valor: true,
+                  momento: true,
+                  momentoClinico: true,
                   dataRegistro: true,
                 },
                 order: { dataRegistro: "DESC" },
@@ -391,8 +404,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     };
 
     // =========================================================================
-    // 2. RESUMO GLICÊMICO (REGISTROS_GLICEMIA)
+    // 2. RESUMO GLICÊMICO (REGISTROS_GLICEMIA + PROTOCOLOS_GLICEMICOS)
     // =========================================================================
+    const protocoloDto = serializeProtocoloGlicemico(
+      id,
+      loaded.protocoloGlicemico
+    );
+    const minAlvoGlic = protocoloDto.alvoJejumMin || 70;
+    const maxJejumGlic = protocoloDto.alvoJejumMax || 130;
+    const maxPosGlic = protocoloDto.alvoPosMax || 180;
+
     const totalGlicemia = registrosGlicemia.length;
     let somaGlicemia = 0;
     let dentroDaMeta = 0;
@@ -402,9 +423,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     for (const reg of registrosGlicemia) {
       const val = Number(reg.valor) || 0;
       somaGlicemia += val;
-      if (val < 70) {
+      const mc = (reg.momentoClinico || reg.momento || "").toUpperCase();
+      const isJejumOuPre =
+        mc === "JEJUM" ||
+        mc === "PRE_ALMOCO" ||
+        mc === "PRE_JANTAR" ||
+        mc === "AO_DEITAR";
+      const limiteMax = protocoloDto.ativo
+        ? isJejumOuPre
+          ? maxJejumGlic
+          : maxPosGlic
+        : 180;
+
+      if (val < minAlvoGlic) {
         episodiosHipo += 1;
-      } else if (val > 180) {
+      } else if (val > limiteMax) {
         episodiosHiper += 1;
       } else {
         dentroDaMeta += 1;
@@ -412,6 +445,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     const glicemia = {
+      monitoramentoAtivo: protocoloDto.ativo,
+      usaInsulina: protocoloDto.usaInsulina,
+      modo: protocoloDto.modo,
       temDados: totalGlicemia > 0,
       mediaMgDl: totalGlicemia > 0 ? Math.round(somaGlicemia / totalGlicemia) : null,
       totalMedicoes: totalGlicemia,

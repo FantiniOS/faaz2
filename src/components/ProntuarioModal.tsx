@@ -37,13 +37,23 @@ import {
   Plus,
   Smartphone,
   Award,
+  Syringe,
 } from "lucide-react";
 import { DietaTab } from "@/components/DietaTab";
 import { MetasTab } from "@/components/MetasTab";
 import { TreinosTab } from "@/components/TreinosTab";
 import { PlanoFaazTab } from "@/components/PlanoFaazTab";
 import { MeasurementModal } from "@/components/MeasurementModal";
+import {
+  MapaGlicemicoModal,
+  type SubAbaMapaGlicemico,
+} from "@/components/MapaGlicemicoModal";
 import { TermometroExecutivoCard } from "@/components/TermometroExecutivoCard";
+import {
+  criarProtocoloDefault,
+  resumirEtiquetaProtocolo,
+  type ProtocoloGlicemicoDTO,
+} from "@/lib/mapa-glicemico";
 import type { MeasurementDTO } from "@/actions/measurement-actions";
 import type { PacotesPacienteResponse } from "@/lib/pacotes-faaz";
 import {
@@ -493,6 +503,15 @@ export function ProntuarioModal({
   const [glicemiaHistorico, setGlicemiaHistorico] = useState<GlicemiaHistoricoItem[]>([]);
   const [measurementsHistorico, setMeasurementsHistorico] = useState<MeasurementDTO[]>([]);
   const [isMeasurementModalOpen, setIsMeasurementModalOpen] = useState(false);
+  const [protocoloGlicemico, setProtocoloGlicemico] =
+    useState<ProtocoloGlicemicoDTO>(() =>
+      criarProtocoloDefault(paciente?.id || "")
+    );
+  const [salvandoProtocoloSwitch, setSalvandoProtocoloSwitch] = useState(false);
+  const [protocoloSwitchSalvo, setProtocoloSwitchSalvo] = useState(false);
+  const [isMapaGlicemicoOpen, setIsMapaGlicemicoOpen] = useState(false);
+  const [mapaGlicemicoTabInicial, setMapaGlicemicoTabInicial] =
+    useState<SubAbaMapaGlicemico>("grade");
   const [dataHojeBR, setDataHojeBR] = useState<string>("");
 
   useEffect(() => {
@@ -586,6 +605,7 @@ export function ProntuarioModal({
         setUltimaAtualizacao(null);
         setPacotesData(null);
         setContabilizarNoPacote(true);
+        setProtocoloGlicemico(criarProtocoloDefault(paciente.id));
 
         const [res, resPacotes] = await Promise.all([
           fetch(`/api/pacientes/${paciente.id}/prontuario`, {
@@ -599,6 +619,19 @@ export function ProntuarioModal({
         ]);
 
         if (!ativo) return;
+
+        // Onda seguinte leve (1 query PK): protocolo glicêmico do paciente
+        fetch(`/api/pacientes/${paciente.id}/protocolo-glicemico`, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((jsonProt) => {
+            if (ativo && jsonProt?.success && jsonProt.protocolo) {
+              setProtocoloGlicemico(jsonProt.protocolo as ProtocoloGlicemicoDTO);
+            }
+          })
+          .catch(() => null);
 
         if (resPacotes && resPacotes.ok) {
           const jsonPacotes = await resPacotes.json().catch(() => null);
@@ -673,6 +706,52 @@ export function ProntuarioModal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, paciente?.id, isAuthorized]);
+
+  // Chave de 1 clique: ativa/desativa Monitoramento Glicêmico e Controle de Insulina
+  async function handleToggleProtocoloGlicemico(
+    nextAtivo: boolean,
+    nextUsaInsulina?: boolean,
+  ) {
+    if (!paciente?.id || salvandoProtocoloSwitch) return;
+    const resolvedUsaInsulina = nextAtivo
+      ? nextUsaInsulina !== undefined
+        ? nextUsaInsulina
+        : protocoloGlicemico.usaInsulina
+      : false;
+
+    setProtocoloGlicemico((prev) => ({
+      ...prev,
+      ativo: nextAtivo,
+      usaInsulina: resolvedUsaInsulina,
+    }));
+    setSalvandoProtocoloSwitch(true);
+    setProtocoloSwitchSalvo(false);
+
+    try {
+      const res = await fetch(
+        `/api/pacientes/${encodeURIComponent(paciente.id)}/protocolo-glicemico`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ativo: nextAtivo,
+            usaInsulina: resolvedUsaInsulina,
+          }),
+        },
+      );
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success && json.protocolo) {
+        setProtocoloGlicemico(json.protocolo as ProtocoloGlicemicoDTO);
+        setProtocoloSwitchSalvo(true);
+        setTermometroRefreshKey((k) => k + 1);
+        setTimeout(() => setProtocoloSwitchSalvo(false), 2600);
+      }
+    } catch (err) {
+      console.error("[ProntuarioModal] Erro ao salvar switch glicêmico:", err);
+    } finally {
+      setSalvandoProtocoloSwitch(false);
+    }
+  }
 
   // Cálculo de idade a partir de data de nascimento
   function calcularIdade(dataNascStr?: string | null): number | null {
@@ -981,9 +1060,6 @@ export function ProntuarioModal({
     pacienteApiData?.glicemiaRecente !== undefined && pacienteApiData?.glicemiaRecente !== null
       ? `${pacienteApiData.glicemiaRecente} mg/dL`
       : "Sem dados";
-
-  const glicemiaStatusDisplay =
-    pacienteApiData?.glicemiaStatus || "Sem dados";
 
   // 4. Antropometria & Composição Corporal — consolidação do último valor não-nulo por campo
   const measurementsOrdenadasDesc = useMemo(
@@ -2346,59 +2422,111 @@ export function ProntuarioModal({
               </div>
             </button>
 
-            {/* CARD 3: GLICEMIA / METABOLISMO + SPARKLINE */}
-            <button
-              type="button"
-              onClick={() => setModalMetricaAtiva("glicemia")}
-              className="bg-white border border-slate-200/90 hover:border-rose-500 hover:shadow-md rounded-xl p-3 shadow-2xs flex flex-col justify-between transition-all cursor-pointer group text-left relative overflow-hidden"
-              title="Clique para ver os números reais e datas exatas"
-            >
-              <div className="flex items-center justify-between gap-1 mb-1">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-rose-700 transition-colors">
-                  <HeartPulse className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                  <span>Glicemia / Metabolismo</span>
-                </span>
-                <span
-                  className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-md border shrink-0 ${
-                    glicemiaStatusDisplay === "Sem dados"
-                      ? "bg-slate-100 text-slate-500 border-slate-200"
-                      : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                  }`}
-                >
-                  {glicemiaStatusDisplay}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-2 mt-0.5">
-                <span
-                  className={`font-black font-mono tracking-tight ${
-                    glicemiaDisplay === "Sem dados"
-                      ? "text-base sm:text-lg text-slate-400 font-sans font-bold"
-                      : "text-xl sm:text-2xl text-slate-900"
-                  }`}
-                >
-                  {glicemiaDisplay}
-                </span>
-                <div className="w-20 sm:w-24 md:w-28 h-9 shrink-0 flex items-center">
-                  <MiniSparkline
-                    data={glicemiaSeries}
-                    color="#e11d48"
-                    gradientId="sparkGlic"
-                    isReductionGood={true}
-                  />
+            {/* CARD 3: GLICEMIA / METABOLISMO (CONSCIENTE DA CHAVE ATIVO) */}
+            {protocoloGlicemico.ativo ? (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setMapaGlicemicoTabInicial("grade");
+                  setIsMapaGlicemicoOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setMapaGlicemicoTabInicial("grade");
+                    setIsMapaGlicemicoOpen(true);
+                  }
+                }}
+                className="bg-white border border-slate-200/90 hover:border-rose-500 hover:shadow-md rounded-xl p-3 shadow-2xs flex flex-col justify-between transition-all cursor-pointer group text-left relative overflow-hidden"
+                title="Clique para abrir o Mapa Glicêmico & Controle de Insulina"
+              >
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-rose-700 transition-colors">
+                    <HeartPulse className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                    <span>Glicemia / Metabolismo</span>
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {protocoloGlicemico.usaInsulina ? (
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-md border bg-indigo-50 text-indigo-700 border-indigo-200">
+                        Insulina
+                      </span>
+                    ) : null}
+                    <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md border bg-teal-50 text-teal-800 border-teal-200">
+                      {resumirEtiquetaProtocolo(protocoloGlicemico)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <span
+                    className={`font-black font-mono tracking-tight ${
+                      glicemiaDisplay === "Sem dados"
+                        ? "text-base sm:text-lg text-slate-400 font-sans font-bold"
+                        : "text-xl sm:text-2xl text-slate-900"
+                    }`}
+                  >
+                    {glicemiaDisplay}
+                  </span>
+                  <div className="w-20 sm:w-24 md:w-28 h-9 shrink-0 flex items-center">
+                    <MiniSparkline
+                      data={glicemiaSeries}
+                      color="#e11d48"
+                      gradientId="sparkGlic"
+                      isReductionGood={true}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 mt-1">
+                  <span className="truncate">
+                    {glicemiaSeries.length > 0
+                      ? `${glicemiaSeries.length} medição(ões) registrada(s)`
+                      : "Sem medições registradas"}
+                  </span>
+                  <span className="text-[10px] font-bold text-rose-600 group-hover:text-rose-700 shrink-0 inline-flex items-center gap-0.5">
+                    <span>Mapa Glicêmico</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </span>
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 mt-1">
-                <span className="truncate">
-                  {glicemiaSeries.length > 0
-                    ? `${glicemiaSeries.length} medição(ões) registrada(s)`
-                    : "Sem medições registradas"}
-                </span>
-                <span className="text-[10px] font-semibold text-rose-600 group-hover:text-rose-700 shrink-0 inline-flex items-center gap-0.5">
-                  <span>Ver números</span>
-                  <ChevronRight className="w-3 h-3" />
-                </span>
+            ) : (
+              <div className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-2xs flex flex-col justify-between text-left relative overflow-hidden">
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <HeartPulse className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>Glicemia / Metabolismo</span>
+                  </span>
+                  <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md border bg-slate-100 text-slate-500 border-slate-200 shrink-0">
+                    Não ativado
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <span className="text-sm font-bold text-slate-400">
+                    Não ativado
+                  </span>
+                  <button
+                    type="button"
+                    disabled={salvandoProtocoloSwitch}
+                    onClick={() => void handleToggleProtocoloGlicemico(true)}
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    Ativar monitoramento
+                  </button>
+                </div>
+                <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 mt-1.5">
+                  <span className="truncate">Oculto no App do paciente</span>
+                  {glicemiaSeries.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setModalMetricaAtiva("glicemia")}
+                      className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 shrink-0 inline-flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <span>Ver histórico ({glicemiaSeries.length})</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  ) : null}
+                </div>
               </div>
-            </button>
+            )}
 
             {/* CARD 4: CIRCUNFERÊNCIA / MEDIDA + SPARKLINE */}
             <div
@@ -2655,6 +2783,7 @@ export function ProntuarioModal({
                 <TermometroExecutivoCard
                   pacienteId={paciente.id}
                   refreshTrigger={termometroRefreshKey}
+                  glicemiaMonitoramentoAtivo={protocoloGlicemico.ativo}
                 />
               ) : null}
 
@@ -2857,6 +2986,145 @@ export function ProntuarioModal({
                       <p className="text-[10px] text-slate-400 mt-1">
                         Sincroniza automaticamente com Metas, Dashboard e App do paciente.
                       </p>
+                    </div>
+                  </div>
+
+                  {/* CARD FERRAMENTAS DE MONITORAMENTO (APP) — CHAVES DE 1 CLIQUE */}
+                  <div className="bg-slate-50/80 rounded-2xl border border-slate-200/90 p-4 space-y-3 shadow-2xs">
+                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="w-4 h-4 text-teal-600" />
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                          Ferramentas de Monitoramento (App)
+                        </h4>
+                      </div>
+                      {salvandoProtocoloSwitch ? (
+                        <span className="text-[10px] font-bold text-teal-700 inline-flex items-center gap-1 shrink-0">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          <span>Salvando...</span>
+                        </span>
+                      ) : protocoloSwitchSalvo ? (
+                        <span className="text-[10px] font-bold text-emerald-700 inline-flex items-center gap-0.5 shrink-0">
+                          <CheckCircle2 className="w-2.5 h-2.5" />
+                          <span>Salvo</span>
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {/* Switch 1: Monitoramento Glicêmico (Diabetes) */}
+                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5 shadow-2xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <HeartPulse
+                            className={`w-4 h-4 shrink-0 ${
+                              protocoloGlicemico.ativo
+                                ? "text-rose-500"
+                                : "text-slate-400"
+                            }`}
+                          />
+                          <div className="min-w-0">
+                            <span className="text-xs font-extrabold text-slate-800 block leading-tight">
+                              Monitoramento Glicêmico (Diabetes)
+                            </span>
+                            {!protocoloGlicemico.ativo ? (
+                              <span className="text-[10px] font-medium text-slate-400 block mt-0.5">
+                                Oculto no App do paciente
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-teal-700 block mt-0.5">
+                                Visível no App ({resumirEtiquetaProtocolo(protocoloGlicemico)})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={protocoloGlicemico.ativo}
+                          disabled={salvandoProtocoloSwitch}
+                          onClick={() =>
+                            void handleToggleProtocoloGlicemico(
+                              !protocoloGlicemico.ativo,
+                            )
+                          }
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-hidden disabled:opacity-60 ${
+                            protocoloGlicemico.ativo
+                              ? "bg-teal-600"
+                              : "bg-slate-300"
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ${
+                              protocoloGlicemico.ativo
+                                ? "translate-x-4"
+                                : "translate-x-0"
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {/* Switch 2 (somente quando Switch 1 está ON): Controle de Insulina */}
+                      {protocoloGlicemico.ativo ? (
+                        <div className="pt-2.5 border-t border-slate-100 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Syringe
+                                className={`w-3.5 h-3.5 shrink-0 ${
+                                  protocoloGlicemico.usaInsulina
+                                    ? "text-indigo-600"
+                                    : "text-slate-400"
+                                }`}
+                              />
+                              <span className="text-[11px] font-bold text-slate-700 leading-tight">
+                                Controle de Insulina (Basal / Rápida)
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={protocoloGlicemico.usaInsulina}
+                              disabled={salvandoProtocoloSwitch}
+                              onClick={() =>
+                                void handleToggleProtocoloGlicemico(
+                                  true,
+                                  !protocoloGlicemico.usaInsulina,
+                                )
+                              }
+                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-hidden disabled:opacity-60 ${
+                                protocoloGlicemico.usaInsulina
+                                  ? "bg-indigo-600"
+                                  : "bg-slate-300"
+                              }`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ${
+                                  protocoloGlicemico.usaInsulina
+                                    ? "translate-x-4"
+                                    : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMapaGlicemicoTabInicial("protocolo");
+                                setIsMapaGlicemicoOpen(true);
+                              }}
+                              className="text-[11px] font-bold text-teal-700 hover:text-teal-800 inline-flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <span>
+                                Configurar horários, alvos e insulinas
+                              </span>
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -4055,6 +4323,22 @@ export function ProntuarioModal({
                     firstWaist ?? firstAbdomen ?? prevApi.circunferenciaAbdominal,
                 };
               });
+            }}
+          />
+        )}
+
+        {paciente && (
+          <MapaGlicemicoModal
+            isOpen={isOpen && isMapaGlicemicoOpen}
+            onClose={() => setIsMapaGlicemicoOpen(false)}
+            pacienteId={paciente.id}
+            pacienteNome={pacienteNome}
+            pacienteRecordCode={pacienteRecordCode}
+            initialTab={mapaGlicemicoTabInicial}
+            protocoloAtual={protocoloGlicemico}
+            onProtocoloChange={(novoProt) => {
+              setProtocoloGlicemico(novoProt);
+              setTermometroRefreshKey((k) => k + 1);
             }}
           />
         )}

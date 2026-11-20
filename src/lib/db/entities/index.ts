@@ -8,7 +8,9 @@ import {
   MedicoEntity,
   PatientGoalEntity,
   ProntuarioPacienteEntity,
+  ProtocoloGlicemicoEntity,
   RegistroGlicemiaEntity,
+  RegistroInsulinaEntity,
 } from "./clinical";
 import {
   CheckinHidratacaoEntity,
@@ -47,7 +49,9 @@ export type {
   Medico,
   PatientGoal,
   ProntuarioPaciente,
+  ProtocoloGlicemico,
   RegistroGlicemia,
+  RegistroInsulina,
 } from "./clinical";
 export type {
   CheckinHidratacao,
@@ -104,8 +108,10 @@ export {
   PatientGoalEntity,
   PlanoAlimentarEntity,
   ProntuarioPacienteEntity,
+  ProtocoloGlicemicoEntity,
   RefeicaoEntity,
   RegistroGlicemiaEntity,
+  RegistroInsulinaEntity,
   SubstituicaoItemRefeicaoEntity,
   UserEntity,
   VariacaoDietaEntity,
@@ -113,7 +119,7 @@ export {
 };
 
 /**
- * Todas as entidades registradas no DataSource (Lotes 1 a 6).
+ * Todas as entidades registradas no DataSource (Lotes 1 a 8).
  */
 export const entities = [
   OrganizationEntity,
@@ -127,6 +133,8 @@ export const entities = [
   AgendamentoEntity,
   DocumentTemplateEntity,
   RegistroGlicemiaEntity,
+  ProtocoloGlicemicoEntity,
+  RegistroInsulinaEntity,
   PatientGoalEntity,
   GoalCheckinEntity,
   AlimentoEntity,

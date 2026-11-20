@@ -3,14 +3,28 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { Between, IsNull, MoreThanOrEqual, Raw } from "typeorm";
 import { z } from "zod";
-import { getRepository } from "@/lib/db/data-source";
-import { PatientEntity, RegistroGlicemiaEntity } from "@/lib/db/entities";
+import { getRepository, withRepositoryRetry } from "@/lib/db/data-source";
+import {
+  PatientEntity,
+  RegistroGlicemiaEntity,
+  RegistroInsulinaEntity,
+} from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import {
   formatarHoraBR,
+  getDataDiaBR,
   getInicioFimDiaBR,
   getIntervaloDiasBR,
+  getPartesDataHoraBR,
 } from "@/lib/date-br";
+import {
+  inferirMomentoClinico,
+  mapearMomentoClinicoParaLegado,
+  normalizarMomentoClinico,
+  parseContextoTags,
+  serializeContextoTags,
+  SLOT_META,
+} from "@/lib/mapa-glicemico";
 
 const checkinGlicemiaSchema = z.object({
   pacienteId: z.string().optional(),
@@ -19,28 +33,29 @@ const checkinGlicemiaSchema = z.object({
     .int("O valor da glicemia deve ser um número inteiro.")
     .min(20, "Valor mínimo permitido: 20 mg/dL.")
     .max(600, "Valor máximo permitido: 600 mg/dL."),
-  momento: z
-    .string()
-    .optional()
-    .default("JEJUM")
-    .transform((val) => {
-      const upper = val.trim().toUpperCase();
-      if (
-        upper === "POS_PRANDIAL" ||
-        upper === "PÓS-REFEIÇÃO" ||
-        upper === "POS-REFEICAO"
-      ) {
-        return "POS_PRANDIAL";
-      }
-      if (upper === "CASUAL" || upper === "OUTRO") {
-        return "CASUAL";
-      }
-      return "JEJUM";
-    }),
+  momento: z.string().optional(),
+  momentoClinico: z.string().optional().nullable(),
+  contextoTags: z.union([z.array(z.string()), z.string(), z.null()]).optional(),
+  insulina: z
+    .object({
+      tipo: z.string().optional(),
+      unidades: z.coerce.number().min(0).max(300),
+      nome: z.string().max(80).nullable().optional(),
+      observacao: z.string().max(200).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   dataRegistro: z.string().optional(),
 });
 
-export function formatarMomentoGlicemia(momento: string): string {
+function formatarMomentoGlicemia(
+  momento: string,
+  momentoClinico?: string | null,
+): string {
+  const norm = normalizarMomentoClinico(momentoClinico);
+  if (norm && norm !== "AVULSO") {
+    return SLOT_META[norm].label;
+  }
   switch (momento) {
     case "JEJUM":
       return "Em Jejum";
@@ -120,29 +135,135 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { pacienteId, valor, momento, dataRegistro } = parsed.data;
+    const {
+      pacienteId,
+      valor,
+      momento: rawMomento,
+      momentoClinico: rawMomentoClinico,
+      contextoTags,
+      insulina,
+      dataRegistro,
+    } = parsed.data;
     const validPacienteId = await resolverPacienteIdValido(pacienteId);
+
+    const parsedDate = dataRegistro ? new Date(dataRegistro) : new Date();
+    const dataRegistroDate = Number.isNaN(parsedDate.getTime())
+      ? new Date()
+      : parsedDate;
+    const partesBR = getPartesDataHoraBR(dataRegistroDate);
+
+    // Resolve momentoClinico e momento legado com retrocompatibilidade
+    const momentoClinicoResolvido = inferirMomentoClinico(
+      rawMomentoClinico,
+      rawMomento,
+      partesBR.hour,
+    );
+
+    let momentoLegado: "JEJUM" | "POS_PRANDIAL" | "CASUAL" = "JEJUM";
+    if (rawMomento && rawMomento.trim()) {
+      const upper = rawMomento.trim().toUpperCase();
+      if (
+        upper === "POS_PRANDIAL" ||
+        upper === "PÓS-REFEIÇÃO" ||
+        upper === "POS-REFEICAO" ||
+        upper === "POS_CAFE" ||
+        upper === "POS_ALMOCO" ||
+        upper === "POS_JANTAR"
+      ) {
+        momentoLegado = "POS_PRANDIAL";
+      } else if (
+        upper === "CASUAL" ||
+        upper === "OUTRO" ||
+        upper === "AO_DEITAR" ||
+        upper === "AVULSO"
+      ) {
+        momentoLegado = "CASUAL";
+      } else {
+        momentoLegado = "JEJUM";
+      }
+    } else {
+      momentoLegado = mapearMomentoClinicoParaLegado(momentoClinicoResolvido);
+    }
+
+    const contextoTagsStr = serializeContextoTags(
+      Array.isArray(contextoTags)
+        ? contextoTags
+        : typeof contextoTags === "string"
+          ? contextoTags.split(",")
+          : null,
+    );
 
     const glicemiaRepo = await getRepository(RegistroGlicemiaEntity);
     const salvo = await glicemiaRepo.save(
       glicemiaRepo.create({
         pacienteId: validPacienteId,
         valor,
-        momento,
-        dataRegistro: dataRegistro ? new Date(dataRegistro) : new Date(),
+        momento: momentoLegado,
+        momentoClinico: momentoClinicoResolvido,
+        contextoTags: contextoTagsStr,
+        dataRegistro: dataRegistroDate,
       }),
     );
 
-    const novoRegistro = await glicemiaRepo.findOneOrFail({
-      where: { id: salvo.id },
-      relations: { paciente: true },
-    });
+    // Se houver insulina com unidades > 0, vincula em REGISTROS_INSULINA
+    let insulinaRegistrada: {
+      id: string;
+      tipo: "RAPIDA" | "BASAL";
+      unidades: number;
+      nomeInsulina: string | null;
+    } | null = null;
+
+    if (insulina && Number(insulina.unidades) > 0) {
+      const tipoIns =
+        String(insulina.tipo || "RAPIDA")
+          .trim()
+          .toUpperCase() === "BASAL"
+          ? "BASAL"
+          : "RAPIDA";
+      const unidadesNum = Math.round(Number(insulina.unidades) * 100) / 100;
+      const nomeIns = insulina.nome?.trim().slice(0, 80) || null;
+      const obsIns = insulina.observacao?.trim().slice(0, 200) || null;
+
+      const insSalva = await withRepositoryRetry(
+        RegistroInsulinaEntity,
+        (repo) =>
+          repo.save(
+            repo.create({
+              pacienteId: validPacienteId,
+              registroGlicemiaId: salvo.id,
+              dataDia: getDataDiaBR(dataRegistroDate),
+              aplicadoEm: dataRegistroDate,
+              tipo: tipoIns,
+              nomeInsulina: nomeIns,
+              unidades: unidadesNum,
+              momentoClinico: momentoClinicoResolvido,
+              observacao: obsIns,
+            }),
+          ),
+        { label: "checkins-glicemia:insulina-link" },
+      );
+
+      insulinaRegistrada = {
+        id: insSalva.id,
+        tipo: tipoIns,
+        unidades: unidadesNum,
+        nomeInsulina: nomeIns,
+      };
+    }
+
+    const pacienteRow = await withRepositoryRetry(
+      PatientEntity,
+      (repo) =>
+        repo.findOne({
+          where: { id: validPacienteId },
+          select: { id: true, fullName: true, socialName: true },
+        }),
+      { label: "checkins-glicemia:paciente-nome" },
+    );
 
     const isCritico = valor < 70 || valor > 180;
     const pacienteNome =
-      novoRegistro.paciente?.socialName ||
-      novoRegistro.paciente?.fullName ||
-      "Paciente";
+      pacienteRow?.socialName || pacienteRow?.fullName || "Paciente";
 
     return NextResponse.json(
       {
@@ -156,13 +277,19 @@ export async function POST(req: NextRequest) {
               ? "HIPERGLICEMIA"
               : "NORMAL",
         data: {
-          id: novoRegistro.id,
-          pacienteId: novoRegistro.pacienteId,
+          id: salvo.id,
+          pacienteId: salvo.pacienteId,
           pacienteNome,
-          valor: novoRegistro.valor,
-          momento: novoRegistro.momento,
-          momentoLegivel: formatarMomentoGlicemia(novoRegistro.momento),
-          dataRegistro: new Date(novoRegistro.dataRegistro).toISOString(),
+          valor: salvo.valor,
+          momento: salvo.momento,
+          momentoClinico: salvo.momentoClinico,
+          momentoLegivel: formatarMomentoGlicemia(
+            salvo.momento,
+            salvo.momentoClinico,
+          ),
+          contextoTags: parseContextoTags(salvo.contextoTags),
+          insulina: insulinaRegistrada,
+          dataRegistro: new Date(salvo.dataRegistro).toISOString(),
         },
       },
       { status: 201 },
@@ -261,7 +388,9 @@ export async function GET(req: NextRequest) {
         pacienteStatus: p?.patientStatus === "ACTIVE" ? "Ativo" : "Inativo",
         valor: r.valor,
         momento: r.momento,
-        momentoLegivel: formatarMomentoGlicemia(r.momento),
+        momentoClinico: r.momentoClinico ?? null,
+        momentoLegivel: formatarMomentoGlicemia(r.momento, r.momentoClinico),
+        contextoTags: parseContextoTags(r.contextoTags),
         horario,
         dataRegistro: dt.toISOString(),
         isCritico,
@@ -320,7 +449,9 @@ export async function GET(req: NextRequest) {
           id: r.id,
           valor,
           momento: r.momento,
-          momentoLegivel: formatarMomentoGlicemia(r.momento),
+          momentoClinico: r.momentoClinico ?? null,
+          momentoLegivel: formatarMomentoGlicemia(r.momento, r.momentoClinico),
+          contextoTags: parseContextoTags(r.contextoTags),
           dataRegistro: new Date(r.dataRegistro).toISOString(),
           isCritico,
           tipoAlerta,

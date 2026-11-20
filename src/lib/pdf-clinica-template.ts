@@ -122,6 +122,25 @@ export function formatarNomeArquivoPlanoAlimentar(
 }
 
 /**
+ * Gera o nome de arquivo padronizado para o Mapa Glicêmico em PDF:
+ * Mapa_Glicemico_<NomePaciente>_<DD-MM-AAAA>.pdf
+ */
+export function formatarNomeArquivoMapaGlicemico(
+  pacienteNome: string,
+  data: Date = new Date(),
+): string {
+  const nomeSanitizado = (pacienteNome || "Paciente")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_");
+
+  const dataBr = formatarDataBR(data).replace(/\//g, "-");
+  return `Mapa_Glicemico_${nomeSanitizado || "Paciente"}_${dataBr}.pdf`;
+}
+
+/**
  * Formata quantidade + unidade + medida caseira em leitura natural para o paciente.
  * Ex.: medidaCaseira="2 fatias", quantidade=50, unidade="g" -> "2 fatias (50g)"
  */

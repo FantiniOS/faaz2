@@ -16,6 +16,7 @@ const ROTAS_CLINICAS_SENSIVEIS = [
   "/api/consultas",
   "/api/dados-clinicos",
   "/api/checkins/glicemia",
+  "/api/checkins/insulina",
   "/api/checkins/intestino",
   "/api/checkins/hidratacao",
   "/api/checkins/refeicoes",
@@ -82,7 +83,9 @@ export async function proxy(request: NextRequest) {
     const isRotaClinica =
       ROTAS_CLINICAS_SENSIVEIS.some((rota) => pathname.startsWith(rota)) ||
       pathname.includes("/prontuario") ||
-      pathname.includes("/termometro");
+      pathname.includes("/termometro") ||
+      pathname.includes("/protocolo-glicemico") ||
+      pathname.includes("/mapa-glicemico");
 
     if (isRotaClinica) {
       if (pathname.startsWith("/api/")) {
@@ -225,6 +228,7 @@ export const config = {
     "/api/consultas/:path*",
     "/api/dados-clinicos/:path*",
     "/api/checkins/glicemia",
+    "/api/checkins/insulina",
     "/api/checkins/intestino",
     "/api/checkins/hidratacao",
     "/api/checkins/refeicoes",

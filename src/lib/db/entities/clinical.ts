@@ -282,6 +282,8 @@ export interface RegistroGlicemia {
   dataRegistro: Date;
   valor: number;
   momento: string;
+  momentoClinico: string | null;
+  contextoTags: string | null;
   createdAt: Date;
 
   paciente?: Patient;
@@ -296,6 +298,8 @@ export const RegistroGlicemiaEntity = new EntitySchema<RegistroGlicemia>({
     dataRegistro: timestampTz("DATA_REGISTRO"),
     valor: integer("VALOR"),
     momento: { ...varchar("MOMENTO", 30), default: "JEJUM" },
+    momentoClinico: varchar("MOMENTO_CLINICO", 20, true),
+    contextoTags: varchar("CONTEXTO_TAGS", 200, true),
     createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
   },
   relations: {
@@ -483,5 +487,127 @@ export const DocumentTemplateEntity = new EntitySchema<DocumentTemplate>({
     createdBy: uuidRef("CREATED_BY", true),
     createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
     updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
+  },
+});
+
+// ============================================================================
+// 32. PROTOCOLOS_GLICEMICOS (Chaves 1-Clique e Protocolo de Insulina por Paciente)
+// ============================================================================
+export interface ProtocoloGlicemico {
+  pacienteId: string;
+  ativo: boolean;
+  usaInsulina: boolean;
+  modo: string;
+  slotsAtivos: string | null;
+  alvoJejumMin: number;
+  alvoJejumMax: number;
+  alvoPosMax: number;
+  insulinaBasalNome: string | null;
+  insulinaBasalDoseRef: number | null;
+  insulinaBasalHorario: string | null;
+  insulinaRapidaNome: string | null;
+  orientacaoHipo: string | null;
+  orientacaoHiper: string | null;
+  updatedAt: Date;
+
+  paciente?: Patient;
+}
+
+export const ProtocoloGlicemicoEntity = new EntitySchema<ProtocoloGlicemico>({
+  name: "ProtocoloGlicemico",
+  tableName: "PROTOCOLOS_GLICEMICOS",
+  columns: {
+    pacienteId: {
+      name: "PACIENTE_ID",
+      type: "varchar2",
+      length: 36,
+      primary: true,
+    },
+    ativo: { ...bool("ATIVO"), default: false },
+    usaInsulina: { ...bool("USA_INSULINA"), default: false },
+    modo: { ...varchar("MODO", 25), default: "LIVRE" },
+    slotsAtivos: varchar("SLOTS_ATIVOS", 200, true),
+    alvoJejumMin: {
+      name: "ALVO_JEJUM_MIN",
+      type: "number",
+      precision: 4,
+      scale: 0,
+      nullable: false,
+      default: 70,
+    },
+    alvoJejumMax: {
+      name: "ALVO_JEJUM_MAX",
+      type: "number",
+      precision: 4,
+      scale: 0,
+      nullable: false,
+      default: 130,
+    },
+    alvoPosMax: {
+      name: "ALVO_POS_MAX",
+      type: "number",
+      precision: 4,
+      scale: 0,
+      nullable: false,
+      default: 180,
+    },
+    insulinaBasalNome: varchar("INSULINA_BASAL_NOME", 80, true),
+    insulinaBasalDoseRef: decimal("INSULINA_BASAL_DOSE_REF", 6, 2, true),
+    insulinaBasalHorario: varchar("INSULINA_BASAL_HORARIO", 30, true),
+    insulinaRapidaNome: varchar("INSULINA_RAPIDA_NOME", 80, true),
+    orientacaoHipo: varchar("ORIENTACAO_HIPO", 300, true),
+    orientacaoHiper: varchar("ORIENTACAO_HIPER", 300, true),
+    updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
+  },
+  relations: {
+    paciente: {
+      type: "one-to-one",
+      target: "Patient",
+      joinColumn: { name: "PACIENTE_ID" },
+      onDelete: "CASCADE",
+    },
+  },
+});
+
+// ============================================================================
+// 33. REGISTROS_INSULINA (Aplicações de Insulina Basal e Rápida por Paciente)
+// ============================================================================
+export interface RegistroInsulina {
+  id: string;
+  pacienteId: string;
+  registroGlicemiaId: string | null;
+  dataDia: string;
+  aplicadoEm: Date;
+  tipo: string;
+  nomeInsulina: string | null;
+  unidades: number;
+  momentoClinico: string | null;
+  observacao: string | null;
+
+  paciente?: Patient;
+}
+
+export const RegistroInsulinaEntity = new EntitySchema<RegistroInsulina>({
+  name: "RegistroInsulina",
+  tableName: "REGISTROS_INSULINA",
+  columns: {
+    id: uuidPrimary,
+    pacienteId: uuidRef("PACIENTE_ID"),
+    registroGlicemiaId: uuidRef("REGISTRO_GLICEMIA_ID", true),
+    dataDia: varchar("DATA_DIA", 10),
+    aplicadoEm: timestampTz("APLICADO_EM"),
+    tipo: varchar("TIPO", 15),
+    nomeInsulina: varchar("NOME_INSULINA", 80, true),
+    unidades: decimal("UNIDADES", 6, 2, false),
+    momentoClinico: varchar("MOMENTO_CLINICO", 20, true),
+    observacao: varchar("OBSERVACAO", 200, true),
+  },
+  relations: {
+    paciente: {
+      type: "many-to-one",
+      target: "Patient",
+      joinColumn: { name: "PACIENTE_ID" },
+      onDelete: "CASCADE",
+    },
   },
 });

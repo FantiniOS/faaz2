@@ -35,6 +35,9 @@ interface TermometroData {
     } | null;
   };
   glicemia: {
+    monitoramentoAtivo?: boolean;
+    usaInsulina?: boolean;
+    modo?: string;
     temDados: boolean;
     mediaMgDl: number | null;
     totalMedicoes: number;
@@ -82,6 +85,7 @@ interface TermometroExecutivoCardProps {
   pacienteId: string;
   dias?: number;
   refreshTrigger?: number;
+  glicemiaMonitoramentoAtivo?: boolean;
 }
 
 function formatCm(valor: number): string {
@@ -111,6 +115,7 @@ export function TermometroExecutivoCard({
   pacienteId,
   dias = 30,
   refreshTrigger = 0,
+  glicemiaMonitoramentoAtivo,
 }: TermometroExecutivoCardProps) {
   const [dados, setDados] = useState<TermometroData | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -256,63 +261,97 @@ export function TermometroExecutivoCard({
           </div>
 
           {/* 2. GLICEMIA 30D */}
-          <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                <HeartPulse className="w-3 h-3 text-rose-500 shrink-0" />
-                <span>Glicemia {dados.periodoDias}d</span>
-              </span>
-              {dados.glicemia.temDados &&
-              dados.glicemia.percentualNaMeta !== null ? (
-                <span
-                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded border shrink-0 ${getPercentBadgeClass(
-                    dados.glicemia.percentualNaMeta
-                  )}`}
-                >
-                  {dados.glicemia.percentualNaMeta}% meta
-                </span>
-              ) : null}
-            </div>
+          {(() => {
+            const monitoramentoAtivo =
+              glicemiaMonitoramentoAtivo !== undefined
+                ? glicemiaMonitoramentoAtivo
+                : Boolean(dados.glicemia.monitoramentoAtivo);
 
-            {dados.glicemia.temDados && dados.glicemia.mediaMgDl !== null ? (
-              <>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-lg font-black font-mono text-slate-900 leading-none">
-                    {dados.glicemia.mediaMgDl}
+            if (!monitoramentoAtivo) {
+              return (
+                <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <HeartPulse className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span>Glicemia {dados.periodoDias}d</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded border bg-slate-100 text-slate-500 border-slate-200 shrink-0">
+                      OFF
+                    </span>
+                  </div>
+                  <span className="text-sm font-bold text-slate-500 leading-tight">
+                    Não monitorado
                   </span>
-                  <span className="text-[11px] font-semibold text-slate-500">
-                    mg/dL
-                  </span>
+                  <p className="text-[11px] font-medium text-slate-400 truncate">
+                    Oculto no App do paciente
+                  </p>
                 </div>
-                <p
-                  className={`text-[11px] font-semibold truncate ${
-                    dados.glicemia.alertasForaDaFaixa > 0
-                      ? "text-rose-600"
-                      : "text-slate-500"
-                  }`}
-                >
-                  {dados.glicemia.alertasForaDaFaixa > 0
-                    ? [
-                        dados.glicemia.episodiosHipo > 0
-                          ? `${dados.glicemia.episodiosHipo} hipo`
-                          : null,
-                        dados.glicemia.episodiosHiper > 0
-                          ? `${dados.glicemia.episodiosHiper} hiper`
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ") + ` (${dados.glicemia.totalMedicoes} med.)`
-                    : `${dados.glicemia.totalMedicoes} ${
-                        dados.glicemia.totalMedicoes === 1 ? "medição" : "medições"
-                      } · na faixa`}
-                </p>
-              </>
-            ) : (
-              <p className="text-[11px] font-medium text-slate-400 py-2">
-                Sem registros no período
-              </p>
-            )}
-          </div>
+              );
+            }
+
+            return (
+              <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <HeartPulse className="w-3 h-3 text-rose-500 shrink-0" />
+                    <span>Glicemia {dados.periodoDias}d</span>
+                  </span>
+                  {dados.glicemia.temDados &&
+                  dados.glicemia.percentualNaMeta !== null ? (
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded border shrink-0 ${getPercentBadgeClass(
+                        dados.glicemia.percentualNaMeta
+                      )}`}
+                    >
+                      {dados.glicemia.percentualNaMeta}% meta
+                    </span>
+                  ) : null}
+                </div>
+
+                {dados.glicemia.temDados && dados.glicemia.mediaMgDl !== null ? (
+                  <>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-lg font-black font-mono text-slate-900 leading-none">
+                        {dados.glicemia.mediaMgDl}
+                      </span>
+                      <span className="text-[11px] font-semibold text-slate-500">
+                        mg/dL
+                      </span>
+                    </div>
+                    <p
+                      className={`text-[11px] font-semibold truncate ${
+                        dados.glicemia.alertasForaDaFaixa > 0
+                          ? "text-rose-600"
+                          : "text-slate-500"
+                      }`}
+                    >
+                      {dados.glicemia.alertasForaDaFaixa > 0
+                        ? [
+                            dados.glicemia.episodiosHipo > 0
+                              ? `${dados.glicemia.episodiosHipo} hipo`
+                              : null,
+                            dados.glicemia.episodiosHiper > 0
+                              ? `${dados.glicemia.episodiosHiper} hiper`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") +
+                          ` (${dados.glicemia.totalMedicoes} med.)`
+                        : `${dados.glicemia.totalMedicoes} ${
+                            dados.glicemia.totalMedicoes === 1
+                              ? "medição"
+                              : "medições"
+                          } · na faixa`}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[11px] font-medium text-slate-400 py-2">
+                    Sem registros no período
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* 3. INTESTINO (BRISTOL) */}
           <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
