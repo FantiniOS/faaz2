@@ -79,7 +79,8 @@ export async function proxy(request: NextRequest) {
   if (isSecretaria) {
     const isRotaClinica =
       ROTAS_CLINICAS_SENSIVEIS.some((rota) => pathname.startsWith(rota)) ||
-      pathname.includes("/prontuario");
+      pathname.includes("/prontuario") ||
+      pathname.includes("/termometro");
 
     if (isRotaClinica) {
       if (pathname.startsWith("/api/")) {
@@ -113,7 +114,9 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/api/checkins") ||
     pathname.startsWith("/api/checkin") ||
     pathname.startsWith("/api/checkin-intestinal") ||
-    (pathname.startsWith("/api/pacientes/") && request.method === "GET") ||
+    (pathname.startsWith("/api/pacientes/") &&
+      request.method === "GET" &&
+      !pathname.includes("/termometro")) ||
     (pathname.startsWith("/api/pacientes/") &&
       pathname.endsWith("/proxima-consulta")) ||
     (pathname.startsWith("/api/pacientes/") &&

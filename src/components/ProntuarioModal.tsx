@@ -40,6 +40,7 @@ import { DietaTab } from "@/components/DietaTab";
 import { MetasTab } from "@/components/MetasTab";
 import { TreinosTab } from "@/components/TreinosTab";
 import { MeasurementModal } from "@/components/MeasurementModal";
+import { TermometroExecutivoCard } from "@/components/TermometroExecutivoCard";
 import type { MeasurementDTO } from "@/actions/measurement-actions";
 
 const DocumentosTab = dynamic(
@@ -265,9 +266,15 @@ function MiniSparkline({
   );
 }
 
-function CustomChartTooltip({ active, payload }: any) {
+function CustomChartTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: MetricDataPoint }>;
+}) {
   if (active && payload && payload.length) {
-    const data = payload[0].payload as MetricDataPoint;
+    const data = payload[0].payload;
     return (
       <div className="bg-slate-900 text-white px-3 py-2 rounded-xl shadow-xl border border-slate-700 text-xs">
         <span className="text-[10px] text-slate-400 block font-medium">
@@ -340,6 +347,8 @@ export function ProntuarioModal({
 
   // Lista do Histórico Clínico (Linha do Tempo de Atendimentos)
   const [historico, setHistorico] = useState<HistoricoClinicoItem[]>([]);
+  const [filtroHistorico, setFiltroHistorico] = useState<"oficiais" | "todos">("oficiais");
+  const [termometroRefreshKey, setTermometroRefreshKey] = useState(0);
   const [biometriaHistorico, setBiometriaHistorico] = useState<BiometriaHistoricoItem[]>([]);
   const [glicemiaHistorico, setGlicemiaHistorico] = useState<GlicemiaHistoricoItem[]>([]);
   const [measurementsHistorico, setMeasurementsHistorico] = useState<MeasurementDTO[]>([]);
@@ -390,23 +399,29 @@ export function ProntuarioModal({
 
   // Carrega os dados reais do prontuário e histórico ao abrir
   useEffect(() => {
-    if (!isOpen || !paciente) {
-      setActiveTab("prontuario");
-      setIsAccessDenied(false);
-      return;
-    }
-
-    if (!isAuthorized) {
-      setIsAccessDenied(true);
-      return;
-    }
+    let ativo = true;
 
     async function fetchProntuario() {
+      await Promise.resolve();
+      if (!ativo) return;
+
+      if (!isOpen || !paciente) {
+        setActiveTab("prontuario");
+        setIsAccessDenied(false);
+        return;
+      }
+
+      if (!isAuthorized) {
+        setIsAccessDenied(true);
+        return;
+      }
+
       try {
         setIsLoading(true);
         setIsAccessDenied(false);
         setPacienteApiData(null);
         setHistorico([]);
+        setFiltroHistorico("oficiais");
         setBiometriaHistorico([]);
         setGlicemiaHistorico([]);
         setPesoAtual("");
@@ -418,10 +433,12 @@ export function ProntuarioModal({
         setEvolucao("");
         setUltimaAtualizacao(null);
 
-        const res = await fetch(`/api/pacientes/${paciente?.id}/prontuario`, {
+        const res = await fetch(`/api/pacientes/${paciente.id}/prontuario`, {
           cache: "no-store",
           headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
         });
+
+        if (!ativo) return;
 
         if (res.status === 403) {
           setIsAccessDenied(true);
@@ -434,6 +451,7 @@ export function ProntuarioModal({
         }
 
         const json = await res.json();
+        if (!ativo) return;
         if (json.success) {
           if (json.paciente) {
             setPacienteApiData(json.paciente);
@@ -446,7 +464,9 @@ export function ProntuarioModal({
             setComorbidades(p.comorbidades || "");
             setAlergias(p.alergias || "");
             setMedicacoes(p.medicacoes || "");
-            setEvolucao(p.evolucao || "");
+            // Mantém a caixa "Evolução e Conduta do Dia" sempre limpa ao abrir o prontuário
+            // (nunca pré-preencher com auto-monitoramento do app ou rascunho anterior).
+            setEvolucao("");
             setUltimaAtualizacao(p.ultimaAtualizacao || null);
           }
           if (Array.isArray(json.historico)) {
@@ -463,13 +483,21 @@ export function ProntuarioModal({
           );
         }
       } catch (err) {
-        console.error("Erro ao buscar dados clínicos do paciente:", err);
+        if (ativo) {
+          console.error("Erro ao buscar dados clínicos do paciente:", err);
+        }
       } finally {
-        setIsLoading(false);
+        if (ativo) {
+          setIsLoading(false);
+        }
       }
     }
 
-    fetchProntuario();
+    void fetchProntuario();
+
+    return () => {
+      ativo = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, paciente?.id, isAuthorized]);
 
@@ -1259,6 +1287,30 @@ export function ProntuarioModal({
     }
   }, [modalMetricaAtiva, pesoSeries, imcSeries, glicemiaSeries, circunferenciaSeries, pesoExibicao, imcDisplay, glicemiaDisplay, circunferenciaDisplay]);
 
+  // Classifica registros de auto-monitoramento vindos do App Mobile (filtro não-destrutivo)
+  function isRegistroAutoMonitoramento(item: HistoricoClinicoItem): boolean {
+    const medico = (item.medicoResponsavel || "").toUpperCase();
+    const queixa = (item.queixaPrincipal || "").toUpperCase();
+    const evolucaoTexto = (item.condutaEvolucao || "").toUpperCase();
+    return (
+      medico.includes("AUTO-MONITORAMENTO") ||
+      queixa.includes("AUTO-MONITORAMENTO") ||
+      evolucaoTexto.includes(
+        "PESAGEM DE AUTO-MONITORAMENTO REGISTRADA VIA APP MOBILE"
+      )
+    );
+  }
+
+  const totalAutoMonitoramento = useMemo(
+    () => historico.filter(isRegistroAutoMonitoramento).length,
+    [historico]
+  );
+
+  const historicoFiltrado = useMemo(() => {
+    if (filtroHistorico === "todos") return historico;
+    return historico.filter((item) => !isRegistroAutoMonitoramento(item));
+  }, [historico, filtroHistorico]);
+
   // Salvar Ficha e Registrar Novo Atendimento na Linha do Tempo
   async function handleSalvarERegistrarAtendimento(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -1291,6 +1343,8 @@ export function ProntuarioModal({
       if (Array.isArray(json.historico)) {
         setHistorico(json.historico);
       }
+      setEvolucao("");
+      setTermometroRefreshKey((k) => k + 1);
 
       setSuccessToast("Atendimento registrado e histórico clínico atualizado com sucesso!");
       setTimeout(() => setSuccessToast(null), 3000);
@@ -1884,8 +1938,16 @@ export function ProntuarioModal({
         ) : activeTab === "prontuario" ? (
           /* CONTEÚDO PRINCIPAL: ESTRUTURA FLUIDA FULL-WIDTH (GRID 12 COLUNAS) */
           <div className="flex-1 min-h-0 flex flex-col w-full">
-            {/* ÁREA ROLÁVEL COM ESTRUTURA FLUIDA EM GRID 12 COLUNAS */}
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 lg:px-8 py-5 sm:py-6 w-full">
+            {/* ÁREA ROLÁVEL COM TERMÔMETRO EXECUTIVO + ESTRUTURA FLUIDA EM GRID 12 COLUNAS */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 lg:px-8 py-5 sm:py-6 w-full space-y-5">
+              {/* TERMÔMETRO EXECUTIVO DE 10 SEGUNDOS (100% ADITIVO) */}
+              {paciente?.id ? (
+                <TermometroExecutivoCard
+                  pacienteId={paciente.id}
+                  refreshTrigger={termometroRefreshKey}
+                />
+              ) : null}
+
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-full w-full">
 
                 {/* ======================================================== */}
@@ -2120,7 +2182,7 @@ export function ProntuarioModal({
 
                   {/* SEÇÃO INFERIOR: HISTÓRICO CLÍNICO / LINHA DO TEMPO */}
                   <div className="space-y-4 pt-1">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-200">
                   <div className="flex items-center gap-2">
                     <div className="p-1.5 rounded-lg bg-slate-100 text-slate-700">
                       <History className="w-4 h-4 text-teal-700" />
@@ -2135,25 +2197,82 @@ export function ProntuarioModal({
                     </div>
                   </div>
 
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                    {historico.length} {historico.length === 1 ? "atendimento registrado" : "atendimentos registrados"}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Filtro não-destrutivo em pílula */}
+                    <div
+                      role="tablist"
+                      aria-label="Filtrar histórico clínico"
+                      className="inline-flex items-center p-0.5 rounded-full bg-slate-100 border border-slate-200/90"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={filtroHistorico === "oficiais"}
+                        onClick={() => setFiltroHistorico("oficiais")}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
+                          filtroHistorico === "oficiais"
+                            ? "bg-white text-teal-800 shadow-2xs border border-slate-200/80"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        Consultas Oficiais
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={filtroHistorico === "todos"}
+                        onClick={() => setFiltroHistorico("todos")}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
+                          filtroHistorico === "todos"
+                            ? "bg-white text-teal-800 shadow-2xs border border-slate-200/80"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        Todos os Registros
+                        {totalAutoMonitoramento > 0 ? (
+                          <span className="ml-1 text-[10px] font-semibold text-slate-400">
+                            (+{totalAutoMonitoramento})
+                          </span>
+                        ) : null}
+                      </button>
+                    </div>
+
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                      {historicoFiltrado.length}{" "}
+                      {historicoFiltrado.length === 1
+                        ? "registro"
+                        : "registros"}
+                    </span>
+                  </div>
                 </div>
 
                 {/* TIMELINE DE ATENDIMENTOS COM BOTÕES DE EDITAR E EXCLUIR */}
-                {historico.length === 0 ? (
+                {historicoFiltrado.length === 0 ? (
                   <div className="bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl p-8 text-center flex flex-col items-center justify-center space-y-2">
                     <History className="w-8 h-8 text-slate-300" />
                     <p className="text-xs font-bold text-slate-700">
-                      Nenhum atendimento anterior registrado ainda
+                      {filtroHistorico === "oficiais" && totalAutoMonitoramento > 0
+                        ? "Nenhuma consulta médica oficial registrada ainda"
+                        : "Nenhum atendimento anterior registrado ainda"}
                     </p>
                     <p className="text-[11px] text-slate-400 max-w-sm">
-                      Assim que você preencher os dados acima e clicar em "Salvar e Registrar Atendimento", a consulta ficará gravada nesta linha do tempo.
+                      {filtroHistorico === "oficiais" && totalAutoMonitoramento > 0
+                        ? `Existem ${totalAutoMonitoramento} registro(s) de auto-monitoramento via App Mobile ocultos neste filtro.`
+                        : 'Assim que você preencher os dados acima e clicar em "Salvar e Registrar Atendimento", a consulta ficará gravada nesta linha do tempo.'}
                     </p>
+                    {filtroHistorico === "oficiais" && totalAutoMonitoramento > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setFiltroHistorico("todos")}
+                        className="mt-1 px-3 py-1.5 text-[11px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors cursor-pointer"
+                      >
+                        Exibir todos os registros ({historico.length})
+                      </button>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="relative pl-6 space-y-5 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-slate-200">
-                    {historico.map((item, idx) => {
+                    {historicoFiltrado.map((item, idx) => {
                       const dataFormatada = new Date(item.dataAtendimento).toLocaleDateString("pt-BR", {
                         day: "2-digit",
                         month: "2-digit",
@@ -2165,6 +2284,7 @@ export function ProntuarioModal({
                       });
 
                       const isFirst = idx === 0;
+                      const isAutoApp = isRegistroAutoMonitoramento(item);
 
                       return (
                         <div key={item.id} className="relative group">
@@ -2189,7 +2309,7 @@ export function ProntuarioModal({
                           >
                             {/* Cabeçalho do Card com Ações de Edição / Exclusão */}
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
                                   <Calendar className="w-3.5 h-3.5 text-teal-600" />
                                   <span>{dataFormatada} às {horaFormatada}</span>
@@ -2197,6 +2317,11 @@ export function ProntuarioModal({
                                 {isFirst && (
                                   <span className="text-[10px] font-black px-1.5 py-0.2 bg-teal-50 text-teal-700 border border-teal-200 rounded">
                                     Mais recente
+                                  </span>
+                                )}
+                                {isAutoApp && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 bg-sky-50 text-sky-700 border border-sky-200 rounded">
+                                    Auto-monitoramento (App)
                                   </span>
                                 )}
                               </div>
@@ -2801,6 +2926,7 @@ export function ProntuarioModal({
                   new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime()
               );
               setMeasurementsHistorico(next);
+              setTermometroRefreshKey((k) => k + 1);
               const top = next[0];
               if (top) {
                 setPacienteApiData((prevApi) =>
