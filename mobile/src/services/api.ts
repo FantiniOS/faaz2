@@ -383,6 +383,54 @@ export interface RegistrarCheckinRefeicaoResponse {
   checkin: CheckinRefeicaoItem;
 }
 
+export interface ProximaConsultaItem {
+  id: string;
+  pacienteId?: string;
+  medicoId?: string;
+  status: string;
+  statusLegivel?: string;
+  dataHora: string;
+  dataLocalIso?: string;
+  dataFormatada?: string;
+  horario?: string;
+  duracaoMinutos?: number;
+  encaixe?: boolean;
+  tipo: string;
+  tipoLegivel?: string;
+  medicoNome: string;
+  especialidade: string;
+  medicoEspecialidade?: string;
+  medicoCorHex?: string;
+  observacao?: string;
+  medico?: {
+    nome?: string | null;
+    especialidade?: string | null;
+  } | null;
+}
+
+export interface ProximaConsultaResponse {
+  success: boolean;
+  temProximaConsulta: boolean;
+  proximaConsulta: ProximaConsultaItem | null;
+}
+
+export interface ResponderConsultaPayload {
+  agendamentoId: string;
+  acao: "CONFIRMAR" | "CANCELAR";
+  motivo?: string;
+}
+
+export interface ResponderConsultaResponse {
+  success: boolean;
+  agendamentoId?: string;
+  status?: "CONFIRMADO" | "CANCELADO";
+  statusLegivel?: string;
+  dataHora?: string;
+  observacao?: string;
+  message?: string;
+  error?: string;
+}
+
 /**
  * Executa requisição HTTP tipada com headers, auth token e CORS
  */
@@ -518,6 +566,10 @@ export const api = {
     return httpRequest<T>(endpoint, "PUT", { ...options, body: data });
   },
 
+  patch<T = any>(endpoint: string, data?: any, options?: RequestOptions): Promise<T> {
+    return httpRequest<T>(endpoint, "PATCH", { ...options, body: data });
+  },
+
   delete<T = any>(endpoint: string, options?: RequestOptions): Promise<T> {
     return httpRequest<T>(endpoint, "DELETE", options);
   },
@@ -538,8 +590,19 @@ export const api = {
     getMetas(pacienteId: string) {
       return api.get(`/pacientes/${encodeURIComponent(pacienteId)}/metas`);
     },
-    getProximaConsulta(pacienteId: string) {
-      return api.get(`/pacientes/${encodeURIComponent(pacienteId)}/proxima-consulta`);
+    getProximaConsulta(pacienteId: string): Promise<ProximaConsultaResponse> {
+      return api.get<ProximaConsultaResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/proxima-consulta`
+      );
+    },
+    responderConsulta(
+      pacienteId: string,
+      payload: ResponderConsultaPayload
+    ): Promise<ResponderConsultaResponse> {
+      return api.patch<ResponderConsultaResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/proxima-consulta`,
+        payload
+      );
     },
     getDieta<T = any>(pacienteId?: string): Promise<T> {
       const endpoint = pacienteId

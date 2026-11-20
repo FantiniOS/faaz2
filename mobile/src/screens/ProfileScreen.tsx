@@ -26,6 +26,9 @@ import {
   Pill,
   MessageCircle,
   User as UserIcon,
+  Check,
+  CheckCircle2,
+  X,
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -33,7 +36,11 @@ import * as FileSystem from "expo-file-system/legacy";
 import { usePatientAuth } from "../contexts/PatientAuthContext";
 import { StandardHeader } from "../components/StandardHeader";
 import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
-import { api, resolveAssetUrl } from "../services/api";
+import {
+  api,
+  resolveAssetUrl,
+  type ProximaConsultaItem,
+} from "../services/api";
 import { getConfigObjetivoClinico } from "../utils/objetivoClinico";
 
 export interface ProfileScreenProps {
@@ -43,22 +50,7 @@ export interface ProfileScreenProps {
   onNavigateToMetas?: () => void;
 }
 
-interface ProximaConsultaData {
-  id: string;
-  dataHora: string;
-  duracaoMinutos?: number;
-  tipo?: string;
-  tipoLegivel?: string;
-  status?: string;
-  statusLegivel?: string;
-  medicoNome?: string;
-  medicoEspecialidade?: string;
-  medico?: {
-    nome?: string | null;
-    especialidade?: string | null;
-  } | null;
-  observacao?: string;
-}
+type ProximaConsultaData = ProximaConsultaItem;
 
 const WHATSAPP_URL_OFICIAL =
   "https://wa.me/5531984400076?text=Olá!%20Sou%20paciente%20da%20Clínica%20FAAZ%20e%20gostaria%20de%20atendimento.";
@@ -94,6 +86,7 @@ const DIAS_SEMANA_PT = [
  */
 function formatConsultaLocal(isoStr: string): {
   dataExtenso: string;
+  dataCurtaDdMm: string;
   horarioLocal: string;
   contagemRegressiva: string;
 } {
@@ -101,6 +94,7 @@ function formatConsultaLocal(isoStr: string): {
   if (Number.isNaN(d.getTime())) {
     return {
       dataExtenso: "Data a confirmar",
+      dataCurtaDdMm: "--/--",
       horarioLocal: "--:--",
       contagemRegressiva: "",
     };
@@ -112,6 +106,7 @@ function formatConsultaLocal(isoStr: string): {
   const pad = (n: number) => String(n).padStart(2, "0");
 
   const dataExtenso = `${dia} de ${mes}, ${diaSemana}`;
+  const dataCurtaDdMm = `${pad(dia)}/${pad(d.getMonth() + 1)}`;
   const horarioLocal = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
   const agora = new Date();
@@ -134,7 +129,7 @@ function formatConsultaLocal(isoStr: string): {
     contagemRegressiva = `Em ${diffDias} dias`;
   }
 
-  return { dataExtenso, horarioLocal, contagemRegressiva };
+  return { dataExtenso, dataCurtaDdMm, horarioLocal, contagemRegressiva };
 }
 
 function formatCpfExibicao(cpf?: string | null): string {
@@ -164,6 +159,9 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [carregandoConsulta, setCarregandoConsulta] = useState(true);
+  const [respondendoAcao, setRespondendoAcao] = useState<
+    "CONFIRMAR" | "CANCELAR" | null
+  >(null);
 
   const [proximaConsulta, setProximaConsulta] =
     useState<ProximaConsultaData | null>(null);
@@ -194,6 +192,7 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
     proximaConsulta?.medico?.nome?.trim() ||
     "";
   const especialidadeConsulta =
+    proximaConsulta?.especialidade?.trim() ||
     proximaConsulta?.medicoEspecialidade?.trim() ||
     proximaConsulta?.medico?.especialidade?.trim() ||
     "";
@@ -436,6 +435,104 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
     return formatConsultaLocal(proximaConsulta.dataHora);
   }, [proximaConsulta?.dataHora]);
 
+  const statusConsultaUpper = (proximaConsulta?.status || "").toUpperCase();
+  const isConsultaConfirmada = statusConsultaUpper === "CONFIRMADO";
+
+  const handleConfirmarConsulta = async () => {
+    if (!pacienteId || !proximaConsulta?.id || respondendoAcao) return;
+    try {
+      setRespondendoAcao("CONFIRMAR");
+      const res = await api.pacientes.responderConsulta(pacienteId, {
+        agendamentoId: proximaConsulta.id,
+        acao: "CONFIRMAR",
+      });
+      if (res?.success) {
+        setProximaConsulta((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "CONFIRMADO",
+                statusLegivel: "Confirmada",
+                observacao: res.observacao ?? prev.observacao,
+              }
+            : null
+        );
+        await carregarDadosClinica();
+      } else {
+        Alert.alert(
+          "Não foi possível confirmar",
+          res?.error || "Tente novamente em instantes."
+        );
+      }
+    } catch (err: any) {
+      Alert.alert(
+        "Erro ao confirmar",
+        err?.message || "Não foi possível confirmar sua consulta agora."
+      );
+    } finally {
+      setRespondendoAcao(null);
+    }
+  };
+
+  const executarCancelamentoConsulta = async () => {
+    if (!pacienteId || !proximaConsulta?.id || respondendoAcao) return;
+    try {
+      setRespondendoAcao("CANCELAR");
+      const res = await api.pacientes.responderConsulta(pacienteId, {
+        agendamentoId: proximaConsulta.id,
+        acao: "CANCELAR",
+      });
+      if (res?.success) {
+        setProximaConsulta(null);
+        await carregarDadosClinica();
+        Alert.alert(
+          "Consulta cancelada",
+          "Sua consulta foi cancelada e o horário foi liberado na agenda da clínica. Deseja reagendar pelo WhatsApp?",
+          [
+            { text: "Fechar", style: "cancel" },
+            {
+              text: "Reagendar no WhatsApp",
+              onPress: () => void handleOpenWhatsApp(),
+            },
+          ]
+        );
+      } else {
+        Alert.alert(
+          "Não foi possível cancelar",
+          res?.error || "Tente novamente em instantes."
+        );
+      }
+    } catch (err: any) {
+      Alert.alert(
+        "Erro ao cancelar",
+        err?.message || "Não foi possível cancelar sua consulta agora."
+      );
+    } finally {
+      setRespondendoAcao(null);
+    }
+  };
+
+  const handleSolicitarCancelamento = () => {
+    if (!proximaConsulta || !consultaFormatada || respondendoAcao) return;
+    const msg = `Deseja cancelar sua consulta de ${consultaFormatada.dataCurtaDdMm} às ${consultaFormatada.horarioLocal}? O horário será liberado na agenda da clínica.`;
+
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      if (window.confirm(msg)) {
+        void executarCancelamentoConsulta();
+      }
+      return;
+    }
+
+    Alert.alert("Cancelar consulta", msg, [
+      { text: "Manter consulta", style: "cancel" },
+      {
+        text: "Sim, cancelar",
+        style: "destructive",
+        onPress: () => void executarCancelamentoConsulta(),
+      },
+    ]);
+  };
+
   return (
     <View style={styles.root}>
       {/* HEADER ESCURO EXECUTIVO (SEM VOLTAR) */}
@@ -525,13 +622,23 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
                     </Text>
                   </View>
                 ) : null}
-                {proximaConsulta.statusLegivel ? (
-                  <View style={styles.tagPillSuccess}>
-                    <Text style={styles.tagPillSuccessText}>
-                      {proximaConsulta.statusLegivel}
-                    </Text>
-                  </View>
-                ) : null}
+                <View
+                  style={
+                    isConsultaConfirmada
+                      ? styles.tagPillSuccess
+                      : styles.tagPillPending
+                  }
+                >
+                  <Text
+                    style={
+                      isConsultaConfirmada
+                        ? styles.tagPillSuccessText
+                        : styles.tagPillPendingText
+                    }
+                  >
+                    {isConsultaConfirmada ? "Confirmada" : "Agendada"}
+                  </Text>
+                </View>
                 {proximaConsulta.duracaoMinutos ? (
                   <View style={styles.tagPill}>
                     <Text style={styles.tagPillText}>
@@ -558,6 +665,72 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
               </Text>
             </View>
           )}
+
+          {/* AÇÕES DO PACIENTE PARA A PRÓXIMA CONSULTA (CONFIRMAR / CANCELAR) */}
+          {!carregandoConsulta && proximaConsulta && consultaFormatada ? (
+            isConsultaConfirmada ? (
+              <View style={styles.confirmedActionRow}>
+                <View style={styles.confirmedStatusBox}>
+                  <CheckCircle2 size={15} color="#047857" />
+                  <Text style={styles.confirmedStatusText}>
+                    Presença confirmada
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  disabled={respondendoAcao !== null}
+                  onPress={handleSolicitarCancelamento}
+                  style={styles.cancelLinkBtn}
+                >
+                  {respondendoAcao === "CANCELAR" ? (
+                    <ActivityIndicator size="small" color="#be123c" />
+                  ) : (
+                    <Text style={styles.cancelLinkText}>Precisa cancelar?</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.consultaActionsRow}>
+                <TouchableOpacity
+                  activeOpacity={0.82}
+                  disabled={respondendoAcao !== null}
+                  onPress={() => void handleConfirmarConsulta()}
+                  style={[
+                    styles.confirmBtn,
+                    respondendoAcao !== null && styles.btnDisabled,
+                  ]}
+                >
+                  {respondendoAcao === "CONFIRMAR" ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <Check size={15} color="#ffffff" />
+                      <Text style={styles.confirmBtnText}>Confirmar</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  disabled={respondendoAcao !== null}
+                  onPress={handleSolicitarCancelamento}
+                  style={[
+                    styles.cancelOutlineBtn,
+                    respondendoAcao !== null && styles.btnDisabled,
+                  ]}
+                >
+                  {respondendoAcao === "CANCELAR" ? (
+                    <ActivityIndicator size="small" color="#be123c" />
+                  ) : (
+                    <>
+                      <X size={14} color="#be123c" />
+                      <Text style={styles.cancelOutlineBtnText}>Cancelar</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )
+          ) : null}
 
           <TouchableOpacity
             activeOpacity={0.82}
@@ -953,6 +1126,8 @@ const styles = StyleSheet.create({
   },
   tagPillSuccess: {
     backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -961,6 +1136,92 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#047857",
+  },
+  tagPillPending: {
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tagPillPendingText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#b45309",
+  },
+  consultaActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  confirmBtn: {
+    flex: 1.25,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#059669",
+    borderRadius: 12,
+    paddingVertical: 11,
+  },
+  confirmBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#ffffff",
+  },
+  cancelOutlineBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+    borderRadius: 12,
+    paddingVertical: 11,
+  },
+  cancelOutlineBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#be123c",
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  confirmedActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  confirmedStatusBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flex: 1,
+  },
+  confirmedStatusText: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#047857",
+  },
+  cancelLinkBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  cancelLinkText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#9f1239",
+    textDecorationLine: "underline",
   },
   consultaNotes: {
     fontSize: 12,
