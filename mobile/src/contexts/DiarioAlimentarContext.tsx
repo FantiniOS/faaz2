@@ -7,8 +7,23 @@ import React, {
   useMemo,
   ReactNode,
 } from "react";
-import api from "../services/api";
+import api, {
+  CheckinRefeicaoItem,
+  CheckinRefeicaoStatus,
+  PacienteDietaResponse,
+  PlanoAlimentarApi,
+  RefeicaoApi,
+  VariacaoDietaApi,
+} from "../services/api";
 import { usePatientAuth } from "./PatientAuthContext";
+import {
+  ProgressoRefeicoesDia,
+  calcularProgressoRefeicoesDia,
+  extrairTrocasDosCheckins,
+  isStatusAderente,
+  montarTrocasPayloadRefeicao,
+  ordenarRefeicoesPorHorario,
+} from "../utils/dietaHelpers";
 
 export interface ItemAlimentoDiario {
   id: string;
@@ -38,7 +53,9 @@ export interface RefeicaoDiario {
   nome: string;
   horario: string;
   ordem: number;
+  opcional?: boolean;
   consumido: boolean;
+  statusCheckin?: CheckinRefeicaoStatus | null;
   itensPrescritos: ItemAlimentoDiario[];
   itensExtras: ItemAlimentoDiario[];
   caloriasPrescritas: number;
@@ -47,14 +64,39 @@ export interface RefeicaoDiario {
 }
 
 export interface DiarioAlimentarContextData {
+  // === NOVO GUIA INTERATIVO DA DIETA (ETAPA 3B) ===
+  plano: PlanoAlimentarApi | null;
+  pacienteDieta: PacienteDietaResponse["paciente"] | null;
+  variacoes: VariacaoDietaApi[];
+  variacaoAtiva: VariacaoDietaApi | null;
+  variacaoAtivaId: string | null;
+  selecionarVariacao: (variacaoId: string) => void;
+  refeicoesEstruturadas: RefeicaoApi[];
+  checkinsPorRefeicao: Record<string, CheckinRefeicaoItem>;
+  trocasSelecionadas: Record<string, string>;
+  progressoRefeicoes: ProgressoRefeicoesDia;
+  dataReferencia: string | null;
+  carregando: boolean;
+  salvandoRefeicaoId: string | null;
+  erroDieta: string | null;
+  registrarCheckinRefeicao: (
+    refeicaoId: string,
+    status: CheckinRefeicaoStatus,
+    trocasOverride?: Record<string, string>
+  ) => Promise<boolean>;
+  aplicarTrocaItem: (
+    refeicaoId: string,
+    itemRefeicaoId: string,
+    substituicaoId: string | null
+  ) => Promise<void>;
+  recarregarDiario: (silencioso?: boolean) => Promise<void>;
+
+  // === CAMPOS LEGADOS (RETROCOMPATIBILIDADE) ===
   caloriasMeta: number;
   caloriasConsumidas: number;
   caloriasRestantes: number;
   percentualConsumido: number;
-  variacaoAtivaId: string | null;
-  selecionarVariacao: (variacaoId: string) => void;
   refeicoes: RefeicaoDiario[];
-  carregando: boolean;
   toggleCheckinRefeicao: (refeicaoId: string) => void;
   adicionarAlimentoExtra: (
     refeicaoId: string,
@@ -83,149 +125,406 @@ export interface DiarioAlimentarContextData {
     },
     gramas: number
   ) => Promise<void>;
-  recarregarDiario: () => Promise<void>;
 }
 
-const DiarioAlimentarContext = createContext<DiarioAlimentarContextData | undefined>(
-  undefined
-);
+const DiarioAlimentarContext = createContext<
+  DiarioAlimentarContextData | undefined
+>(undefined);
 
-const REFEICOES_PADRAO: { nome: string; horario: string; ordem: number }[] = [
-  { nome: "Café da Manhã", horario: "07:30", ordem: 1 },
-  { nome: "Almoço", horario: "12:30", ordem: 2 },
-  { nome: "Lanche", horario: "16:00", ordem: 3 },
-  { nome: "Jantar", horario: "19:30", ordem: 4 },
-];
+function getHojeIsoLocal(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
   const { paciente } = usePatientAuth();
-  const pacienteId = paciente?.id;
+  const pacienteId = paciente?.id || "";
 
-  const [caloriasMeta, setCaloriasMeta] = useState<number>(0);
-  const [variacoes, setVariacoes] = useState<any[]>([]);
+  const [plano, setPlano] = useState<PlanoAlimentarApi | null>(null);
+  const [pacienteDieta, setPacienteDieta] =
+    useState<PacienteDietaResponse["paciente"] | null>(null);
+  const [variacoes, setVariacoes] = useState<VariacaoDietaApi[]>([]);
   const [variacaoAtivaId, setVariacaoAtivaId] = useState<string | null>(null);
-  const [consumidoMap, setConsumidoMap] = useState<Record<string, boolean>>({});
-  const [extrasMap, setExtrasMap] = useState<Record<string, ItemAlimentoDiario[]>>({});
+  const [checkinsPorRefeicao, setCheckinsPorRefeicao] = useState<
+    Record<string, CheckinRefeicaoItem>
+  >({});
+  const [trocasSelecionadas, setTrocasSelecionadas] = useState<
+    Record<string, string>
+  >({});
+  const [dataReferencia, setDataReferencia] = useState<string | null>(null);
   const [carregando, setCarregando] = useState<boolean>(false);
+  const [salvandoRefeicaoId, setSalvandoRefeicaoId] = useState<string | null>(
+    null
+  );
+  const [erroDieta, setErroDieta] = useState<string | null>(null);
+
+  // Estados legados mínimos para retrocompatibilidade
+  const [caloriasMeta, setCaloriasMeta] = useState<number>(0);
+  const [extrasMap, setExtrasMap] = useState<
+    Record<string, ItemAlimentoDiario[]>
+  >({});
 
   const selecionarVariacao = useCallback((variacaoId: string) => {
     setVariacaoAtivaId(variacaoId);
   }, []);
 
-  // Carrega a prescrição médica oficial e as metas do paciente
-  const carregarDiario = useCallback(async () => {
-    try {
-      setCarregando(true);
+  const carregarDiario = useCallback(
+    async (silencioso: boolean = false) => {
+      if (!pacienteId) {
+        setPlano(null);
+        setPacienteDieta(null);
+        setVariacoes([]);
+        setVariacaoAtivaId(null);
+        setCheckinsPorRefeicao({});
+        setTrocasSelecionadas({});
+        setDataReferencia(null);
+        setErroDieta(null);
+        setCarregando(false);
+        return;
+      }
 
-      // 1. Busca meta calórica do paciente
-      if (pacienteId) {
-        try {
-          const resMetas = await api.pacientes.getMetas(pacienteId);
-          if (resMetas?.metas?.caloriasAlvo) {
-            setCaloriasMeta(Number(resMetas.metas.caloriasAlvo));
+      try {
+        if (!silencioso) {
+          setCarregando(true);
+        }
+        setErroDieta(null);
+
+        const [dietaRes, checkinsRes] = await Promise.allSettled([
+          api.pacientes.getDietaEstruturada(pacienteId),
+          api.checkins.getRefeicoes(pacienteId),
+        ]);
+
+        if (dietaRes.status === "fulfilled" && dietaRes.value) {
+          const dataDieta = dietaRes.value;
+          const planoApi = dataDieta.plano ?? null;
+          const variacoesApi = Array.isArray(planoApi?.variacoes)
+            ? planoApi.variacoes
+            : [];
+
+          setPlano(planoApi);
+          setPacienteDieta(dataDieta.paciente ?? null);
+          setVariacoes(variacoesApi);
+          if (planoApi?.caloriasAlvo) {
+            setCaloriasMeta(Number(planoApi.caloriasAlvo) || 0);
           }
-        } catch {
-          // Mantém 1800 padrão
+
+          setVariacaoAtivaId((prev) => {
+            if (prev && variacoesApi.some((v) => v.id === prev)) {
+              return prev;
+            }
+            return variacoesApi[0]?.id ?? null;
+          });
+        } else if (dietaRes.status === "rejected") {
+          setErroDieta("Não foi possível carregar seu plano alimentar agora.");
+        }
+
+        if (checkinsRes.status === "fulfilled" && checkinsRes.value) {
+          const lista = Array.isArray(checkinsRes.value.checkins)
+            ? checkinsRes.value.checkins
+            : [];
+          const mapaCheckins: Record<string, CheckinRefeicaoItem> = {};
+          for (const item of lista) {
+            if (item?.refeicaoId) {
+              mapaCheckins[item.refeicaoId] = item;
+            }
+          }
+          setCheckinsPorRefeicao(mapaCheckins);
+          setDataReferencia(
+            checkinsRes.value.dataReferencia || getHojeIsoLocal()
+          );
+
+          const trocasSalvas = extrairTrocasDosCheckins(lista);
+          setTrocasSelecionadas(trocasSalvas);
+        }
+      } catch (err) {
+        console.log("[DiarioAlimentar] Erro ao sincronizar dieta:", err);
+        setErroDieta("Erro de conexão ao carregar o plano alimentar.");
+      } finally {
+        setCarregando(false);
+      }
+    },
+    [pacienteId]
+  );
+
+  useEffect(() => {
+    carregarDiario(false);
+  }, [carregarDiario]);
+
+  const variacaoAtiva = useMemo(() => {
+    if (!variacoes.length) return null;
+    return (
+      variacoes.find((v) => v.id === variacaoAtivaId) || variacoes[0] || null
+    );
+  }, [variacoes, variacaoAtivaId]);
+
+  const refeicoesEstruturadas = useMemo(() => {
+    const raw = Array.isArray(variacaoAtiva?.refeicoes)
+      ? variacaoAtiva.refeicoes
+      : [];
+    return ordenarRefeicoesPorHorario(raw);
+  }, [variacaoAtiva]);
+
+  const progressoRefeicoes = useMemo(
+    () =>
+      calcularProgressoRefeicoesDia(refeicoesEstruturadas, checkinsPorRefeicao),
+    [refeicoesEstruturadas, checkinsPorRefeicao]
+  );
+
+  // =========================================================================
+  // CHECK-IN LEVE DE REFEIÇÃO (3 SEGUNDOS) — OTIMISTA + PERSISTÊNCIA ORACLE
+  // =========================================================================
+  const registrarCheckinRefeicao = useCallback(
+    async (
+      refeicaoId: string,
+      status: CheckinRefeicaoStatus,
+      trocasOverride?: Record<string, string>
+    ): Promise<boolean> => {
+      if (!pacienteId || !refeicaoId) return false;
+
+      const refAlvo =
+        refeicoesEstruturadas.find((r) => r.id === refeicaoId) ||
+        variacoes
+          .flatMap((v) => v.refeicoes || [])
+          .find((r) => r.id === refeicaoId) ||
+        null;
+
+      const trocasAnteriores = trocasSelecionadas;
+      const trocasMapaAtivo: Record<string, string> = {
+        ...(trocasOverride ?? trocasSelecionadas),
+      };
+
+      // Ao marcar "SEGUI" ou "NAO_FIZ", limpa eventuais trocas aplicadas nesta refeição para
+      // impedir contradição visual entre "Troca aplicada" no item e status sem troca.
+      const deveLimparTrocas = status === "SEGUI" || status === "NAO_FIZ";
+      let limpouTrocasDaRefeicao = false;
+      if (deveLimparTrocas && Array.isArray(refAlvo?.itens)) {
+        for (const item of refAlvo.itens) {
+          if (item?.id && trocasMapaAtivo[item.id]) {
+            delete trocasMapaAtivo[item.id];
+            limpouTrocasDaRefeicao = true;
+          }
+        }
+        if (limpouTrocasDaRefeicao) {
+          setTrocasSelecionadas(trocasMapaAtivo);
         }
       }
 
-      // 2. Busca o plano alimentar ativo (com todas as variações, refeições e alimentos prescritos)
-      const dataDieta = await api.pacientes.getDieta(pacienteId);
-      const variacoesApi = Array.isArray(dataDieta?.plano?.variacoes)
-        ? dataDieta.plano.variacoes
-        : [];
+      const trocasLista = deveLimparTrocas
+        ? []
+        : montarTrocasPayloadRefeicao(refAlvo, trocasMapaAtivo);
+      const opcaoEscolhida = variacaoAtiva?.nome || null;
+      const diaHoje = dataReferencia || getHojeIsoLocal();
+      const agoraIso = new Date().toISOString();
 
-      if (dataDieta?.sucesso) {
-        setVariacoes(variacoesApi);
-        setVariacaoAtivaId((prev) =>
-          prev && variacoesApi.some((v: any) => v?.id === prev)
-            ? prev
-            : variacoesApi[0]?.id ?? null
-        );
-      }
-    } catch (err) {
-      console.log("[DiarioAlimentar] Erro ao sincronizar diário com backend:", err);
-    } finally {
-      setCarregando(false);
-    }
-  }, [pacienteId]);
+      const anterior = checkinsPorRefeicao[refeicaoId];
+      const otimista: CheckinRefeicaoItem = {
+        id: anterior?.id || `opt-${refeicaoId}`,
+        pacienteId,
+        refeicaoId,
+        refeicaoNome: refAlvo?.nome || anterior?.refeicaoNome || null,
+        dataDia: diaHoje,
+        status,
+        opcaoEscolhida,
+        trocas: trocasLista.length > 0 ? trocasLista : null,
+        criadoEm: anterior?.criadoEm || agoraIso,
+        atualizadoEm: agoraIso,
+      };
 
-  useEffect(() => {
-    carregarDiario();
-  }, [carregarDiario]);
-
-  // Deriva as refeições dinamicamente a partir da variação ativa
-  const refeicoes: RefeicaoDiario[] = useMemo(() => {
-    if (variacoes.length === 0) {
-      return REFEICOES_PADRAO.map((ref, idx) => ({
-        id: `default-${idx + 1}`,
-        nome: ref.nome,
-        horario: ref.horario,
-        ordem: ref.ordem,
-        consumido: false,
-        itensPrescritos: [],
-        itensExtras: [],
-        caloriasPrescritas: 0,
-        caloriasExtras: 0,
-        caloriasTotal: 0,
+      // Atualiza imediatamente para refletir no card e no anel SVG da Home
+      setCheckinsPorRefeicao((prev) => ({
+        ...prev,
+        [refeicaoId]: otimista,
       }));
-    }
+      setSalvandoRefeicaoId(refeicaoId);
 
-    const currentVariation =
-      variacoes.find((v) => v?.id === variacaoAtivaId) || variacoes[0];
-    const refsApi = Array.isArray(currentVariation?.refeicoes)
-      ? currentVariation.refeicoes
-      : [];
+      try {
+        const res = await api.checkins.registrarRefeicao({
+          pacienteId,
+          refeicaoId,
+          dataDia: diaHoje,
+          status,
+          opcaoEscolhida,
+          trocas: trocasLista.length > 0 ? trocasLista : null,
+        });
 
-    return refsApi.map((ref: any, idx: number) => {
+        if (res?.checkin) {
+          setCheckinsPorRefeicao((prev) => ({
+            ...prev,
+            [refeicaoId]: res.checkin,
+          }));
+        }
+        return true;
+      } catch (err) {
+        console.log("[DiarioAlimentar] Erro ao registrar check-in:", err);
+        // Reverte estado otimista em caso de erro real
+        if (limpouTrocasDaRefeicao) {
+          setTrocasSelecionadas(trocasAnteriores);
+        }
+        setCheckinsPorRefeicao((prev) => {
+          const next = { ...prev };
+          if (anterior) {
+            next[refeicaoId] = anterior;
+          } else {
+            delete next[refeicaoId];
+          }
+          return next;
+        });
+        return false;
+      } finally {
+        setSalvandoRefeicaoId((curr) => (curr === refeicaoId ? null : curr));
+      }
+    },
+    [
+      pacienteId,
+      refeicoesEstruturadas,
+      variacoes,
+      variacaoAtiva?.nome,
+      trocasSelecionadas,
+      dataReferencia,
+      checkinsPorRefeicao,
+    ]
+  );
+
+  // =========================================================================
+  // APLICAR OU RESTAURAR SUBSTITUIÇÃO 1:N EM UM ALIMENTO DA REFEIÇÃO
+  // =========================================================================
+  const aplicarTrocaItem = useCallback(
+    async (
+      refeicaoId: string,
+      itemRefeicaoId: string,
+      substituicaoId: string | null
+    ): Promise<void> => {
+      const prevTrocas = trocasSelecionadas;
+      const nextTrocas: Record<string, string> = { ...trocasSelecionadas };
+      if (substituicaoId) {
+        nextTrocas[itemRefeicaoId] = substituicaoId;
+      } else {
+        delete nextTrocas[itemRefeicaoId];
+      }
+
+      setTrocasSelecionadas(nextTrocas);
+
+      const refAlvo =
+        refeicoesEstruturadas.find((r) => r.id === refeicaoId) ||
+        variacoes
+          .flatMap((v) => v.refeicoes || [])
+          .find((r) => r.id === refeicaoId) ||
+        null;
+
+      // Ao aplicar uma substituição, registra/atualiza automaticamente para FIZ_TROCA
+      if (substituicaoId) {
+        const ok = await registrarCheckinRefeicao(
+          refeicaoId,
+          "FIZ_TROCA",
+          nextTrocas
+        );
+        if (!ok) {
+          setTrocasSelecionadas(prevTrocas);
+        }
+        return;
+      }
+
+      // Ao restaurar para o alimento original:
+      // - se ainda houver outras trocas na refeição, mantém FIZ_TROCA com as trocas restantes
+      // - se todas as trocas foram removidas e o status era FIZ_TROCA, atualiza para SEGUI
+      const checkinAtual = checkinsPorRefeicao[refeicaoId];
+      if (checkinAtual) {
+        const trocasRestantes = montarTrocasPayloadRefeicao(
+          refAlvo,
+          nextTrocas
+        );
+        const novoStatus: CheckinRefeicaoStatus =
+          trocasRestantes.length > 0
+            ? "FIZ_TROCA"
+            : checkinAtual.status === "FIZ_TROCA"
+              ? "SEGUI"
+              : checkinAtual.status;
+
+        const ok = await registrarCheckinRefeicao(
+          refeicaoId,
+          novoStatus,
+          nextTrocas
+        );
+        if (!ok) {
+          setTrocasSelecionadas(prevTrocas);
+        }
+      }
+    },
+    [
+      trocasSelecionadas,
+      checkinsPorRefeicao,
+      refeicoesEstruturadas,
+      variacoes,
+      registrarCheckinRefeicao,
+    ]
+  );
+
+  // =========================================================================
+  // DERIVAÇÃO RETROCOMPATÍVEL PARA COMPONENTES LEGADOS
+  // =========================================================================
+  const refeicoes: RefeicaoDiario[] = useMemo(() => {
+    return refeicoesEstruturadas.map((ref, idx) => {
       const refId = ref.id || `ref-${idx + 1}`;
-      const nomeRef = ref.nome || REFEICOES_PADRAO[idx]?.nome || `Refeição ${idx + 1}`;
       const extras = extrasMap[refId] || [];
-      const consumido = consumidoMap[refId] ?? false;
+      const statusCheckin = checkinsPorRefeicao[refId]?.status ?? null;
+      const consumido = isStatusAderente(statusCheckin);
 
-      const itensPrescritos: ItemAlimentoDiario[] = (ref.itens || []).map((it: any, itIdx: number) => {
-        const alim = it.alimento || {};
-        const qtd = Number(it.quantidadeGramas) || 100;
-        const cal100 = Number(alim.calorias) || 0;
-        const calTot = Math.round((qtd / 100) * cal100);
-        const sub = it.substituicao || it.substituicoes?.[0] || null;
+      const itensPrescritos: ItemAlimentoDiario[] = (ref.itens || []).map(
+        (it, itIdx) => {
+          const alim = it.alimento || {};
+          const qtd = Number(it.quantidadeGramas) || 0;
+          const calTot = Math.round(
+            Number(
+              alim.caloriasPorcao ??
+                ((Number(alim.calorias) || 0) * qtd) / 100
+            ) || 0
+          );
 
-        return {
-          id: it.id || `${refId}-it-${itIdx}`,
-          nome: alim.nome || "Alimento",
-          categoria: alim.categoria || "Geral",
-          thumbnailUrl: alim.thumbnailUrl ?? null,
-          quantidadeGramas: qtd,
-          calorias: calTot,
-          proteinas: Number(alim.proteinas) || 0,
-          carboidratos: Number(alim.carboidratos) || 0,
-          gorduras: Number(alim.gorduras) || 0,
-          isExtra: false,
-          substituicao: sub
-            ? {
-                id: sub.id,
-                substituteFoodName: sub.substituteFoodName,
-                substituteThumbnailUrl:
-                  sub.substituteThumbnailUrl ?? sub.substituteFood?.thumbnailUrl ?? null,
-                quantityGrams: sub.quantityGrams,
-                calories: sub.calories,
-                proteins: sub.proteins,
-                carbohydrates: sub.carbohydrates,
-                fats: sub.fats,
-              }
-            : null,
-        };
-      });
+          return {
+            id: it.id || `${refId}-it-${itIdx}`,
+            nome: alim.nome || "Alimento",
+            categoria: alim.categoria || "Geral",
+            thumbnailUrl: alim.thumbnailUrl ?? null,
+            quantidadeGramas: qtd,
+            calorias: calTot,
+            proteinas: Number(alim.proteinas) || 0,
+            carboidratos: Number(alim.carboidratos) || 0,
+            gorduras: Number(alim.gorduras) || 0,
+            isExtra: false,
+            substituicao: it.substituicao
+              ? {
+                  id: it.substituicao.id,
+                  substituteFoodName: it.substituicao.substituteFoodName,
+                  substituteThumbnailUrl:
+                    it.substituicao.substituteThumbnailUrl ?? null,
+                  quantityGrams: it.substituicao.quantityGrams,
+                  calories: it.substituicao.calories,
+                  proteins: it.substituicao.proteins,
+                  carbohydrates: it.substituicao.carbohydrates,
+                  fats: it.substituicao.fats,
+                }
+              : null,
+          };
+        }
+      );
 
-      const calPrescritas = itensPrescritos.reduce((acc, i) => acc + i.calorias, 0);
+      const calPrescritas = itensPrescritos.reduce(
+        (acc, i) => acc + i.calorias,
+        0
+      );
       const calExtras = extras.reduce((acc, i) => acc + i.calorias, 0);
 
       return {
         id: refId,
-        nome: nomeRef,
-        horario: ref.horario || REFEICOES_PADRAO[idx]?.horario || "12:00",
+        nome: ref.nome || `Refeição ${idx + 1}`,
+        horario: ref.horario || "",
         ordem: ref.ordem || idx + 1,
+        opcional: Boolean(ref.opcional),
         consumido,
+        statusCheckin,
         itensPrescritos,
         itensExtras: extras,
         caloriasPrescritas: calPrescritas,
@@ -233,17 +532,19 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
         caloriasTotal: calPrescritas + calExtras,
       };
     });
-  }, [variacoes, variacaoAtivaId, consumidoMap, extrasMap]);
+  }, [refeicoesEstruturadas, checkinsPorRefeicao, extrasMap]);
 
-  // Ação 1: Check-in da refeição ("Marcar como consumido")
-  const toggleCheckinRefeicao = useCallback((refeicaoId: string) => {
-    setConsumidoMap((prev) => ({
-      ...prev,
-      [refeicaoId]: !prev[refeicaoId],
-    }));
-  }, []);
+  const toggleCheckinRefeicao = useCallback(
+    (refeicaoId: string) => {
+      const atual = checkinsPorRefeicao[refeicaoId]?.status;
+      const proximo: CheckinRefeicaoStatus = isStatusAderente(atual)
+        ? "NAO_FIZ"
+        : "SEGUI";
+      void registrarCheckinRefeicao(refeicaoId, proximo);
+    },
+    [checkinsPorRefeicao, registrarCheckinRefeicao]
+  );
 
-  // Ação 2: Adicionar Alimento Extra (Busca Livre)
   const adicionarAlimentoExtra = useCallback(
     (
       refeicaoId: string,
@@ -260,21 +561,18 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
       gramas: number
     ) => {
       const qtd = gramas > 0 ? gramas : 100;
-      const calCalculada = Math.round((qtd / 100) * alimento.calorias);
-      const protCalculada = Number((((alimento.proteinas || 0) * qtd) / 100).toFixed(1));
-      const carbCalculado = Number((((alimento.carboidratos || 0) * qtd) / 100).toFixed(1));
-      const gordCalculada = Number((((alimento.gorduras || 0) * qtd) / 100).toFixed(1));
-
       const novoItem: ItemAlimentoDiario = {
-        id: `extra-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        id: `extra-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         nome: alimento.nome,
         categoria: alimento.categoria || "Geral",
         thumbnailUrl: alimento.thumbnailUrl ?? null,
         quantidadeGramas: qtd,
-        calorias: calCalculada,
-        proteinas: protCalculada,
-        carboidratos: carbCalculado,
-        gorduras: gordCalculada,
+        calorias: Math.round((qtd / 100) * alimento.calorias),
+        proteinas: Number((((alimento.proteinas || 0) * qtd) / 100).toFixed(1)),
+        carboidratos: Number(
+          (((alimento.carboidratos || 0) * qtd) / 100).toFixed(1)
+        ),
+        gorduras: Number((((alimento.gorduras || 0) * qtd) / 100).toFixed(1)),
         isExtra: true,
       };
 
@@ -282,24 +580,20 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
         ...prev,
         [refeicaoId]: [...(prev[refeicaoId] || []), novoItem],
       }));
-      // Ao adicionar alimento, marca automaticamente como consumido para abater a meta
-      setConsumidoMap((prev) => ({
+    },
+    []
+  );
+
+  const removerAlimentoExtra = useCallback(
+    (refeicaoId: string, itemId: string) => {
+      setExtrasMap((prev) => ({
         ...prev,
-        [refeicaoId]: true,
+        [refeicaoId]: (prev[refeicaoId] || []).filter((i) => i.id !== itemId),
       }));
     },
     []
   );
 
-  // Ação 3: Remover Alimento Extra
-  const removerAlimentoExtra = useCallback((refeicaoId: string, itemId: string) => {
-    setExtrasMap((prev) => ({
-      ...prev,
-      [refeicaoId]: (prev[refeicaoId] || []).filter((i) => i.id !== itemId),
-    }));
-  }, []);
-
-  // Ação 4: Substituir Alimento Prescrito (Troca Inline ancorada a prescribedDietItemId)
   const substituirAlimentoPrescrito = useCallback(
     async (
       prescribedDietItemId: string,
@@ -315,9 +609,15 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
     ) => {
       try {
         const calTot = Math.round((gramas / 100) * alimento.calorias);
-        const protTot = parseFloat((((alimento.proteinas || 0) * gramas) / 100).toFixed(1));
-        const carbTot = parseFloat((((alimento.carboidratos || 0) * gramas) / 100).toFixed(1));
-        const fatTot = parseFloat((((alimento.gorduras || 0) * gramas) / 100).toFixed(1));
+        const protTot = parseFloat(
+          (((alimento.proteinas || 0) * gramas) / 100).toFixed(1)
+        );
+        const carbTot = parseFloat(
+          (((alimento.carboidratos || 0) * gramas) / 100).toFixed(1)
+        );
+        const fatTot = parseFloat(
+          (((alimento.gorduras || 0) * gramas) / 100).toFixed(1)
+        );
 
         await api.pacientes.substituirAlimento(pacienteId || "default", {
           prescribedDietItemId,
@@ -330,7 +630,7 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
           fats: fatTot,
         });
 
-        await carregarDiario();
+        await carregarDiario(true);
       } catch (err) {
         console.log("[DiarioAlimentar] Erro ao registrar substituição:", err);
       }
@@ -338,45 +638,54 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
     [pacienteId, carregarDiario]
   );
 
-  // Cálculo Dinâmico e Reativo de Calorias (Optimistic UI)
-  const { caloriasConsumidas, caloriasRestantes, percentualConsumido } = useMemo(() => {
-    let consumidas = 0;
-
-    for (const ref of refeicoes) {
-      if (ref.consumido) {
-        // Se a refeição foi marcada como consumida, soma os alimentos prescritos
-        consumidas += ref.caloriasPrescritas;
+  const { caloriasConsumidas, caloriasRestantes, percentualConsumido } =
+    useMemo(() => {
+      let consumidas = 0;
+      for (const ref of refeicoes) {
+        if (ref.consumido) consumidas += ref.caloriasPrescritas;
+        consumidas += ref.caloriasExtras;
       }
-      // Alimentos extras adicionados pelo paciente contam sempre como consumo efetivo
-      consumidas += ref.caloriasExtras;
-    }
-
-    const restantes = Math.max(0, caloriasMeta - consumidas);
-    const percentual = caloriasMeta > 0 ? Math.min(100, Math.round((consumidas / caloriasMeta) * 100)) : 0;
-
-    return {
-      caloriasConsumidas: consumidas,
-      caloriasRestantes: restantes,
-      percentualConsumido: percentual,
-    };
-  }, [refeicoes, caloriasMeta]);
+      const restantes = Math.max(0, caloriasMeta - consumidas);
+      const percentual =
+        caloriasMeta > 0
+          ? Math.min(100, Math.round((consumidas / caloriasMeta) * 100))
+          : 0;
+      return {
+        caloriasConsumidas: consumidas,
+        caloriasRestantes: restantes,
+        percentualConsumido: percentual,
+      };
+    }, [refeicoes, caloriasMeta]);
 
   return (
     <DiarioAlimentarContext.Provider
       value={{
+        plano,
+        pacienteDieta,
+        variacoes,
+        variacaoAtiva,
+        variacaoAtivaId,
+        selecionarVariacao,
+        refeicoesEstruturadas,
+        checkinsPorRefeicao,
+        trocasSelecionadas,
+        progressoRefeicoes,
+        dataReferencia,
+        carregando,
+        salvandoRefeicaoId,
+        erroDieta,
+        registrarCheckinRefeicao,
+        aplicarTrocaItem,
+        recarregarDiario: carregarDiario,
         caloriasMeta,
         caloriasConsumidas,
         caloriasRestantes,
         percentualConsumido,
-        variacaoAtivaId,
-        selecionarVariacao,
         refeicoes,
-        carregando,
         toggleCheckinRefeicao,
         adicionarAlimentoExtra,
         removerAlimentoExtra,
         substituirAlimentoPrescrito,
-        recarregarDiario: carregarDiario,
       }}
     >
       {children}

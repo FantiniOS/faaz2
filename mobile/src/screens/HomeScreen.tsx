@@ -27,12 +27,13 @@ import {
   Plus,
 } from "lucide-react-native";
 import { usePatientAuth } from "../contexts/PatientAuthContext";
-import { useDiarioAlimentar, RefeicaoDiario } from "../contexts/DiarioAlimentarContext";
+import { useDiarioAlimentar } from "../contexts/DiarioAlimentarContext";
 import { FoodThumbnail } from "../components/FoodThumbnail";
 import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
 import { RegistrarPesoModal } from "../components/RegistrarPesoModal";
 import {
   api,
+  CheckinRefeicaoStatus,
   MeasurementItem,
   PacienteTreinosResponse,
   GlicemiaHistoricoItem,
@@ -43,6 +44,11 @@ import {
   getConfigObjetivoClinico,
   avaliarVariacaoPeso,
 } from "../utils/objetivoClinico";
+import {
+  formatHorarioCurto,
+  getItemEfetivo,
+  selecionarProximaRefeicaoHome,
+} from "../utils/dietaHelpers";
 
 export interface HomeScreenProps {
   completedCheckins?: string[];
@@ -73,30 +79,42 @@ function formatHoraLocal(iso?: string | null): string {
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
-function parseHorarioMinutos(horario?: string | null): number {
-  if (!horario) return 24 * 60;
-  const match = horario.match(/(\d{1,2}):(\d{2})/);
-  if (!match) return 24 * 60;
-  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
-}
-
-function selecionarProximaRefeicao(refeicoes: RefeicaoDiario[]): RefeicaoDiario | null {
-  if (!refeicoes || refeicoes.length === 0) return null;
-  const ordenadas = [...refeicoes].sort(
-    (a, b) => parseHorarioMinutos(a.horario) - parseHorarioMinutos(b.horario)
-  );
-  const agora = new Date();
-  const minAgora = agora.getHours() * 60 + agora.getMinutes();
-
-  const proximaNaoConsumida = ordenadas.find(
-    (r) => !r.consumido && parseHorarioMinutos(r.horario) >= minAgora - 60
-  );
-  if (proximaNaoConsumida) return proximaNaoConsumida;
-
-  const qualquerNaoConsumida = ordenadas.find((r) => !r.consumido);
-  if (qualquerNaoConsumida) return qualquerNaoConsumida;
-
-  return ordenadas[ordenadas.length - 1];
+function formatStatusRefeicaoHome(status?: CheckinRefeicaoStatus | null): {
+  label: string;
+  bg: string;
+  border: string;
+  color: string;
+} {
+  if (status === "SEGUI") {
+    return {
+      label: "✓ Segui",
+      bg: "#ecfdf5",
+      border: "#a7f3d0",
+      color: "#047857",
+    };
+  }
+  if (status === "FIZ_TROCA") {
+    return {
+      label: "⇄ Fiz troca",
+      bg: "#ecfeff",
+      border: "#a5f3fc",
+      color: "#0e7490",
+    };
+  }
+  if (status === "NAO_FIZ") {
+    return {
+      label: "○ Não fiz",
+      bg: "#f1f5f9",
+      border: "#cbd5e1",
+      color: "#475569",
+    };
+  }
+  return {
+    label: "A fazer",
+    bg: "#f8fafc",
+    border: "#e2e8f0",
+    color: "#64748b",
+  };
 }
 
 function formatBristolResumo(item: IntestinoCheckinItem): {
@@ -176,7 +194,13 @@ export function HomeScreen({
   onNavigateToDieta,
 }: HomeScreenProps) {
   const { paciente } = usePatientAuth();
-  const { refeicoes } = useDiarioAlimentar();
+  const {
+    refeicoesEstruturadas,
+    checkinsPorRefeicao,
+    trocasSelecionadas,
+    progressoRefeicoes,
+    recarregarDiario,
+  } = useDiarioAlimentar();
   const insets = useSafeAreaInsets();
 
   const pacienteId = paciente?.id || "";
@@ -256,6 +280,7 @@ export function HomeScreen({
       api.checkins.getHistoricoIntestino(pacienteId, 10),
       api.pacientes.getMedidas(pacienteId),
       api.get(`/pacientes/${encodeURIComponent(pacienteId)}`),
+      recarregarDiario(true),
     ]);
 
     if (metasRes.status === "fulfilled" && metasRes.value) {
@@ -342,7 +367,7 @@ export function HomeScreen({
         setMedicacoes(p.medicacoes || null);
       }
     }
-  }, [pacienteId]);
+  }, [pacienteId, recarregarDiario]);
 
   useEffect(() => {
     carregarCockpit();
@@ -431,15 +456,12 @@ export function HomeScreen({
       completedCheckins.length > 0;
     const checkinScore = temCheckinClinicoHoje ? 25 : 0;
 
-    const refeicoesConsumidas = refeicoes.filter((r) => r.consumido).length;
-    const refeicaoScore =
-      refeicoes.length > 0
-        ? Math.min(
-            25,
-            Math.round((refeicoesConsumidas / Math.max(refeicoes.length, 1)) * 25)
-          )
-        : 0;
-    const refeicaoOk = refeicoesConsumidas > 0;
+    // Pilar Refeições: SEGUI e FIZ_TROCA contam 100%; refeições opcionais não penalizam o denominador
+    const refeicaoScore = Math.min(
+      25,
+      Math.round((progressoRefeicoes.percentualAdesao / 100) * 25)
+    );
+    const refeicaoOk = progressoRefeicoes.pilarAtivo;
 
     const totalPercent = Math.min(
       100,
@@ -462,18 +484,40 @@ export function HomeScreen({
     pesouHoje,
     mediuHoje,
     completedCheckins.length,
-    refeicoes,
+    progressoRefeicoes,
   ]);
 
   const proximaRefeicao = useMemo(
-    () => selecionarProximaRefeicao(refeicoes),
-    [refeicoes]
+    () =>
+      selecionarProximaRefeicaoHome(
+        refeicoesEstruturadas,
+        checkinsPorRefeicao
+      ),
+    [refeicoesEstruturadas, checkinsPorRefeicao]
   );
 
-  const primeiroItemRefeicao =
-    proximaRefeicao?.itensPrescritos?.[0] ||
-    proximaRefeicao?.itensExtras?.[0] ||
-    null;
+  const primeiroItemRefeicao = useMemo(() => {
+    const primeiro = proximaRefeicao?.itens?.[0];
+    if (!primeiro) return null;
+    return getItemEfetivo(primeiro, trocasSelecionadas);
+  }, [proximaRefeicao, trocasSelecionadas]);
+
+  const previewItensRefeicao = useMemo(() => {
+    if (!proximaRefeicao?.itens || proximaRefeicao.itens.length === 0) {
+      return null;
+    }
+    return proximaRefeicao.itens
+      .slice(0, 3)
+      .map((item) => getItemEfetivo(item, trocasSelecionadas).nome)
+      .join(" • ");
+  }, [proximaRefeicao, trocasSelecionadas]);
+
+  const statusProximaRefeicao = useMemo(() => {
+    if (!proximaRefeicao) return null;
+    return formatStatusRefeicaoHome(
+      checkinsPorRefeicao[proximaRefeicao.id]?.status ?? null
+    );
+  }, [proximaRefeicao, checkinsPorRefeicao]);
 
   const bristolResumo = ultimoBristolHoje
     ? formatBristolResumo(ultimoBristolHoje)
@@ -876,6 +920,12 @@ export function HomeScreen({
             <View style={styles.mealBadgeRow}>
               <Utensils size={13} color="#0f766e" />
               <Text style={styles.mealBadgeText}>Próxima Refeição</Text>
+              {progressoRefeicoes.obrigatoriasTotal > 0 ? (
+                <Text style={styles.mealProgressMiniText}>
+                  • {progressoRefeicoes.obrigatoriasConcluidas}/
+                  {progressoRefeicoes.obrigatoriasTotal} hoje
+                </Text>
+              ) : null}
             </View>
             <View style={styles.mealLinkRow}>
               <Text style={styles.mealLinkText}>Abrir Dieta</Text>
@@ -890,7 +940,8 @@ export function HomeScreen({
                   nome={primeiroItemRefeicao.nome}
                   categoria={primeiroItemRefeicao.categoria}
                   imageUrl={primeiroItemRefeicao.thumbnailUrl}
-                  size={44}
+                  size={46}
+                  style={{ borderRadius: 10 }}
                 />
               ) : (
                 <View style={styles.mealFallbackIcon}>
@@ -903,26 +954,46 @@ export function HomeScreen({
                   <Text style={styles.mealNameText} numberOfLines={1}>
                     {proximaRefeicao.nome}
                   </Text>
-                  <View style={styles.mealTimePill}>
-                    <Clock size={11} color="#64748b" />
-                    <Text style={styles.mealTimeText}>
-                      {proximaRefeicao.horario}
-                    </Text>
+                  <View style={styles.mealMetaChipsRow}>
+                    {formatHorarioCurto(proximaRefeicao.horario) ? (
+                      <View style={styles.mealTimePill}>
+                        <Clock size={11} color="#64748b" />
+                        <Text style={styles.mealTimeText}>
+                          {formatHorarioCurto(proximaRefeicao.horario)}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {statusProximaRefeicao ? (
+                      <View
+                        style={[
+                          styles.mealStatusPill,
+                          {
+                            backgroundColor: statusProximaRefeicao.bg,
+                            borderColor: statusProximaRefeicao.border,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.mealStatusPillText,
+                            { color: statusProximaRefeicao.color },
+                          ]}
+                        >
+                          {statusProximaRefeicao.label}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 </View>
                 <Text style={styles.mealItemsPreview} numberOfLines={2}>
-                  {proximaRefeicao.itensPrescritos.length > 0
-                    ? proximaRefeicao.itensPrescritos
-                        .slice(0, 3)
-                        .map((i) => i.nome)
-                        .join(" • ")
-                    : "Toque para consultar seu plano alimentar completo"}
+                  {previewItensRefeicao ||
+                    "Toque para consultar seu plano alimentar e fazer check-in"}
                 </Text>
               </View>
             </View>
           ) : (
             <Text style={styles.mealItemsPreview}>
-              Consulte seu plano alimentar e registre o consumo de hoje.
+              Consulte seu plano alimentar e registre o check-in das refeições de hoje.
             </Text>
           )}
         </TouchableOpacity>
@@ -1328,6 +1399,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0f766e",
   },
+  mealProgressMiniText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+  },
   mealLinkRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1366,6 +1442,12 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     flex: 1,
   },
+  mealMetaChipsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 0,
+  },
   mealTimePill: {
     flexDirection: "row",
     alignItems: "center",
@@ -1379,6 +1461,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     color: "#475569",
+  },
+  mealStatusPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  mealStatusPillText: {
+    fontSize: 10,
+    fontWeight: "700",
   },
   mealItemsPreview: {
     fontSize: 12,

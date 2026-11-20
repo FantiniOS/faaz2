@@ -6,124 +6,47 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  RefreshControl,
+  Share,
+  Alert,
 } from "react-native";
 import {
   Utensils,
-  Home as HomeIcon,
-  Target,
-  User,
+  ShoppingBag,
   Clock,
-  Flame,
-  Sparkles,
-  Info,
-  Calendar,
-  Coffee,
-  Sun,
-  Moon,
-  Apple,
-  ShieldCheck,
+  Check,
   CheckCircle2,
-  AlertCircle,
-  RefreshCw,
-  RotateCcw,
+  ArrowLeftRight,
   Circle,
-  Plus,
-  Trash2,
+  FileText,
+  ChevronDown,
+  ChevronUp,
+  Share2,
+  CheckSquare,
+  Square,
+  Sparkles,
+  AlertCircle,
+  RotateCcw,
 } from "lucide-react-native";
 import { StandardHeader } from "../components/StandardHeader";
 import { BottomTabBar } from "../components/BottomTabBar";
-import { api } from "../services/api";
-import { usePatientAuth } from "../contexts/PatientAuthContext";
-import { useDiarioAlimentar } from "../contexts/DiarioAlimentarContext";
-import { AdicionarAlimentoModal, AlimentoBuscaOption } from "../components/AdicionarAlimentoModal";
 import { FoodThumbnail } from "../components/FoodThumbnail";
-
-export interface AlimentoItem {
-  id?: string;
-  nome?: string;
-  categoria?: string;
-  thumbnailUrl?: string | null;
-  caloriasPorcao?: number;
-  calorias?: number;
-  proteinasPorcao?: number;
-  proteinas?: number;
-  carboidratosPorcao?: number;
-  carboidratos?: number;
-  gordurasPorcao?: number;
-  gorduras?: number;
-  fibrasPorcao?: number;
-  fibras?: number;
-}
-
-export interface DietSubstitutionItem {
-  id: string;
-  prescribedDietItemId: string;
-  substituteFoodId?: string | null;
-  substituteFoodName: string;
-  substituteThumbnailUrl?: string | null;
-  substituteFood?: { thumbnailUrl?: string | null } | null;
-  quantityGrams: number;
-  calories: number;
-  proteins?: number | null;
-  carbohydrates?: number | null;
-  fats?: number | null;
-  createdAt?: string | Date;
-}
-
-export interface ItemRefeicao {
-  id?: string;
-  quantidadeGramas?: number;
-  observacao?: string | null;
-  alimento?: AlimentoItem;
-  substituicoes?: DietSubstitutionItem[];
-  substituicao?: DietSubstitutionItem | null;
-}
-
-export interface TotaisNutricionais {
-  calorias?: number;
-  proteinas?: number;
-  carboidratos?: number;
-  gorduras?: number;
-  fibras?: number;
-}
-
-export interface Refeicao {
-  id?: string;
-  nome?: string;
-  horario?: string;
-  ordem?: number;
-  observacoes?: string | null;
-  calorias?: number;
-  totais?: TotaisNutricionais;
-  itens?: ItemRefeicao[];
-}
-
-export interface VariacaoDieta {
-  id?: string;
-  nome?: string;
-  descricao?: string | null;
-  ordem?: number;
-  calorias?: number;
-  totais?: TotaisNutricionais;
-  refeicoes?: Refeicao[];
-}
-
-export interface PlanoAlimentarData {
-  id?: string;
-  nome?: string;
-  titulo?: string;
-  objetivo?: string | null;
-  caloriasAlvo?: number | null;
-  variacoes?: VariacaoDieta[];
-}
-
-export interface PacienteData {
-  id?: string;
-  nome?: string;
-  medico?: string;
-  especialidade?: string;
-  focoClinico?: string | null;
-}
+import { TrocasModal } from "../components/TrocasModal";
+import { useDiarioAlimentar } from "../contexts/DiarioAlimentarContext";
+import {
+  CheckinRefeicaoStatus,
+  ItemRefeicaoApi,
+  RefeicaoApi,
+} from "../services/api";
+import {
+  calcularTotaisEfetivosRefeicao,
+  consolidarListaCompras,
+  formatHorarioCurto,
+  formatNumeroPtBr,
+  gerarTextoCompartilhamentoCompras,
+  getItemEfetivo,
+  selecionarRefeicaoMaisProximaAgora,
+} from "../utils/dietaHelpers";
 
 export interface DietaScreenProps {
   pacienteId?: string;
@@ -132,919 +55,1025 @@ export interface DietaScreenProps {
   onTabPress?: (tab: string) => void;
 }
 
+type SubAbaDieta = "cardapio" | "compras";
 
-/**
- * Funções utilitárias de Defesa de Código (Defensive Programming)
- * Garantem que a tela nunca estoure erro de `undefined` mesmo com payload incompleto.
- */
-function getTotaisRefeicao(refeicao?: Refeicao | null) {
-  if (!refeicao) {
-    return { calorias: 0, proteinas: 0, carboidratos: 0, gorduras: 0, fibras: 0 };
-  }
+function getNomeCurtoRefeicao(nome?: string | null): string {
+  const clean = (nome || "Refeição").trim();
+  const lower = clean.toLowerCase();
+  if (lower.includes("café") || lower.includes("desjejum")) return "Café";
+  if (lower.includes("colação") || lower.includes("manhã")) return "Colação";
+  if (lower.includes("almoço")) return "Almoço";
+  if (lower.includes("pré-treino") || lower.includes("pre-treino")) return "Pré-treino";
+  if (lower.includes("pós-treino") || lower.includes("pos-treino")) return "Pós-treino";
+  if (lower.includes("lanche")) return "Lanche";
+  if (lower.includes("jantar")) return "Jantar";
+  if (lower.includes("ceia")) return "Ceia";
+  const primeiraPalavra = clean.split(/\s+/)[0] || clean;
+  return primeiraPalavra.length > 10
+    ? `${primeiraPalavra.slice(0, 9)}…`
+    : primeiraPalavra;
+}
 
-  const calorias =
-    refeicao?.totais?.calorias ??
-    refeicao?.calorias ??
-    0;
-
-  let prot = Number(refeicao?.totais?.proteinas) || 0;
-  let carb = Number(refeicao?.totais?.carboidratos) || 0;
-  let fat = Number(refeicao?.totais?.gorduras) || 0;
-  let fib = Number(refeicao?.totais?.fibras) || 0;
-
-  // Se não veio totais nem calorias calculadas, tenta calcular somando os itens
-  if (calorias === 0 && Array.isArray(refeicao?.itens) && refeicao.itens.length > 0) {
-    let sumCal = 0;
-    for (const item of refeicao.itens) {
-      const alim = item?.alimento;
-      const qtd = Number(item?.quantidadeGramas) || 0;
-      const fator = qtd > 0 ? qtd / 100 : 1;
-      const itemCal =
-        alim?.caloriasPorcao ??
-        (alim?.calorias != null ? Math.round(Number(alim.calorias) * fator) : 0);
-      sumCal += Number(itemCal) || 0;
-      prot += Number(alim?.proteinasPorcao ?? (alim?.proteinas != null ? alim.proteinas * fator : 0)) || 0;
-      carb += Number(alim?.carboidratosPorcao ?? (alim?.carboidratos != null ? alim.carboidratos * fator : 0)) || 0;
-      fat += Number(alim?.gordurasPorcao ?? (alim?.gorduras != null ? alim.gorduras * fator : 0)) || 0;
-      fib += Number(alim?.fibrasPorcao ?? (alim?.fibras != null ? alim.fibras * fator : 0)) || 0;
-    }
+function getStatusBadgeConfig(status?: CheckinRefeicaoStatus | null) {
+  if (status === "SEGUI") {
     return {
-      calorias: Math.round(sumCal),
-      proteinas: parseFloat(prot.toFixed(1)),
-      carboidratos: parseFloat(carb.toFixed(1)),
-      gorduras: parseFloat(fat.toFixed(1)),
-      fibras: parseFloat(fib.toFixed(1)),
+      label: "Segui",
+      bg: "#ecfdf5",
+      border: "#a7f3d0",
+      color: "#047857",
     };
   }
-
-  return {
-    calorias: Math.round(Number(calorias) || 0),
-    proteinas: parseFloat((Number(prot) || 0).toFixed(1)),
-    carboidratos: parseFloat((Number(carb) || 0).toFixed(1)),
-    gorduras: parseFloat((Number(fat) || 0).toFixed(1)),
-    fibras: parseFloat((Number(fib) || 0).toFixed(1)),
-  };
-}
-
-function getTotaisVariacao(variacao?: VariacaoDieta | null) {
-  if (!variacao) {
-    return { calorias: 0, proteinas: 0, carboidratos: 0, gorduras: 0, fibras: 0 };
-  }
-
-  const calorias =
-    variacao?.totais?.calorias ??
-    variacao?.calorias ??
-    0;
-
-  let prot = Number(variacao?.totais?.proteinas) || 0;
-  let carb = Number(variacao?.totais?.carboidratos) || 0;
-  let fat = Number(variacao?.totais?.gorduras) || 0;
-  let fib = Number(variacao?.totais?.fibras) || 0;
-
-  if (calorias === 0 && Array.isArray(variacao?.refeicoes) && variacao.refeicoes.length > 0) {
-    let sumCal = 0;
-    for (const ref of variacao.refeicoes) {
-      const t = getTotaisRefeicao(ref);
-      sumCal += t.calorias;
-      prot += t.proteinas;
-      carb += t.carboidratos;
-      fat += t.gorduras;
-      fib += t.fibras;
-    }
+  if (status === "FIZ_TROCA") {
     return {
-      calorias: Math.round(sumCal),
-      proteinas: parseFloat(prot.toFixed(1)),
-      carboidratos: parseFloat(carb.toFixed(1)),
-      gorduras: parseFloat(fat.toFixed(1)),
-      fibras: parseFloat(fib.toFixed(1)),
+      label: "Fiz troca",
+      bg: "#ecfeff",
+      border: "#a5f3fc",
+      color: "#0e7490",
     };
   }
-
-  return {
-    calorias: Math.round(Number(calorias) || 0),
-    proteinas: parseFloat((Number(prot) || 0).toFixed(1)),
-    carboidratos: parseFloat((Number(carb) || 0).toFixed(1)),
-    gorduras: parseFloat((Number(fat) || 0).toFixed(1)),
-    fibras: parseFloat((Number(fib) || 0).toFixed(1)),
-  };
+  if (status === "NAO_FIZ") {
+    return {
+      label: "Não fiz",
+      bg: "#f1f5f9",
+      border: "#cbd5e1",
+      color: "#475569",
+    };
+  }
+  return null;
 }
 
-function getVariacaoId(variacao?: VariacaoDieta | null, index: number = 0): string {
-  return String(variacao?.id ?? `var-${index}`);
-}
-
-export function DietaScreen({
-  pacienteId,
-  pacienteNome = "Paciente",
-  onBack,
-  onTabPress,
-}: DietaScreenProps) {
-  const { paciente: authPaciente } = usePatientAuth();
-  const [plano, setPlano] = useState<PlanoAlimentarData | null>(null);
-  const [paciente, setPaciente] = useState<PacienteData | null>(null);
-  const [activeVariationId, setActiveVariationId] = useState<string | null>(
-    plano?.variacoes?.[0]?.id ?? null
-  );
-  const activeVariationIdRef = useRef<string | null>(activeVariationId);
-  const [carregando, setCarregando] = useState<boolean>(true);
-  const [erro, setErro] = useState<string | null>(null);
-
-  // Integração com o Diário Alimentar (Consumo Diário & Check-in)
+export function DietaScreen({ onTabPress }: DietaScreenProps) {
   const {
-    refeicoes: refeicoesDiario,
-    toggleCheckinRefeicao,
-    adicionarAlimentoExtra,
-    removerAlimentoExtra,
+    plano,
+    pacienteDieta,
+    variacoes,
+    variacaoAtiva,
+    variacaoAtivaId,
     selecionarVariacao,
+    refeicoesEstruturadas,
+    checkinsPorRefeicao,
+    trocasSelecionadas,
+    progressoRefeicoes,
+    carregando,
+    salvandoRefeicaoId,
+    erroDieta,
+    registrarCheckinRefeicao,
+    aplicarTrocaItem,
     recarregarDiario,
-    caloriasConsumidas,
-    caloriasMeta,
-    caloriasRestantes,
-    percentualConsumido,
   } = useDiarioAlimentar();
 
-  const [modalExtraRefeicaoId, setModalExtraRefeicaoId] = useState<string | null>(null);
-
-  function handleConfirmarAdicionarExtra(
-    alimento: AlimentoBuscaOption,
-    gramas: number
-  ) {
-    if (modalExtraRefeicaoId) {
-      adicionarAlimentoExtra(modalExtraRefeicaoId, alimento, gramas);
-      setModalExtraRefeicaoId(null);
-    }
-  }
-
-  // Estado para o Modal de Substituição de Alimento (🔄)
-  const [itemParaSubstituir, setItemParaSubstituir] = useState<{
-    itemId: string;
-    itemNome: string;
-    refeicaoNome: string;
-  } | null>(null);
-
-  function handleAbrirSubstituicao(
-    itemId: string,
-    itemNome: string,
-    refeicaoNome: string
-  ) {
-    setItemParaSubstituir({
-      itemId,
-      itemNome,
-      refeicaoNome,
-    });
-  }
-
-  async function handleConfirmarSubstituicao(
-    alimento: AlimentoBuscaOption,
-    gramas: number
-  ) {
-    if (!itemParaSubstituir) return;
-
-    try {
-      const calTot = Math.round((gramas / 100) * (alimento.calorias || 0));
-      const protTot = parseFloat(
-        ((gramas / 100) * (alimento.proteinas || 0)).toFixed(1)
-      );
-      const carbTot = parseFloat(
-        ((gramas / 100) * (alimento.carboidratos || 0)).toFixed(1)
-      );
-      const fatTot = parseFloat(
-        ((gramas / 100) * (alimento.gorduras || 0)).toFixed(1)
-      );
-
-      // Envia prescribedDietItemId para ancorar a troca diretamente ao item da dieta
-      await api.pacientes.substituirAlimento(pacienteId || "default", {
-        prescribedDietItemId: itemParaSubstituir.itemId,
-        substituteFoodId: alimento.id,
-        substituteFoodName: alimento.nome,
-        quantityGrams: gramas,
-        calories: calTot,
-        proteins: protTot,
-        carbohydrates: carbTot,
-        fats: fatTot,
-      });
-
-      // Recarrega o plano para refletir a substituição inline
-      await carregarPlano();
-      await recarregarDiario();
-    } catch (err) {
-      console.log("[DietaScreen] Erro ao registrar substituição:", err);
-    } finally {
-      setItemParaSubstituir(null);
-    }
-  }
-
-  async function handleRemoverSubstituicaoItem(subId: string) {
-    try {
-      await api.pacientes.removerSubstituicao(pacienteId || "default", subId);
-      await carregarPlano();
-      await recarregarDiario();
-    } catch (err) {
-      console.log("[DietaScreen] Erro ao reverter substituição:", err);
-    }
-  }
-
-  const carregarPlano = useCallback(async () => {
-    setCarregando(true);
-    setErro(null);
-
-    try {
-      const data = await api.pacientes.getDieta(pacienteId);
-
-      if (data?.sucesso && data?.plano) {
-        setPlano(data.plano);
-        setPaciente(data.paciente || null);
-        if (Array.isArray(data.plano.variacoes) && data.plano.variacoes.length > 0) {
-          const defaultId = getVariacaoId(data.plano.variacoes[0], 0);
-          const currentId = activeVariationIdRef.current;
-          const nextId =
-            currentId &&
-            data.plano.variacoes.some(
-              (v: VariacaoDieta, idx: number) => getVariacaoId(v, idx) === currentId
-            )
-              ? currentId
-              : defaultId;
-          activeVariationIdRef.current = nextId;
-          setActiveVariationId(nextId);
-          selecionarVariacao(nextId);
-        }
-      } else if (data?.sucesso && !data?.temPlano) {
-        setPaciente(data.paciente || null);
-        setPlano(null);
-        activeVariationIdRef.current = null;
-        setActiveVariationId(null);
-      } else {
-        setErro(data?.error || "Não foi possível carregar a prescrição.");
-      }
-    } catch (err: any) {
-      console.log("[DietaScreen] Falha de conexão na API:", err?.message);
-      setErro(
-        "Não foi possível sincronizar com o servidor da Clínica FAAZ. Verifique sua conexão."
-      );
-    } finally {
-      setCarregando(false);
-    }
-  }, [pacienteId, selecionarVariacao]);
-
-  useEffect(() => {
-    carregarPlano();
-  }, [carregarPlano]);
-
-  function handleSelectVariation(variationId: string) {
-    activeVariationIdRef.current = variationId;
-    setActiveVariationId(variationId);
-    selecionarVariacao(variationId);
-  }
-
-  const variacoesList = useMemo(
-    () => (Array.isArray(plano?.variacoes) ? plano.variacoes : []),
-    [plano]
+  const [subAba, setSubAba] = useState<SubAbaDieta>("cardapio");
+  const [refeicaoSelecionadaId, setRefeicaoSelecionadaId] = useState<
+    string | null
+  >(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [resumoAberto, setResumoAberto] = useState(false);
+  const [itensCarrinho, setItensCarrinho] = useState<Record<string, boolean>>(
+    {}
   );
 
-  const currentVariationIndex = useMemo(() => {
-    if (variacoesList.length === 0) return -1;
-    const foundIdx = variacoesList.findIndex(
-      (v, idx) => getVariacaoId(v, idx) === activeVariationId
+  // Controle do modal de substituições 1:N
+  const [itemModalTroca, setItemModalTroca] = useState<{
+    refeicaoId: string;
+    item: ItemRefeicaoApi;
+  } | null>(null);
+
+  const ultimaVariacaoAutoSelectRef = useRef<string | null>(null);
+  const timelineScrollRef = useRef<React.ComponentRef<typeof ScrollView> | null>(
+    null
+  );
+
+  // Sincronização silenciosa ao abrir a aba Dieta (sem spinner nem sobrescrever estado otimista)
+  useEffect(() => {
+    void recarregarDiario(true);
+  }, [recarregarDiario]);
+
+  // Modo "Agora": ao abrir a tela ou trocar de variação, seleciona automaticamente
+  // a refeição mais próxima do horário atual do dispositivo.
+  useEffect(() => {
+    if (!refeicoesEstruturadas.length) {
+      setRefeicaoSelecionadaId(null);
+      return;
+    }
+
+    const variacaoMudou =
+      ultimaVariacaoAutoSelectRef.current !== (variacaoAtivaId || null);
+    const selecaoAindaExiste = refeicoesEstruturadas.some(
+      (r) => r.id === refeicaoSelecionadaId
     );
-    return foundIdx >= 0 ? foundIdx : 0;
-  }, [variacoesList, activeVariationId]);
 
-  const currentVariation =
-    currentVariationIndex >= 0 ? variacoesList[currentVariationIndex] : null;
-  const activeVariationKey =
-    currentVariation && currentVariationIndex >= 0
-      ? getVariacaoId(currentVariation, currentVariationIndex)
-      : null;
-  const currentMeals = Array.isArray(currentVariation?.refeicoes)
-    ? currentVariation.refeicoes
-    : [];
+    if (variacaoMudou || !selecaoAindaExiste) {
+      const proxima = selecionarRefeicaoMaisProximaAgora(refeicoesEstruturadas);
+      const alvoId = proxima?.id ?? refeicoesEstruturadas[0].id;
+      setRefeicaoSelecionadaId(alvoId);
+      ultimaVariacaoAutoSelectRef.current = variacaoAtivaId || null;
+      setResumoAberto(false);
 
-  const totaisDia = getTotaisVariacao(currentVariation);
+      const idxAlvo = refeicoesEstruturadas.findIndex((r) => r.id === alvoId);
+      if (idxAlvo > 1) {
+        setTimeout(() => {
+          timelineScrollRef.current?.scrollTo({
+            x: Math.max(0, idxAlvo * 82 - 36),
+            animated: true,
+          });
+        }, 120);
+      }
+    }
+  }, [refeicoesEstruturadas, variacaoAtivaId, refeicaoSelecionadaId]);
 
-  function renderMealIcon(nome?: string) {
-    const n = (nome || "").toLowerCase();
-    if (n.includes("desjejum") || n.includes("manhã") || n.includes("café")) {
-      return <Coffee size={16} color="#d97706" />;
-    }
-    if (n.includes("almoço")) {
-      return <Sun size={16} color="#f97316" />;
-    }
-    if (n.includes("lanche")) {
-      return <Apple size={16} color="#059669" />;
-    }
-    if (n.includes("jantar") || n.includes("noite") || n.includes("ceia")) {
-      return <Moon size={16} color="#6366f1" />;
-    }
-    return <Utensils size={16} color="#0f766e" />;
-  }
-
-  // 1. PROTEÇÃO DE ESTADO DE CARREGAMENTO (LOADING STATE)
-  if (carregando) {
+  const refeicaoAtiva: RefeicaoApi | null = useMemo(() => {
+    if (!refeicoesEstruturadas.length) return null;
     return (
-      <View style={styles.root}>
-        <StandardHeader
-          title="Dieta"
-          subtitle="Plano alimentar prescrito"
-          rightElement={
-            <View style={styles.headerBadge}>
-              <ShieldCheck size={12} color="#2dd4bf" />
-              <Text style={styles.headerBadgeText}>Médico</Text>
-            </View>
-          }
-        />
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color="#0f766e" />
-          <Text style={styles.loadingText}>
-            Sincronizando prescrição nutricional...
-          </Text>
-        </View>
+      refeicoesEstruturadas.find((r) => r.id === refeicaoSelecionadaId) ||
+      refeicoesEstruturadas[0]
+    );
+  }, [refeicoesEstruturadas, refeicaoSelecionadaId]);
 
-        <BottomTabBar
-          activeTab="Dieta"
-          onTabPress={(tab) => {
-            if (onTabPress) {
-              onTabPress(tab);
-            } else if (tab === "Hoje" && onBack) {
-              onBack();
-            }
-          }}
-        />
+  const checkinRefeicaoAtiva = refeicaoAtiva
+    ? checkinsPorRefeicao[refeicaoAtiva.id] || null
+    : null;
+
+  const totaisRefeicaoAtiva = useMemo(() => {
+    if (!refeicaoAtiva) return null;
+    return calcularTotaisEfetivosRefeicao(refeicaoAtiva, trocasSelecionadas);
+  }, [refeicaoAtiva, trocasSelecionadas]);
+
+  // Lista de compras consolidada automaticamente da variação ativa
+  const listaCompras = useMemo(
+    () => consolidarListaCompras(variacaoAtiva, trocasSelecionadas),
+    [variacaoAtiva, trocasSelecionadas]
+  );
+
+  const totalCarrinhoMarcados = useMemo(
+    () => listaCompras.filter((i) => Boolean(itensCarrinho[i.chave])).length,
+    [listaCompras, itensCarrinho]
+  );
+
+  const temTrocasNaListaCompras = useMemo(
+    () => listaCompras.some((i) => i.origemTroca),
+    [listaCompras]
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await recarregarDiario(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [recarregarDiario]);
+
+  const handleCheckin = useCallback(
+    async (status: CheckinRefeicaoStatus) => {
+      if (!refeicaoAtiva) return;
+      const ok = await registrarCheckinRefeicao(refeicaoAtiva.id, status);
+      if (!ok) {
+        Alert.alert(
+          "Conexão instável",
+          "Não foi possível salvar seu check-in agora. Tente novamente em instantes."
+        );
+      }
+    },
+    [refeicaoAtiva, registrarCheckinRefeicao]
+  );
+
+  const handleToggleItemCarrinho = useCallback((chave: string) => {
+    setItensCarrinho((prev) => ({
+      ...prev,
+      [chave]: !prev[chave],
+    }));
+  }, []);
+
+  const handleCompartilharCompras = useCallback(async () => {
+    if (listaCompras.length === 0) return;
+    const tituloPlano =
+      plano?.titulo || plano?.nome || "Plano Alimentar";
+    const mensagem = gerarTextoCompartilhamentoCompras(
+      tituloPlano,
+      variacoes.length > 1 ? variacaoAtiva?.nome : null,
+      listaCompras,
+      itensCarrinho
+    );
+    try {
+      await Share.share({
+        title: "Lista de Compras — Clínica FAAZ",
+        message: mensagem,
+      });
+    } catch {
+      // Usuário cancelou ou share indisponível
+    }
+  }, [listaCompras, plano, variacoes.length, variacaoAtiva?.nome, itensCarrinho]);
+
+  const medicoResponsavel =
+    pacienteDieta?.medico?.trim() || "Equipe Clínica FAAZ";
+
+  const tituloPlanoHeader =
+    plano?.titulo?.trim() || plano?.nome?.trim() || "Prescrição nutricional";
+
+  const statusBadgeAtivo = getStatusBadgeConfig(checkinRefeicaoAtiva?.status);
+
+  // Texto limpo da barra de progresso no topo do Cardápio
+  const textoProgressoDia = useMemo(() => {
+    const {
+      obrigatoriasTotal,
+      obrigatoriasConcluidas,
+      opcionaisTotal,
+      opcionaisConcluidas,
+    } = progressoRefeicoes;
+
+    if (obrigatoriasTotal === 0 && opcionaisTotal > 0) {
+      return `${opcionaisConcluidas} de ${opcionaisTotal} refeições opcionais concluídas hoje`;
+    }
+    return `${obrigatoriasConcluidas} de ${obrigatoriasTotal} refeições concluídas hoje`;
+  }, [progressoRefeicoes]);
+
+  const headerBadgeAdesao = useMemo(() => {
+    if (!plano || refeicoesEstruturadas.length === 0) return null;
+    const denom =
+      progressoRefeicoes.obrigatoriasTotal > 0
+        ? progressoRefeicoes.obrigatoriasTotal
+        : progressoRefeicoes.opcionaisTotal;
+    const num =
+      progressoRefeicoes.obrigatoriasTotal > 0
+        ? Math.min(progressoRefeicoes.totalConcluidas, denom)
+        : progressoRefeicoes.opcionaisConcluidas;
+
+    return (
+      <View style={styles.headerProgressPill}>
+        <CheckCircle2 size={12} color="#2dd4bf" />
+        <Text style={styles.headerProgressText}>
+          {num}/{denom} hoje
+        </Text>
       </View>
     );
-  }
+  }, [plano, refeicoesEstruturadas.length, progressoRefeicoes]);
 
   return (
     <View style={styles.root}>
-      {/* 1. HEADER ESCURO EXECUTIVO UNIFICADO (SEM VOLTAR) */}
+      {/* 1. CABEÇALHO ESCURO EXECUTIVO UNIFICADO (SEM VOLTAR) */}
       <StandardHeader
-        title="Dieta"
-        subtitle="Plano alimentar prescrito"
-        rightElement={
-          <View style={styles.headerBadge}>
-            <ShieldCheck size={12} color="#2dd4bf" />
-            <Text style={styles.headerBadgeText}>Médico</Text>
-          </View>
-        }
+        title="Guia da Dieta"
+        subtitle={tituloPlanoHeader}
+        rightElement={headerBadgeAdesao}
       />
 
-      {/* 2. ÁREA DE CONTEÚDO ROLÁVEL */}
-      <ScrollView
-        className="flex-1 w-full"
-        style={{ flex: 1 }}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* CARD DO PLANO & MÉDICO RESPONSÁVEL */}
-        <View style={styles.bannerCard}>
-          <View style={styles.bannerBadgeRow}>
-            <View style={styles.badgeAtivo}>
-              <Sparkles size={11} color="#5eead4" />
-              <Text style={styles.badgeAtivoText}>Prescrição Médica Ativa</Text>
-            </View>
-            <Text style={styles.pacienteNomeHeader}>
-              {paciente?.nome || pacienteNome}
-            </Text>
-          </View>
-
-          <Text style={styles.planoTitulo}>
-            {plano?.nome || plano?.titulo || "Plano Alimentar Individualizado"}
-          </Text>
-
-          {plano?.objetivo ? (
-            <Text style={styles.planoObjetivo}>{plano.objetivo}</Text>
-          ) : null}
-
-          <View style={styles.bannerDivider} />
-
-          <View style={styles.medicoRow}>
-            <Text style={styles.medicoText}>
-              Médico:{" "}
-              <Text style={styles.medicoNome}>
-                {paciente?.medico?.trim() ||
-                  authPaciente?.medicoResponsavel?.trim() ||
-                  "Equipe Clínica FAAZ"}
-              </Text>
-            </Text>
-            <Text style={styles.especialidadeText}>
-              {paciente?.especialidade?.trim() ||
-                authPaciente?.especialidadeMedico?.trim() ||
-                "Endocrinologia & Metabologia"}
-            </Text>
-          </View>
-        </View>
-
-        {/* ERRO */}
-        {!carregando && erro && (
-          <View style={styles.errorCard}>
-            <AlertCircle size={24} color="#e11d48" />
-            <Text style={styles.errorTitle}>Aviso de Sincronização</Text>
-            <Text style={styles.errorText}>{erro}</Text>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={carregarPlano}
-              style={styles.retryButton}
+      {/* 2. SELETOR SEGMENTADO COMPACTO: CARDÁPIO | COMPRAS */}
+      <View style={styles.topControlsWrap}>
+        <View style={styles.segmentedTrack}>
+          <TouchableOpacity
+            activeOpacity={0.82}
+            onPress={() => setSubAba("cardapio")}
+            style={[
+              styles.segmentedBtn,
+              subAba === "cardapio" && styles.segmentedBtnActive,
+            ]}
+          >
+            <Utensils
+              size={14}
+              color={subAba === "cardapio" ? "#0f766e" : "#64748b"}
+            />
+            <Text
+              style={[
+                styles.segmentedText,
+                subAba === "cardapio" && styles.segmentedTextActive,
+              ]}
             >
-              <RefreshCw size={14} color="#0f766e" />
-              <Text style={styles.retryButtonText}>Tentar Novamente</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* SEM PLANO */}
-        {!carregando && !erro && (!plano || variacoesList.length === 0) && (
-          <View style={styles.emptyCard}>
-            <Utensils size={32} color="#0f766e" />
-            <Text style={styles.emptyTitle}>Plano Alimentar em Preparação</Text>
-            <Text style={styles.emptyText}>
-              Sua equipe médica está calibrando seus macronutrientes na Clínica
-              FAAZ. Assim que a prescrição for concluída, ela aparecerá
-              automaticamente aqui.
+              Cardápio
             </Text>
-          </View>
-        )}
+          </TouchableOpacity>
 
-        {/* PLANO ATIVO DISPONÍVEL */}
-        {!carregando && !erro && plano && variacoesList.length > 0 && (
-          <>
-            {/* PROGRESSO DO DIÁRIO ALIMENTAR DE HOJE (METAS E KCAL RESTANTES) */}
-            <View style={styles.diarioSummaryBanner}>
-              <View style={styles.diarioSummaryLeft}>
-                <View style={styles.diarioIconCircle}>
-                  <Flame size={16} color="#d97706" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.diarioSummaryTitle}>Diário de Consumo Hoje</Text>
-                  <Text style={styles.diarioSummarySubtitle}>
-                    {caloriasConsumidas} kcal consumidas de {caloriasMeta} kcal ({percentualConsumido}%)
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.diarioRestantePill}>
-                <Text style={styles.diarioRestantePillText}>
-                  Restam {caloriasRestantes} kcal
+          <TouchableOpacity
+            activeOpacity={0.82}
+            onPress={() => setSubAba("compras")}
+            style={[
+              styles.segmentedBtn,
+              subAba === "compras" && styles.segmentedBtnActive,
+            ]}
+          >
+            <ShoppingBag
+              size={14}
+              color={subAba === "compras" ? "#0f766e" : "#64748b"}
+            />
+            <Text
+              style={[
+                styles.segmentedText,
+                subAba === "compras" && styles.segmentedTextActive,
+              ]}
+            >
+              Compras
+            </Text>
+            {listaCompras.length > 0 ? (
+              <View
+                style={[
+                  styles.segmentedCountPill,
+                  subAba === "compras" && styles.segmentedCountPillActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.segmentedCountText,
+                    subAba === "compras" && styles.segmentedCountTextActive,
+                  ]}
+                >
+                  {listaCompras.length}
                 </Text>
               </View>
-            </View>
+            ) : null}
+          </TouchableOpacity>
+        </View>
 
-            {/* 3. SELETOR DE VARIAÇÕES EM CHIPS (GRID COM QUEBRA DE LINHA) */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>
-                Opções de Cardápio ({variacoesList.length})
-              </Text>
-              <Text style={styles.sectionHint}>Selecione para ver o dia</Text>
-            </View>
-
-            <View style={styles.pillsContainer}>
-              {variacoesList.map((variacao, idx) => {
-                const varId = getVariacaoId(variacao, idx);
-                const isAtiva = varId === activeVariationKey;
-                return (
-                  <TouchableOpacity
-                    key={varId}
-                    activeOpacity={0.8}
-                    onPress={() => handleSelectVariation(varId)}
+        {/* Pílulas discretas de variação (exibidas apenas quando houver > 1 variação) */}
+        {variacoes.length > 1 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.variationsRow}
+          >
+            {variacoes.map((variacao, idx) => {
+              const isAtiva = variacao.id === variacaoAtiva?.id;
+              return (
+                <TouchableOpacity
+                  key={variacao.id}
+                  activeOpacity={0.8}
+                  onPress={() => selecionarVariacao(variacao.id)}
+                  style={[
+                    styles.variationPill,
+                    isAtiva && styles.variationPillActive,
+                  ]}
+                >
+                  <Text
                     style={[
-                      styles.pillButton,
-                      isAtiva ? styles.pillButtonActive : styles.pillButtonInactive,
+                      styles.variationPillText,
+                      isAtiva && styles.variationPillTextActive,
                     ]}
                   >
-                    <Calendar
-                      size={14}
-                      color={isAtiva ? "#99f6e4" : "#64748b"}
+                    {variacao.nome || `Opção ${idx + 1}`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+      </View>
+
+      {/* 3. CORPO PRINCIPAL */}
+      {carregando && !plano ? (
+        <View style={styles.centeredState}>
+          <ActivityIndicator size="large" color="#0f766e" />
+          <Text style={styles.stateTitle}>Carregando seu plano alimentar...</Text>
+        </View>
+      ) : erroDieta && !plano ? (
+        <View style={styles.centeredState}>
+          <View style={styles.emptyIconCircle}>
+            <AlertCircle size={26} color="#0f766e" />
+          </View>
+          <Text style={styles.stateTitle}>Não foi possível abrir a dieta</Text>
+          <Text style={styles.stateSubtitle}>{erroDieta}</Text>
+          <TouchableOpacity
+            activeOpacity={0.82}
+            onPress={() => recarregarDiario(false)}
+            style={styles.retryBtn}
+          >
+            <RotateCcw size={15} color="#ffffff" />
+            <Text style={styles.retryBtnText}>Tentar novamente</Text>
+          </TouchableOpacity>
+        </View>
+      ) : !plano || refeicoesEstruturadas.length === 0 ? (
+        <ScrollView
+          contentContainerStyle={styles.centeredState}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#0f766e"
+              colors={["#0f766e"]}
+            />
+          }
+        >
+          <View style={styles.emptyIconCircle}>
+            <Utensils size={26} color="#0f766e" />
+          </View>
+          <Text style={styles.stateTitle}>Plano alimentar em preparo</Text>
+          <Text style={styles.stateSubtitle}>
+            Assim que {medicoResponsavel} publicar sua prescrição alimentar,
+            suas refeições e trocas aparecerão aqui automaticamente.
+          </Text>
+        </ScrollView>
+      ) : subAba === "cardapio" ? (
+        /* ============================================================== */
+        /* ABA 1: CARDÁPIO — MODO "AGORA" + LINHA DO TEMPO + CHECK-IN 3s  */
+        /* ============================================================== */
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#0f766e"
+              colors={["#0f766e"]}
+            />
+          }
+        >
+          {/* Barra de Progresso Discreta do Dia */}
+          <View style={styles.progressBarCard}>
+            <View style={styles.progressTopLine}>
+              <View style={styles.progressLabelRow}>
+                <Text style={styles.progressText}>{textoProgressoDia}</Text>
+                {progressoRefeicoes.opcionaisConcluidas > 0 &&
+                progressoRefeicoes.obrigatoriasTotal > 0 ? (
+                  <View style={styles.bonusPill}>
+                    <Sparkles size={10} color="#047857" />
+                    <Text style={styles.bonusPillText}>
+                      +{progressoRefeicoes.opcionaisConcluidas} bônus
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={styles.progressPercentText}>
+                {progressoRefeicoes.percentualAdesao}%
+              </Text>
+            </View>
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${progressoRefeicoes.percentualAdesao}%` },
+                ]}
+              />
+            </View>
+          </View>
+
+          {/* Seletor Horizontal de Horários (Linha do Tempo) */}
+          <ScrollView
+            ref={timelineScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.timelineRow}
+          >
+            {refeicoesEstruturadas.map((ref) => {
+              const isSelected = ref.id === refeicaoAtiva?.id;
+              const status = checkinsPorRefeicao[ref.id]?.status ?? null;
+              const horaCurta = formatHorarioCurto(ref.horario);
+              const rotuloCurto = getNomeCurtoRefeicao(ref.nome);
+
+              return (
+                <TouchableOpacity
+                  key={ref.id}
+                  activeOpacity={0.82}
+                  onPress={() => {
+                    setRefeicaoSelecionadaId(ref.id);
+                    setResumoAberto(false);
+                  }}
+                  style={[
+                    styles.timelinePill,
+                    isSelected && styles.timelinePillSelected,
+                    !isSelected &&
+                      status === "SEGUI" &&
+                      styles.timelinePillDone,
+                    !isSelected &&
+                      status === "FIZ_TROCA" &&
+                      styles.timelinePillSwap,
+                  ]}
+                >
+                  <View style={styles.timelinePillTop}>
+                    <Text
+                      style={[
+                        styles.timelineTime,
+                        isSelected && styles.timelineTimeSelected,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {horaCurta || rotuloCurto}
+                    </Text>
+
+                    {status === "SEGUI" ? (
+                      <CheckCircle2
+                        size={13}
+                        color={isSelected ? "#2dd4bf" : "#059669"}
+                        strokeWidth={2.4}
+                      />
+                    ) : status === "FIZ_TROCA" ? (
+                      <ArrowLeftRight
+                        size={13}
+                        color={isSelected ? "#67e8f9" : "#0891b2"}
+                        strokeWidth={2.4}
+                      />
+                    ) : status === "NAO_FIZ" ? (
+                      <Circle
+                        size={12}
+                        color={isSelected ? "#94a3b8" : "#94a3b8"}
+                        strokeWidth={2}
+                      />
+                    ) : (
+                      <View
+                        style={[
+                          styles.timelinePendingDot,
+                          isSelected && styles.timelinePendingDotSelected,
+                        ]}
+                      />
+                    )}
+                  </View>
+
+                  {horaCurta ? (
+                    <Text
+                      style={[
+                        styles.timelineShortName,
+                        isSelected && styles.timelineShortNameSelected,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {rotuloCurto}
+                    </Text>
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* Card Principal da Refeição Selecionada */}
+          {refeicaoAtiva ? (
+            <View style={styles.mealCard}>
+              {/* Cabeçalho do Card da Refeição */}
+              <View style={styles.mealCardHeader}>
+                <View style={styles.mealTitleBlock}>
+                  <View style={styles.mealNameRow}>
+                    <Text style={styles.mealNameTitle}>
+                      {refeicaoAtiva.nome}
+                    </Text>
+                    {refeicaoAtiva.opcional ? (
+                      <View style={styles.opcionalBadge}>
+                        <Text style={styles.opcionalBadgeText}>Opcional</Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {formatHorarioCurto(refeicaoAtiva.horario) ? (
+                    <View style={styles.mealTimeRow}>
+                      <Clock size={12} color="#64748b" />
+                      <Text style={styles.mealTimeLabel}>
+                        Horário sugerido:{" "}
+                        {formatHorarioCurto(refeicaoAtiva.horario)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {statusBadgeAtivo ? (
+                  <View
+                    style={[
+                      styles.mealStatusChip,
+                      {
+                        backgroundColor: statusBadgeAtivo.bg,
+                        borderColor: statusBadgeAtivo.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.mealStatusChipText,
+                        { color: statusBadgeAtivo.color },
+                      ]}
+                    >
+                      {statusBadgeAtivo.label}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* Lista Limpa de Alimentos */}
+              <View style={styles.itemsList}>
+                {Array.isArray(refeicaoAtiva.itens) &&
+                refeicaoAtiva.itens.length > 0 ? (
+                  refeicaoAtiva.itens.map((item, idx) => {
+                    const eff = getItemEfetivo(item, trocasSelecionadas);
+                    const temTrocas = eff.totalSubstituicoes > 0;
+                    const isLast = idx === (refeicaoAtiva.itens?.length || 1) - 1;
+
+                    return (
+                      <View
+                        key={item.id}
+                        style={[
+                          styles.foodItemRow,
+                          !isLast && styles.foodItemDivider,
+                        ]}
+                      >
+                        <FoodThumbnail
+                          nome={eff.nome}
+                          categoria={eff.categoria}
+                          imageUrl={eff.thumbnailUrl}
+                          size={46}
+                          style={styles.foodThumb}
+                        />
+
+                        <View style={styles.foodItemContent}>
+                          <View style={styles.foodNameTopRow}>
+                            <Text style={styles.foodNameText} numberOfLines={2}>
+                              {eff.nome}
+                            </Text>
+                            {eff.isTrocado ? (
+                              <View style={styles.swapAppliedTag}>
+                                <Text style={styles.swapAppliedTagText}>
+                                  Troca aplicada
+                                </Text>
+                              </View>
+                            ) : null}
+                          </View>
+
+                          <Text style={styles.foodMeasureText}>
+                            {eff.medidaEfetivaTexto}
+                          </Text>
+
+                          {eff.isTrocado ? (
+                            <Text
+                              style={styles.foodOriginalHint}
+                              numberOfLines={1}
+                            >
+                              Original: {eff.nomeOriginal} (
+                              {eff.medidaOriginalTexto})
+                            </Text>
+                          ) : null}
+
+                          {temTrocas ? (
+                            <TouchableOpacity
+                              activeOpacity={0.78}
+                              onPress={() =>
+                                setItemModalTroca({
+                                  refeicaoId: refeicaoAtiva.id,
+                                  item,
+                                })
+                              }
+                              style={[
+                                styles.swapTriggerPill,
+                                eff.isTrocado && styles.swapTriggerPillActive,
+                              ]}
+                            >
+                              <ArrowLeftRight
+                                size={12}
+                                color={eff.isTrocado ? "#0e7490" : "#0f766e"}
+                              />
+                              <Text
+                                style={[
+                                  styles.swapTriggerText,
+                                  eff.isTrocado &&
+                                    styles.swapTriggerTextActive,
+                                ]}
+                              >
+                                {eff.isTrocado
+                                  ? `Trocar ou restaurar (${eff.totalSubstituicoes})`
+                                  : eff.totalSubstituicoes === 1
+                                    ? "1 troca"
+                                    : `${eff.totalSubstituicoes} trocas`}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      </View>
+                    );
+                  })
+                ) : (
+                  <View style={styles.noItemsBox}>
+                    <Text style={styles.noItemsText}>
+                      Nenhum alimento listado nesta refeição.
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Bloco de Observações de Preparo (somente se preenchido) */}
+              {refeicaoAtiva.observacoes &&
+              refeicaoAtiva.observacoes.trim().length > 0 ? (
+                <View style={styles.prepNotesCard}>
+                  <View style={styles.prepNotesHeader}>
+                    <FileText size={14} color="#0f766e" />
+                    <Text style={styles.prepNotesTitle}>
+                      Orientação de preparo
+                    </Text>
+                  </View>
+                  <Text style={styles.prepNotesBody}>
+                    {refeicaoAtiva.observacoes.trim()}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Rodapé de Check-in em 3 Segundos */}
+              <View style={styles.checkinFooter}>
+                <View style={styles.checkinHeaderLine}>
+                  <Text style={styles.checkinPrompt}>
+                    {checkinRefeicaoAtiva
+                      ? "Check-in registrado hoje"
+                      : "Como foi esta refeição?"}
+                  </Text>
+                  {salvandoRefeicaoId === refeicaoAtiva.id ? (
+                    <ActivityIndicator size="small" color="#0f766e" />
+                  ) : null}
+                </View>
+
+                <View style={styles.checkinButtonsRow}>
+                  {/* Botão 1: ✓ Segui */}
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    disabled={salvandoRefeicaoId === refeicaoAtiva.id}
+                    onPress={() => handleCheckin("SEGUI")}
+                    style={[
+                      styles.checkinBtn,
+                      checkinRefeicaoAtiva?.status === "SEGUI" &&
+                        styles.checkinBtnSeguiActive,
+                    ]}
+                  >
+                    <Check
+                      size={15}
+                      color={
+                        checkinRefeicaoAtiva?.status === "SEGUI"
+                          ? "#ffffff"
+                          : "#059669"
+                      }
+                      strokeWidth={2.5}
                     />
                     <Text
                       style={[
-                        styles.pillText,
-                        isAtiva
-                          ? styles.pillTextActive
-                          : styles.pillTextInactive,
+                        styles.checkinBtnText,
+                        checkinRefeicaoAtiva?.status === "SEGUI" &&
+                          styles.checkinBtnTextActive,
                       ]}
                     >
-                      {variacao?.nome || `Opção ${idx + 1}`}
+                      Segui
                     </Text>
-                    {isAtiva && <View style={styles.pillDot} />}
                   </TouchableOpacity>
-                );
-              })}
-            </View>
 
-            {currentVariation?.descricao ? (
-              <Text style={styles.variacaoDescricao}>
-                💡 {currentVariation.descricao}
-              </Text>
-            ) : null}
-
-            {/* RESUMO DE MACRONUTRIENTES E CALORIAS DO DIA SELECIONADO */}
-            {currentVariation && (
-              <View style={styles.summaryCard}>
-                <View style={styles.summaryTop}>
-                  <View style={styles.summaryTopLeft}>
-                    <Flame size={16} color="#d97706" />
-                    <Text style={styles.summaryTopLabel}>Total do Dia:</Text>
-                  </View>
-                  <Text style={styles.summaryCalories}>
-                    {totaisDia?.calorias > 0
-                      ? `${totaisDia.calorias} kcal`
-                      : "0 kcal"}
-                  </Text>
-                </View>
-
-                <View style={styles.macrosGrid}>
-                  <View style={styles.macroBox}>
-                    <Text style={styles.macroLabel}>Proteínas</Text>
-                    <Text style={[styles.macroValue, { color: "#047857" }]}>
-                      {totaisDia?.proteinas ?? 0}g
-                    </Text>
-                  </View>
-                  <View style={styles.macroBox}>
-                    <Text style={styles.macroLabel}>Carbos</Text>
-                    <Text style={[styles.macroValue, { color: "#d97706" }]}>
-                      {totaisDia?.carboidratos ?? 0}g
-                    </Text>
-                  </View>
-                  <View style={styles.macroBox}>
-                    <Text style={styles.macroLabel}>Gorduras</Text>
-                    <Text style={[styles.macroValue, { color: "#4f46e5" }]}>
-                      {totaisDia?.gorduras ?? 0}g
-                    </Text>
-                  </View>
-                  <View style={styles.macroBox}>
-                    <Text style={styles.macroLabel}>Fibras</Text>
-                    <Text style={[styles.macroValue, { color: "#0f766e" }]}>
-                      {totaisDia?.fibras ?? 0}g
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            {/* 4. CARDS VERTICAIS DAS REFEIÇÕES */}
-            <View key={activeVariationKey || "no-variation"} style={styles.mealsList}>
-              {currentMeals.length === 0 ? (
-                <View style={styles.emptyCard}>
-                  <Utensils size={26} color="#0f766e" />
-                  <Text style={styles.emptyTitle}>Nenhuma refeição nesta variação</Text>
-                  <Text style={styles.emptyText}>
-                    A equipe médica ainda não adicionou refeições para esta opção de cardápio.
-                  </Text>
-                </View>
-              ) : (
-                currentMeals.map((refeicao, refIdx) => {
-                  const refId = refeicao?.id || `${activeVariationKey || "var"}-ref-${refIdx}`;
-                  const matchRefDiario = refeicoesDiario.find(
-                    (r) => r.id === refId
-                  );
-                  const isConsumido = matchRefDiario?.consumido ?? false;
-                  const extras = matchRefDiario?.itensExtras || [];
-
-                const totaisRef = getTotaisRefeicao(refeicao);
-                const calRef =
-                  totaisRef?.calorias ??
-                  refeicao?.calorias ??
-                  refeicao?.totais?.calorias ??
-                  0;
-                const badgeText = calRef > 0 ? `${calRef} kcal` : "0 kcal";
-                const itensRef = Array.isArray(refeicao?.itens) ? refeicao.itens : [];
-
-                return (
-                  <View
-                    key={refId}
+                  {/* Botão 2: ⇄ Fiz troca */}
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    disabled={salvandoRefeicaoId === refeicaoAtiva.id}
+                    onPress={() => handleCheckin("FIZ_TROCA")}
                     style={[
-                      styles.mealCard,
-                      isConsumido && styles.mealCardConsumido,
+                      styles.checkinBtn,
+                      checkinRefeicaoAtiva?.status === "FIZ_TROCA" &&
+                        styles.checkinBtnTrocaActive,
                     ]}
                   >
-                    {/* CABEÇALHO DA REFEIÇÃO COM MARCAR COMO CONSUMIDO */}
-                    <View style={styles.mealCardHeader}>
-                      <View style={styles.mealLeft}>
-                        <View
-                          style={[
-                            styles.mealIconCircle,
-                            isConsumido && styles.mealIconCircleActive,
-                          ]}
-                        >
-                          {renderMealIcon(refeicao?.nome || "")}
-                        </View>
-                        <View>
-                          <Text style={styles.mealName}>{refeicao?.nome || "Refeição"}</Text>
-                          <View style={styles.mealTimeRow}>
-                            <Clock size={11} color="#64748b" />
-                            <Text style={styles.mealTime}>{refeicao?.horario || "--:--"}</Text>
-                          </View>
-                        </View>
-                      </View>
+                    <ArrowLeftRight
+                      size={14}
+                      color={
+                        checkinRefeicaoAtiva?.status === "FIZ_TROCA"
+                          ? "#ffffff"
+                          : "#0891b2"
+                      }
+                      strokeWidth={2.3}
+                    />
+                    <Text
+                      style={[
+                        styles.checkinBtnText,
+                        checkinRefeicaoAtiva?.status === "FIZ_TROCA" &&
+                          styles.checkinBtnTextActive,
+                      ]}
+                    >
+                      Fiz troca
+                    </Text>
+                  </TouchableOpacity>
 
-                      <View style={styles.mealHeaderRightActions}>
-                        <View style={styles.mealCaloriesBadge}>
-                          <Text style={styles.mealCaloriesText}>
-                            {badgeText}
-                          </Text>
-                          <Text style={styles.mealMacrosText}>
-                            P: {totaisRef?.proteinas ?? 0}g • C:{" "}
-                            {totaisRef?.carboidratos ?? 0}g
-                          </Text>
-                        </View>
+                  {/* Botão 3: ○ Não fiz */}
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    disabled={salvandoRefeicaoId === refeicaoAtiva.id}
+                    onPress={() => handleCheckin("NAO_FIZ")}
+                    style={[
+                      styles.checkinBtn,
+                      checkinRefeicaoAtiva?.status === "NAO_FIZ" &&
+                        styles.checkinBtnNaoFizActive,
+                    ]}
+                  >
+                    <Circle
+                      size={13}
+                      color={
+                        checkinRefeicaoAtiva?.status === "NAO_FIZ"
+                          ? "#ffffff"
+                          : "#64748b"
+                      }
+                      strokeWidth={2.2}
+                    />
+                    <Text
+                      style={[
+                        styles.checkinBtnText,
+                        checkinRefeicaoAtiva?.status === "NAO_FIZ" &&
+                          styles.checkinBtnTextActive,
+                      ]}
+                    >
+                      Não fiz
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
-                        {/* BOTÃO DE CHECK-IN / MARCAR COMO CONSUMIDO */}
-                        <TouchableOpacity
-                          onPress={() => {
-                            const targetId = matchRefDiario?.id || refeicao?.id || refId;
-                            toggleCheckinRefeicao(targetId);
-                          }}
-                          activeOpacity={0.75}
-                          style={[
-                            styles.checkinButton,
-                            isConsumido && styles.checkinButtonActive,
-                          ]}
-                        >
-                          {isConsumido ? (
-                            <>
-                              <CheckCircle2 size={13} color="#ffffff" strokeWidth={2.5} />
-                              <Text style={styles.checkinButtonTextActive}>Consumido</Text>
-                            </>
-                          ) : (
-                            <>
-                              <Circle size={13} color="#0f766e" strokeWidth={2} />
-                              <Text style={styles.checkinButtonText}>Check-in</Text>
-                            </>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    </View>
+                <Text style={styles.checkinHelperText}>
+                  Segui e Fiz troca contam 100% na sua consistência de hoje.
+                </Text>
+              </View>
 
-                    {/* OBSERVAÇÃO MÉDICA DA REFEIÇÃO */}
-                    {refeicao?.observacoes ? (
-                      <View style={styles.mealNote}>
-                        <Info size={13} color="#0f766e" />
-                        <Text style={styles.mealNoteText}>
-                          {refeicao.observacoes}
-                        </Text>
-                      </View>
-                    ) : null}
+              {/* Resumo Nutricional Discreto (Expansível, fechado por padrão) */}
+              {totaisRefeicaoAtiva && totaisRefeicaoAtiva.calorias > 0 ? (
+                <View style={styles.nutritionAccordion}>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={() => setResumoAberto((prev) => !prev)}
+                    style={styles.nutritionToggleBtn}
+                  >
+                    <Text style={styles.nutritionToggleText}>
+                      Ver resumo nutricional
+                    </Text>
+                    {resumoAberto ? (
+                      <ChevronUp size={15} color="#64748b" />
+                    ) : (
+                      <ChevronDown size={15} color="#64748b" />
+                    )}
+                  </TouchableOpacity>
 
-                    {/* LISTA DE ALIMENTOS (READ-ONLY) */}
-                    <View style={styles.mealItemsList}>
-                      {itensRef.length === 0 ? (
-                        <Text style={styles.emptyItemsText}>
-                          Nenhum alimento cadastrado nesta refeição.
-                        </Text>
-                      ) : (
-                        itensRef.map((item, itemIdx) => {
-                          const itemId = item?.id || `item-${itemIdx}`;
-                          const alim = item?.alimento;
-                          const sub = item?.substituicao || item?.substituicoes?.[0] || null;
-                          const hasSub = !!sub;
+                  {resumoAberto ? (
+                    <Text style={styles.nutritionSummaryLine}>
+                      ~{totaisRefeicaoAtiva.calorias} kcal · P{" "}
+                      {totaisRefeicaoAtiva.proteinas}g · C{" "}
+                      {totaisRefeicaoAtiva.carboidratos}g · G{" "}
+                      {totaisRefeicaoAtiva.gorduras}g
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
 
-                          const calItem =
-                            alim?.caloriasPorcao ??
-                            alim?.calorias ??
-                            0;
-                          const itemBadge = calItem > 0 ? `${calItem} kcal` : "0 kcal";
-                          const itemProt = alim?.proteinasPorcao ?? alim?.proteinas ?? 0;
-                          const itemCarb = alim?.carboidratosPorcao ?? alim?.carboidratos ?? 0;
+          {/* Rodapé discreto de autoria clínica */}
+          <Text style={styles.clinicalFooter}>
+            Prescrição acompanhada por {medicoResponsavel}
+          </Text>
+        </ScrollView>
+      ) : (
+        /* ============================================================== */
+        /* ABA 2: COMPRAS — LISTA CONSOLIDADA AUTOMÁTICA + SHARE NATIVO   */
+        /* ============================================================== */
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#0f766e"
+              colors={["#0f766e"]}
+            />
+          }
+        >
+          {/* Cabeçalho da Lista de Compras */}
+          <View style={styles.shoppingHeroCard}>
+            <View style={styles.shoppingHeroTop}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={styles.shoppingTitle}>Lista de Compras do Dia</Text>
+                <Text style={styles.shoppingSubtitle}>
+                  {variacaoAtiva?.nome
+                    ? `${variacaoAtiva.nome} · ${listaCompras.length} itens consolidados`
+                    : `${listaCompras.length} itens consolidados`}
+                </Text>
+              </View>
 
-                          return (
-                            <View key={itemId} style={styles.foodItemContainer}>
-                              <View
-                                style={[
-                                  styles.foodRow,
-                                  hasSub && styles.foodRowSubstituted,
-                                ]}
-                              >
-                                <FoodThumbnail
-                                  nome={alim?.nome || "Alimento Prescrito"}
-                                  categoria={alim?.categoria}
-                                  imageUrl={alim?.thumbnailUrl}
-                                  size={34}
-                                  style={{ marginRight: 10 }}
-                                />
-                                <View style={styles.foodInfoCol}>
-                                  <Text
-                                    style={[
-                                      styles.foodName,
-                                      hasSub && styles.foodNameSubstituted,
-                                    ]}
-                                  >
-                                    {alim?.nome || "Alimento Prescrito"}
-                                  </Text>
-                                  <View style={styles.foodPortionRow}>
-                                    <View
-                                      style={[
-                                        styles.portionBadge,
-                                        hasSub && styles.portionBadgeSubstituted,
-                                      ]}
-                                    >
-                                      <Text
-                                        style={[
-                                          styles.portionBadgeText,
-                                          hasSub && styles.portionBadgeTextSubstituted,
-                                        ]}
-                                      >
-                                        {item?.quantidadeGramas ? `${item.quantidadeGramas}g` : "Porção livre"}
-                                      </Text>
-                                    </View>
-                                    {item?.observacao ? (
-                                      <Text
-                                        style={styles.foodObservation}
-                                        numberOfLines={1}
-                                      >
-                                        ({item.observacao})
-                                      </Text>
-                                    ) : null}
-                                  </View>
-                                </View>
+              <TouchableOpacity
+                activeOpacity={0.82}
+                onPress={handleCompartilharCompras}
+                disabled={listaCompras.length === 0}
+                style={[
+                  styles.shareBtn,
+                  listaCompras.length === 0 && styles.shareBtnDisabled,
+                ]}
+              >
+                <Share2 size={14} color="#ffffff" />
+                <Text style={styles.shareBtnText}>Compartilhar lista</Text>
+              </TouchableOpacity>
+            </View>
 
-                                {/* SELO DE CALORIAS */}
-                                <View style={styles.foodCaloriesCol}>
-                                  <Text
-                                    style={[
-                                      styles.foodCalories,
-                                      hasSub && styles.foodCaloriesSubstituted,
-                                    ]}
-                                  >
-                                    {itemBadge}
-                                  </Text>
-                                  <Text
-                                    style={[
-                                      styles.foodMacros,
-                                      hasSub && styles.foodMacrosSubstituted,
-                                    ]}
-                                  >
-                                    P: {itemProt}g • C: {itemCarb}g
-                                  </Text>
-                                </View>
+            <View style={styles.shoppingMetaRow}>
+              <Text style={styles.shoppingCountLabel}>
+                {totalCarrinhoMarcados} de {listaCompras.length} no carrinho
+              </Text>
 
-                                {/* BOTÃO DE SUBSTITUIÇÃO (🔄) */}
-                                <TouchableOpacity
-                                  style={styles.swapButton}
-                                  onPress={() =>
-                                    handleAbrirSubstituicao(
-                                      itemId,
-                                      alim?.nome || "Alimento Prescrito",
-                                      refeicao?.nome || "Refeição"
-                                    )
-                                  }
-                                  activeOpacity={0.7}
-                                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                                >
-                                  <RefreshCw size={12} color="#0f766e" />
-                                  <Text style={styles.swapButtonText}>Trocar</Text>
-                                </TouchableOpacity>
-                              </View>
+              {temTrocasNaListaCompras ? (
+                <View style={styles.shoppingSwapHint}>
+                  <ArrowLeftRight size={11} color="#0e7490" />
+                  <Text style={styles.shoppingSwapHintText}>
+                    Com suas trocas
+                  </Text>
+                </View>
+              ) : null}
 
-                              {/* BLOCO DO ALIMENTO SUBSTITUTO ESCOLHIDO PELO PACIENTE */}
-                              {hasSub && sub ? (
-                                <View style={styles.substituteBox}>
-                                  <View style={styles.substituteHeaderRow}>
-                                    <View style={styles.substituteBadge}>
-                                      <RefreshCw size={11} color="#047857" />
-                                      <Text style={styles.substituteBadgeText}>
-                                        Substituído pelo Paciente
-                                      </Text>
-                                    </View>
-                                    <TouchableOpacity
-                                      onPress={() => handleRemoverSubstituicaoItem(sub.id)}
-                                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                    >
-                                      <RotateCcw size={13} color="#047857" />
-                                    </TouchableOpacity>
-                                  </View>
+              {totalCarrinhoMarcados > 0 ? (
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => setItensCarrinho({})}
+                >
+                  <Text style={styles.clearCheckedText}>Limpar</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
 
-                                  <View style={styles.substituteContentRow}>
-                                    <FoodThumbnail
-                                      nome={sub.substituteFoodName}
-                                      imageUrl={
-                                        sub.substituteThumbnailUrl ??
-                                        sub.substituteFood?.thumbnailUrl
-                                      }
-                                      size={30}
-                                    />
-                                    <View style={styles.substituteTextCol}>
-                                      <Text style={styles.substituteFoodName} numberOfLines={1}>
-                                        {sub.substituteFoodName}
-                                      </Text>
-                                      <Text style={styles.substitutePortionText}>
-                                        {sub.quantityGrams}g consumido
-                                      </Text>
-                                    </View>
-                                    <View style={styles.substituteCaloriesCol}>
-                                      <Text style={styles.substituteCaloriesText}>
-                                        {sub.calories} kcal
-                                      </Text>
-                                      <Text style={styles.substituteMacrosText}>
-                                        P: {sub.proteins ?? 0}g • C: {sub.carbohydrates ?? 0}g
-                                      </Text>
-                                    </View>
-                                  </View>
-                                </View>
-                              ) : null}
-                            </View>
-                          );
-                        })
-                      )}
-                    </View>
+          {/* Lista Interativa de Compras */}
+          <View style={styles.shoppingListCard}>
+            {listaCompras.length === 0 ? (
+              <View style={styles.noItemsBox}>
+                <Text style={styles.noItemsText}>
+                  Nenhum item disponível para gerar lista de compras.
+                </Text>
+              </View>
+            ) : (
+              listaCompras.map((item, idx) => {
+                const checked = Boolean(itensCarrinho[item.chave]);
+                const isLast = idx === listaCompras.length - 1;
+                const qtdTexto = `${formatNumeroPtBr(item.quantidadeTotal)} ${item.unidade}`;
 
-                    {/* ITENS ADICIONAIS CONSUMIDOS PELO PACIENTE (DIÁRIO) */}
-                    {extras.length > 0 && (
-                      <View style={styles.extraItemsBox}>
-                        <Text style={styles.extraItemsHeaderLabel}>
-                          ITENS EXTRAS CONSUMIDOS:
-                        </Text>
-                        {extras.map((extra) => (
-                          <View key={extra.id} style={styles.extraItemRow}>
-                            <FoodThumbnail
-                              nome={extra.nome}
-                              categoria={extra.categoria}
-                              imageUrl={extra.thumbnailUrl}
-                              size={26}
-                            />
-                            <View style={styles.foodInfoCol}>
-                              <Text style={styles.foodName} numberOfLines={1}>
-                                {extra.nome}
-                              </Text>
-                              <Text style={styles.foodMacros}>
-                                {extra.quantidadeGramas}g • Extra fora da dieta
-                              </Text>
-                            </View>
-                            <Text style={styles.foodCalories}>
-                              +{extra.calorias} kcal
-                            </Text>
-                            <TouchableOpacity
-                              onPress={() => {
-                                const targetId = matchRefDiario?.id || refeicao?.id || refId;
-                                removerAlimentoExtra(targetId, extra.id);
-                              }}
-                              style={styles.deleteExtraBtn}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            >
-                              <Trash2 size={12} color="#f43f5e" />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                      </View>
+                return (
+                  <TouchableOpacity
+                    key={item.chave}
+                    activeOpacity={0.78}
+                    onPress={() => handleToggleItemCarrinho(item.chave)}
+                    style={[
+                      styles.shoppingItemRow,
+                      !isLast && styles.foodItemDivider,
+                      checked && styles.shoppingItemRowChecked,
+                    ]}
+                  >
+                    {checked ? (
+                      <CheckSquare size={20} color="#059669" />
+                    ) : (
+                      <Square size={20} color="#94a3b8" />
                     )}
 
-                    {/* BOTÃO PARA ADICIONAR ITEM EXTRA À REFEIÇÃO */}
-                    <TouchableOpacity
-                      style={styles.addExtraButton}
-                      onPress={() =>
-                        setModalExtraRefeicaoId(matchRefDiario?.id || refeicao?.id || refId)
-                      }
-                      activeOpacity={0.7}
-                    >
-                      <Plus size={13} color="#0f766e" />
-                      <Text style={styles.addExtraButtonText}>Adicionar item consumido</Text>
-                    </TouchableOpacity>
-                  </View>
+                    <FoodThumbnail
+                      nome={item.nome}
+                      categoria={item.categoria}
+                      imageUrl={item.thumbnailUrl}
+                      size={38}
+                      style={[styles.shoppingThumb, checked && { opacity: 0.55 }]}
+                    />
+
+                    <View style={styles.shoppingItemTextCol}>
+                      <View style={styles.shoppingNameLine}>
+                        <Text
+                          style={[
+                            styles.shoppingItemName,
+                            checked && styles.shoppingItemNameChecked,
+                          ]}
+                          numberOfLines={2}
+                        >
+                          {item.nome}
+                        </Text>
+                        {item.origemTroca ? (
+                          <View style={styles.shoppingSwapBadge}>
+                            <Text style={styles.shoppingSwapBadgeText}>
+                              Troca
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      <Text style={styles.shoppingItemDetail}>
+                        {qtdTexto}
+                        {item.ocorrencias > 1
+                          ? ` · ${item.ocorrencias} refeições`
+                          : item.medidaCaseiraHint
+                            ? ` · ${item.medidaCaseiraHint}`
+                            : ""}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
                 );
               })
-              )}
-            </View>
+            )}
+          </View>
+        </ScrollView>
+      )}
 
-            {/* AVISO DE CONSUMO / ORIENTAÇÃO */}
-            <View style={styles.tipCard}>
-              <CheckCircle2 size={16} color="#b45309" />
-              <Text style={styles.tipText}>
-                <Text style={{ fontWeight: "600" }}>Dica do seu Médico: </Text>
-                Se tiver dúvidas sobre substituições de alimentos ou sentir
-                desconfortos, envie uma mensagem para a equipe médica no chat da
-                clínica.
-              </Text>
-            </View>
-          </>
-        )}
-      </ScrollView>
+      {/* MODAL BOTTOM SHEET DE SUBSTITUIÇÕES 1:N EM 1 TOQUE */}
+      <TrocasModal
+        visible={Boolean(itemModalTroca)}
+        item={itemModalTroca?.item ?? null}
+        substituicaoAtivaId={
+          itemModalTroca
+            ? trocasSelecionadas[itemModalTroca.item.id] ?? null
+            : null
+        }
+        onSelectSubstituicao={(subId) => {
+          if (!itemModalTroca) return;
+          void aplicarTrocaItem(
+            itemModalTroca.refeicaoId,
+            itemModalTroca.item.id,
+            subId
+          );
+        }}
+        onClose={() => setItemModalTroca(null)}
+      />
 
-      {/* 3. BOTTOM NAVIGATION UNIFICADA (CLÍNICA FAAZ) */}
+      {/* BARRA INFERIOR UNIFICADA */}
       <BottomTabBar
         activeTab="Dieta"
-        onTabPress={(tab) => {
-          if (onTabPress) {
-            onTabPress(tab);
-          } else if (tab === "Hoje" && onBack) {
-            onBack();
-          }
-        }}
-      />
-
-      {/* MODAL DE BUSCA LIVRE (TABELA TACO) PARA SUBSTITUIÇÃO ANCORADA */}
-      <AdicionarAlimentoModal
-        visible={itemParaSubstituir !== null}
-        refeicaoNome={
-          itemParaSubstituir
-            ? `Substituir: ${itemParaSubstituir.itemNome}`
-            : "Substituição"
-        }
-        onClose={() => setItemParaSubstituir(null)}
-        onConfirm={handleConfirmarSubstituicao}
-      />
-
-      {/* MODAL DE BUSCA LIVRE (TABELA TACO) PARA ADICIONAR ITEM EXTRA */}
-      <AdicionarAlimentoModal
-        visible={modalExtraRefeicaoId !== null}
-        refeicaoNome="Refeição"
-        onClose={() => setModalExtraRefeicaoId(null)}
-        onConfirm={handleConfirmarAdicionarExtra}
+        onTabPress={(tab) => onTabPress?.(tab)}
       />
     </View>
   );
@@ -1055,775 +1084,712 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#f8fafc",
   },
-  header: {
-    backgroundColor: "#0f172a",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomWidth: 1,
-    borderBottomColor: "#1e293b",
-  },
-  backButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 4,
-    paddingRight: 8,
-  },
-  backButtonText: {
-    color: "#2dd4bf",
-    fontSize: 12,
-    fontWeight: "700",
-    marginLeft: 2,
-  },
-  headerCenter: {
-    alignItems: "center",
-  },
-  headerBrand: {
-    color: "#2dd4bf",
-    fontSize: 10,
-    fontWeight: "600",
-    letterSpacing: 1.2,
-  },
-  headerTitle: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  headerBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(45, 212, 191, 0.15)",
-    borderWidth: 1,
-    borderColor: "rgba(45, 212, 191, 0.3)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    gap: 4,
-  },
-  headerBadgeText: {
-    color: "#2dd4bf",
-    fontSize: 10,
-    fontWeight: "500",
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 110,
-    gap: 14,
-  },
-  bannerCard: {
-    backgroundColor: "#091e1d",
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "rgba(45, 212, 191, 0.25)",
-  },
-  bannerBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  badgeAtivo: {
+  headerProgressPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: "rgba(45, 212, 191, 0.15)",
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 999,
+    backgroundColor: "rgba(45, 212, 191, 0.14)",
     borderWidth: 1,
     borderColor: "rgba(45, 212, 191, 0.3)",
-  },
-  badgeAtivoText: {
-    color: "#5eead4",
-    fontSize: 10,
-    fontWeight: "500",
-  },
-  pacienteNomeHeader: {
-    color: "#94a3b8",
-    fontSize: 11,
-    fontWeight: "400",
-  },
-  planoTitulo: {
-    color: "#ffffff",
-    fontSize: 15,
-    fontWeight: "700",
-    lineHeight: 20,
-  },
-  planoObjetivo: {
-    color: "#ccfbf1",
-    fontSize: 12,
-    marginTop: 4,
-    lineHeight: 17,
-  },
-  bannerDivider: {
-    height: 1,
-    backgroundColor: "rgba(45, 212, 191, 0.15)",
-    marginVertical: 10,
-  },
-  medicoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  medicoText: {
-    color: "#94a3b8",
-    fontSize: 11,
-  },
-  medicoNome: {
-    color: "#e2e8f0",
-    fontWeight: "600",
-  },
-  especialidadeText: {
-    color: "#2dd4bf",
-    fontSize: 11,
-    fontWeight: "400",
-  },
-  centerBox: {
-    paddingVertical: 40,
-    alignItems: "center",
-    gap: 12,
-  },
-  loadingText: {
-    color: "#475569",
-    fontSize: 12,
-    fontWeight: "400",
-  },
-  errorCard: {
-    backgroundColor: "#fff1f2",
-    borderRadius: 16,
-    padding: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#fecdd3",
-    gap: 8,
-  },
-  errorTitle: {
-    color: "#881337",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  errorText: {
-    color: "#9f1239",
-    fontSize: 12,
-    textAlign: "center",
-  },
-  retryButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#5eead4",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    marginTop: 6,
-  },
-  retryButtonText: {
-    color: "#0f766e",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  emptyCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    gap: 8,
-  },
-  emptyTitle: {
-    color: "#1e293b",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  emptyText: {
-    color: "#4b5563",
-    fontSize: 12,
-    textAlign: "center",
-    lineHeight: 18,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 4,
-    paddingHorizontal: 2,
-  },
-  sectionTitle: {
-    color: "#475569",
-    fontSize: 11,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  sectionHint: {
-    color: "#0f766e",
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  pillsContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    gap: 8,
-    paddingVertical: 4,
-  },
-  pillButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 12,
-    maxWidth: "100%",
-  },
-  pillButtonActive: {
-    backgroundColor: "#0f766e",
-    shadowColor: "#0f766e",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  pillButtonInactive: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  pillText: {
-    fontSize: 12,
-    fontWeight: "500",
-    flexShrink: 1,
-  },
-  pillTextActive: {
-    color: "#ffffff",
-  },
-  pillTextInactive: {
-    color: "#334155",
-  },
-  pillDot: {
-    width: 5,
-    height: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 999,
-    backgroundColor: "#5eead4",
-    marginLeft: 2,
   },
-  variacaoDescricao: {
-    color: "#64748b",
+  headerProgressText: {
+    color: "#ccfbf1",
     fontSize: 11,
-    fontStyle: "italic",
-    paddingHorizontal: 2,
+    fontWeight: "700",
   },
-  summaryCard: {
+  topControlsWrap: {
     backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
     gap: 10,
   },
-  summaryTop: {
+  segmentedTrack: {
+    flexDirection: "row",
+    backgroundColor: "#f1f5f9",
+    borderRadius: 12,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  segmentedBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  segmentedBtnActive: {
+    backgroundColor: "#ffffff",
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  segmentedText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  segmentedTextActive: {
+    color: "#0f172a",
+    fontWeight: "700",
+  },
+  segmentedCountPill: {
+    backgroundColor: "#e2e8f0",
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  segmentedCountPillActive: {
+    backgroundColor: "#ccfbf1",
+  },
+  segmentedCountText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  segmentedCountTextActive: {
+    color: "#0f766e",
+  },
+  variationsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingVertical: 1,
+  },
+  variationPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  variationPillActive: {
+    backgroundColor: "#0f172a",
+    borderColor: "#0f172a",
+  },
+  variationPillText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  variationPillTextActive: {
+    color: "#2dd4bf",
+    fontWeight: "700",
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 28,
+    gap: 14,
+  },
+  centeredState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    gap: 10,
+  },
+  emptyIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  stateTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+    textAlign: "center",
+  },
+  stateSubtitle: {
+    fontSize: 13,
+    color: "#64748b",
+    textAlign: "center",
+    lineHeight: 19,
+  },
+  retryBtn: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#0f766e",
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  retryBtnText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  // Progresso discreto no topo do Cardápio
+  progressBarCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    gap: 8,
+  },
+  progressTopLine: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-  },
-  summaryTopLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  summaryTopLabel: {
-    color: "#1e293b",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  summaryCalories: {
-    color: "#0f766e",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  macrosGrid: {
-    flexDirection: "row",
     gap: 8,
   },
-  macroBox: {
-    flex: 1,
-    backgroundColor: "#f8fafc",
-    borderRadius: 10,
-    paddingVertical: 7,
+  progressLabelRow: {
+    flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
+    flexWrap: "wrap",
+    gap: 6,
+    flex: 1,
   },
-  macroLabel: {
-    color: "#4b5563",
-    fontSize: 10,
-    fontWeight: "500",
-    textTransform: "uppercase",
-  },
-  macroValue: {
+  progressText: {
     fontSize: 12,
     fontWeight: "600",
-    marginTop: 2,
+    color: "#334155",
   },
-  mealsList: {
-    gap: 12,
+  bonusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
   },
+  bonusPillText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#047857",
+  },
+  progressPercentText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "#e2e8f0",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "#0d9488",
+  },
+  // Linha do Tempo de Horários
+  timelineRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingVertical: 2,
+  },
+  timelinePill: {
+    minWidth: 74,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 14,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    gap: 2,
+  },
+  timelinePillSelected: {
+    backgroundColor: "#0f172a",
+    borderColor: "#0f172a",
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  timelinePillDone: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#bbf7d0",
+  },
+  timelinePillSwap: {
+    backgroundColor: "#ecfeff",
+    borderColor: "#a5f3fc",
+  },
+  timelinePillTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+  },
+  timelineTime: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  timelineTimeSelected: {
+    color: "#ffffff",
+  },
+  timelineShortName: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#64748b",
+  },
+  timelineShortNameSelected: {
+    color: "#99f6e4",
+  },
+  timelinePendingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#cbd5e1",
+  },
+  timelinePendingDotSelected: {
+    backgroundColor: "#2dd4bf",
+  },
+  // Card Principal da Refeição
   mealCard: {
     backgroundColor: "#ffffff",
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "#e2e8f0",
     overflow: "hidden",
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
   mealCardHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: "#f8fafc",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: "#f1f5f9",
-  },
-  mealLeft: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: 10,
   },
-  mealIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: "#ccfbf1",
-    alignItems: "center",
-    justifyContent: "center",
+  mealTitleBlock: {
+    flex: 1,
+    gap: 4,
   },
-  mealName: {
+  mealNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  mealNameTitle: {
+    fontSize: 18,
+    fontWeight: "700",
     color: "#0f172a",
-    fontSize: 13,
-    fontWeight: "600",
+    letterSpacing: -0.2,
+  },
+  opcionalBadge: {
+    backgroundColor: "#fef3c7",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  opcionalBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#b45309",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
   mealTimeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginTop: 2,
+    gap: 5,
   },
-  mealTime: {
-    color: "#4b5563",
-    fontSize: 11,
-    fontWeight: "400",
-  },
-  mealCaloriesBadge: {
-    alignItems: "flex-end",
-  },
-  mealCaloriesText: {
-    backgroundColor: "#ccfbf1",
-    color: "#0f766e",
-    fontSize: 11,
-    fontWeight: "600",
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  mealMacrosText: {
+  mealTimeLabel: {
+    fontSize: 12,
     color: "#64748b",
-    fontSize: 9,
-    fontWeight: "400",
-    marginTop: 2,
+    fontWeight: "500",
   },
-  mealNote: {
+  mealStatusChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  mealStatusChipText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  // Itens da Refeição
+  itemsList: {
+    paddingHorizontal: 16,
+  },
+  foodItemRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 8,
-    backgroundColor: "rgba(204, 251, 241, 0.4)",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    gap: 12,
+    paddingVertical: 13,
+  },
+  foodItemDivider: {
     borderBottomWidth: 1,
-    borderBottomColor: "#ccfbf1",
+    borderBottomColor: "#f1f5f9",
   },
-  mealNoteText: {
-    flex: 1,
-    color: "#134e4a",
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  mealItemsList: {
-    padding: 12,
-    gap: 8,
-  },
-  emptyItemsText: {
-    color: "#94a3b8",
-    fontSize: 11,
-    fontStyle: "italic",
-    textAlign: "center",
-    paddingVertical: 6,
-  },
-  foodRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#f8fafc",
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-  },
-  foodInfoCol: {
-    flex: 1,
-    paddingRight: 10,
-  },
-  foodName: {
-    color: "#1e293b",
-    fontSize: 12,
-    fontWeight: "500",
-  },
-  foodPortionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 3,
-  },
-  portionBadge: {
-    backgroundColor: "#f0fdf4",
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "#bbf7d0",
-  },
-  portionBadgeText: {
-    color: "#166534",
-    fontSize: 10,
-    fontWeight: "500",
-  },
-  foodObservation: {
-    color: "#64748b",
-    fontSize: 11,
-    flex: 1,
-  },
-  foodCaloriesCol: {
-    alignItems: "flex-end",
-  },
-  foodCalories: {
-    color: "#0f172a",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  foodMacros: {
-    color: "#64748b",
-    fontSize: 9,
-    fontWeight: "400",
+  foodThumb: {
+    borderRadius: 11,
     marginTop: 1,
   },
-  foodItemContainer: {
-    gap: 6,
+  foodItemContent: {
+    flex: 1,
+    gap: 3,
   },
-  foodRowSubstituted: {
-    backgroundColor: "#f8fafc",
-    opacity: 0.65,
-    borderStyle: "dashed",
-  },
-  foodNameSubstituted: {
-    textDecorationLine: "line-through",
-    color: "#94a3b8",
-  },
-  portionBadgeSubstituted: {
-    backgroundColor: "#f1f5f9",
-    borderColor: "#e2e8f0",
-  },
-  portionBadgeTextSubstituted: {
-    color: "#94a3b8",
-    textDecorationLine: "line-through",
-  },
-  foodCaloriesSubstituted: {
-    color: "#94a3b8",
-    textDecorationLine: "line-through",
-  },
-  foodMacrosSubstituted: {
-    color: "#cbd5e1",
-  },
-  swapButton: {
+  foodNameTopRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#f0fdf4",
-    borderWidth: 1,
-    borderColor: "#bbf7d0",
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 8,
-    marginLeft: 6,
-  },
-  swapButtonText: {
-    color: "#0f766e",
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  substituteBox: {
-    backgroundColor: "#ecfdf5",
-    borderWidth: 1,
-    borderColor: "#a7f3d0",
-    borderRadius: 12,
-    padding: 10,
-    marginLeft: 12,
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: 8,
   },
-  substituteHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  foodNameText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+    lineHeight: 19,
   },
-  substituteBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#d1fae5",
+  swapAppliedTag: {
+    backgroundColor: "#ecfeff",
+    borderWidth: 1,
+    borderColor: "#a5f3fc",
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#a7f3d0",
+    borderRadius: 999,
   },
-  substituteBadgeText: {
-    color: "#047857",
+  swapAppliedTagText: {
     fontSize: 10,
     fontWeight: "700",
+    color: "#0e7490",
   },
-  substituteContentRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
+  foodMeasureText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#0f766e",
+    lineHeight: 18,
   },
-  substituteTextCol: {
-    flex: 1,
-  },
-  substituteFoodName: {
-    color: "#064e3b",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  substitutePortionText: {
-    color: "#059669",
-    fontSize: 10,
-    fontWeight: "500",
-    marginTop: 1,
-  },
-  substituteCaloriesCol: {
-    alignItems: "flex-end",
-  },
-  substituteCaloriesText: {
-    color: "#065f46",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  substituteMacrosText: {
-    color: "#047857",
-    fontSize: 9,
-    fontWeight: "500",
-    marginTop: 1,
-  },
-  mealCardConsumido: {
-    borderColor: "#0f766e",
-    backgroundColor: "#ffffff",
-  },
-  diarioSummaryBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    marginBottom: 10,
-    gap: 8,
-  },
-  diarioSummaryLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flex: 1,
-  },
-  diarioIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: "#fef3c7",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  diarioSummaryTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  diarioSummarySubtitle: {
-    fontSize: 10,
-    fontWeight: "500",
+  foodOriginalHint: {
+    fontSize: 11,
     color: "#64748b",
     marginTop: 1,
   },
-  diarioRestantePill: {
-    backgroundColor: "#f0fdf4",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#bbf7d0",
-  },
-  diarioRestantePillText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#166534",
-  },
-  mealHeaderRightActions: {
+  swapTriggerPill: {
+    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-  },
-  checkinButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 8,
+    gap: 5,
+    marginTop: 6,
     backgroundColor: "#f0fdfa",
     borderWidth: 1,
     borderColor: "#99f6e4",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
   },
-  checkinButtonActive: {
-    backgroundColor: "#0f766e",
-    borderColor: "#0f766e",
+  swapTriggerPillActive: {
+    backgroundColor: "#ecfeff",
+    borderColor: "#67e8f9",
   },
-  checkinButtonText: {
-    fontSize: 11,
+  swapTriggerText: {
+    fontSize: 12,
     fontWeight: "700",
     color: "#0f766e",
   },
-  checkinButtonTextActive: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#ffffff",
+  swapTriggerTextActive: {
+    color: "#0e7490",
   },
-  mealIconCircleActive: {
-    backgroundColor: "#0f766e",
+  noItemsBox: {
+    paddingVertical: 22,
+    alignItems: "center",
   },
-  extraItemsBox: {
+  noItemsText: {
+    fontSize: 13,
+    color: "#64748b",
+    textAlign: "center",
+  },
+  // Observações de Preparo
+  prepNotesCard: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 12,
+    backgroundColor: "#f0fdfa",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ccfbf1",
+    borderLeftWidth: 3.5,
+    borderLeftColor: "#0d9488",
     paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 4,
-    backgroundColor: "#f8fafc",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
+    paddingVertical: 10,
+    gap: 4,
+  },
+  prepNotesHeader: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
   },
-  extraItemsHeaderLabel: {
-    fontSize: 9,
-    fontWeight: "800",
+  prepNotesTitle: {
+    fontSize: 11,
+    fontWeight: "700",
     color: "#0f766e",
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  extraItemRow: {
+  prepNotesBody: {
+    fontSize: 13,
+    color: "#1e293b",
+    lineHeight: 19,
+  },
+  // Rodapé de Check-in em 3 segundos
+  checkinFooter: {
+    backgroundColor: "#f8fafc",
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  checkinHeaderLine: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+  },
+  checkinPrompt: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  checkinButtonsRow: {
+    flexDirection: "row",
     gap: 8,
-    backgroundColor: "#ffffff",
-    padding: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
   },
-  deleteExtraBtn: {
-    padding: 4,
-    borderRadius: 6,
-    backgroundColor: "#ffe4e6",
-    marginLeft: 4,
-  },
-  addExtraButton: {
+  checkinBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 5,
+    paddingVertical: 11,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  checkinBtnSeguiActive: {
+    backgroundColor: "#059669",
+    borderColor: "#059669",
+  },
+  checkinBtnTrocaActive: {
+    backgroundColor: "#0891b2",
+    borderColor: "#0891b2",
+  },
+  checkinBtnNaoFizActive: {
+    backgroundColor: "#475569",
+    borderColor: "#475569",
+  },
+  checkinBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#1e293b",
+  },
+  checkinBtnTextActive: {
+    color: "#ffffff",
+  },
+  checkinHelperText: {
+    fontSize: 11,
+    color: "#64748b",
+    textAlign: "center",
+  },
+  // Acordeão discreto de resumo nutricional
+  nutritionAccordion: {
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#ffffff",
     gap: 6,
-    paddingVertical: 7,
-    marginHorizontal: 12,
-    marginBottom: 10,
-    backgroundColor: "#f8fafc",
-    borderRadius: 8,
+  },
+  nutritionToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 2,
+  },
+  nutritionToggleText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  nutritionSummaryLine: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+    textAlign: "center",
+    paddingBottom: 2,
+  },
+  clinicalFooter: {
+    fontSize: 11,
+    color: "#94a3b8",
+    textAlign: "center",
+    marginTop: 2,
+  },
+  // Aba Compras
+  shoppingHeroCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    borderStyle: "dashed",
+    padding: 15,
+    gap: 12,
   },
-  addExtraButtonText: {
-    fontSize: 11,
+  shoppingHeroTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  shoppingTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  shoppingSubtitle: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 2,
+  },
+  shareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#0f766e",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 11,
+  },
+  shareBtnDisabled: {
+    opacity: 0.45,
+  },
+  shareBtnText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  shoppingMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    gap: 8,
+  },
+  shoppingCountLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  shoppingSwapHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#ecfeff",
+    borderWidth: 1,
+    borderColor: "#a5f3fc",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  shoppingSwapHintText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#0e7490",
+  },
+  clearCheckedText: {
+    fontSize: 12,
     fontWeight: "700",
     color: "#0f766e",
   },
-  tipCard: {
-    backgroundColor: "#fffbeb",
-    borderRadius: 14,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#fef3c7",
-  },
-  tipText: {
-    flex: 1,
-    color: "#78350f",
-    fontSize: 11,
-    lineHeight: 16,
-  },
-  bottomNavContainer: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 64,
+  shoppingListCard: {
     backgroundColor: "#ffffff",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 14,
+  },
+  shoppingItemRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-around",
-    paddingHorizontal: 16,
-    elevation: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    gap: 11,
+    paddingVertical: 12,
   },
-  bottomNavTab: {
+  shoppingItemRowChecked: {
+    opacity: 0.72,
+  },
+  shoppingThumb: {
+    borderRadius: 9,
+  },
+  shoppingItemTextCol: {
+    flex: 1,
+    gap: 2,
+  },
+  shoppingNameLine: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    gap: 6,
   },
-  bottomNavLabel: {
+  shoppingItemName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0f172a",
+  },
+  shoppingItemNameChecked: {
+    textDecorationLine: "line-through",
+    color: "#64748b",
+  },
+  shoppingSwapBadge: {
+    backgroundColor: "#ecfeff",
+    borderWidth: 1,
+    borderColor: "#a5f3fc",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 999,
+  },
+  shoppingSwapBadgeText: {
     fontSize: 10,
-    marginTop: 3,
-    fontWeight: "500",
+    fontWeight: "700",
+    color: "#0e7490",
   },
-  bottomNavLabelActive: {
+  shoppingItemDetail: {
+    fontSize: 12,
+    fontWeight: "600",
     color: "#0f766e",
   },
-  bottomNavLabelInactive: {
-    color: "#94a3b8",
-  },
 });
-
-export default DietaScreen;
-
