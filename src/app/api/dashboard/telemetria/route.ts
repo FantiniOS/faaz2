@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { IsNull, MoreThanOrEqual } from "typeorm";
-import { getRepository } from "@/lib/db/data-source";
+import { getDataSource, withOracleRetry } from "@/lib/db/data-source";
 import {
   AgendamentoEntity,
   BiometricMeasurementEntity,
@@ -50,12 +50,51 @@ import type {
   TelemetriaDashboardResponse,
 } from "@/types/dashboard-telemetria";
 
+function isIsoDateValid(val?: string | null): val is string {
+  return typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val.trim());
+}
+
+function parseDateSafe(raw: unknown): Date | null {
+  if (raw == null) return null;
+  const d = raw instanceof Date ? raw : new Date(raw as string | number);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function toIsoSafe(raw: unknown, fallback?: Date): string | null {
+  const d = parseDateSafe(raw) ?? (fallback ? parseDateSafe(fallback) : null);
+  return d ? d.toISOString() : null;
+}
+
+/**
+ * Executa tarefas assíncronas com concorrência limitada para não saturar o pool
+ * do Oracle ADB (30 sessões globais em Always Free).
+ */
+async function runWithConcurrency(
+  tasks: Array<() => Promise<void>>,
+  concurrency: number
+): Promise<void> {
+  const limit = Math.max(1, Math.min(concurrency, tasks.length || 1));
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < tasks.length) {
+      const idx = cursor;
+      cursor += 1;
+      await tasks[idx]();
+    }
+  };
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+}
+
 function formatDiaLabelPt(isoDate: string): string {
+  if (!isIsoDateValid(isoDate)) return isoDate || "--/--";
   const [, m, d] = isoDate.split("-");
   return `${d}/${m}`;
 }
 
 function round1(val: number): number {
+  if (!Number.isFinite(val)) return 0;
   return Math.round(val * 10) / 10;
 }
 
@@ -247,216 +286,323 @@ export async function GET(req: NextRequest) {
       adicionarDiasDataBR(janela.hojeIso, 8)
     ).inicioUtc;
 
-    const [
-      patientRepo,
-      agendamentoRepo,
-      checkinRefeicaoRepo,
-      glicemiaRepo,
-      intestinoRepo,
-      hidraRepo,
-      workoutRepo,
-      sonoRepo,
-      goalRepo,
-      bioRepo,
-      evolucaoRepo,
-      measurementRepo,
-    ] = await Promise.all([
-      getRepository(PatientEntity),
-      getRepository(AgendamentoEntity),
-      getRepository(CheckinRefeicaoEntity),
-      getRepository(RegistroGlicemiaEntity),
-      getRepository(CheckinIntestinalEntity),
-      getRepository(CheckinHidratacaoEntity),
-      getRepository(WorkoutLogEntity),
-      getRepository(CheckInSonoEntity),
-      getRepository(PatientGoalEntity),
-      getRepository(BiometricMeasurementEntity),
-      getRepository(EvolucaoClinicaEntity),
-      getRepository(MeasurementEntity),
-    ]);
+    const ds = await withOracleRetry(() => getDataSource(), {
+      label: "telemetria:dataSource",
+    });
+
+    const patientRepo = ds.getRepository(PatientEntity);
+    const agendamentoRepo = ds.getRepository(AgendamentoEntity);
+    const checkinRefeicaoRepo = ds.getRepository(CheckinRefeicaoEntity);
+    const glicemiaRepo = ds.getRepository(RegistroGlicemiaEntity);
+    const intestinoRepo = ds.getRepository(CheckinIntestinalEntity);
+    const hidraRepo = ds.getRepository(CheckinHidratacaoEntity);
+    const workoutRepo = ds.getRepository(WorkoutLogEntity);
+    const sonoRepo = ds.getRepository(CheckInSonoEntity);
+    const goalRepo = ds.getRepository(PatientGoalEntity);
+    const bioRepo = ds.getRepository(BiometricMeasurementEntity);
+    const evolucaoRepo = ds.getRepository(EvolucaoClinicaEntity);
+    const measurementRepo = ds.getRepository(MeasurementEntity);
 
     const dbStart = performance.now();
-    const [
-      pacientesAtivos,
-      agendamentosFuturos,
-      checkinsRefeicoesRaw,
-      glicemiasRaw,
-      intestinosRaw,
-      hidratacoesRaw,
-      workoutsRaw,
-      sonos7dRaw,
-      activeGoals,
-      biometriasRaw,
-      evolucoesRaw,
-      measurementsRaw,
-    ] = await Promise.all([
-      patientRepo.find({
-        where: { patientStatus: "ACTIVE", deletedAt: IsNull() },
-        select: {
-          id: true,
-          recordCode: true,
-          fullName: true,
-          cpf: true,
-          phoneWhatsapp: true,
-          treatmentObjective: true,
-          clinicalFocus: true,
-          workoutType: true,
-          workoutFrequency: true,
-          metaDiariaMl: true,
-          prontuario: {
-            id: true,
-            objetivo: true,
-            pesoAtualKg: true,
-          },
+    const modulosComErro: string[] = [];
+
+    const carregarModulo = async <T>(
+      modulo: string,
+      queryFn: () => Promise<T>,
+      fallback: T
+    ): Promise<T> => {
+      try {
+        return await withOracleRetry(queryFn, {
+          label: `telemetria:${modulo}`,
+        });
+      } catch (err: unknown) {
+        modulosComErro.push(modulo);
+        console.error(`[telemetria] erro no modulo ${modulo}:`, err);
+        return fallback;
+      }
+    };
+
+    // Consulta base obrigatória (pacientes ativos) com retry único em erro transitório Oracle
+    let pacientesAtivos: Awaited<ReturnType<typeof patientRepo.find>>;
+    try {
+      pacientesAtivos = await withOracleRetry(
+        () =>
+          patientRepo.find({
+            where: { patientStatus: "ACTIVE", deletedAt: IsNull() },
+            select: {
+              id: true,
+              recordCode: true,
+              fullName: true,
+              cpf: true,
+              phoneWhatsapp: true,
+              treatmentObjective: true,
+              clinicalFocus: true,
+              workoutType: true,
+              workoutFrequency: true,
+              metaDiariaMl: true,
+              prontuario: {
+                id: true,
+                objetivo: true,
+                pesoAtualKg: true,
+              },
+            },
+            relations: { prontuario: true },
+            order: { fullName: "ASC" },
+          }),
+        { label: "telemetria:pacientesAtivos" }
+      );
+    } catch (err: unknown) {
+      console.error("[telemetria] erro no modulo pacientesAtivos:", err);
+      throw err;
+    }
+
+    let agendamentosFuturos: Awaited<ReturnType<typeof agendamentoRepo.find>> = [];
+    let checkinsRefeicoesRaw: Awaited<ReturnType<typeof checkinRefeicaoRepo.find>> = [];
+    let glicemiasRaw: Awaited<ReturnType<typeof glicemiaRepo.find>> = [];
+    let intestinosRaw: Awaited<ReturnType<typeof intestinoRepo.find>> = [];
+    let hidratacoesRaw: Awaited<ReturnType<typeof hidraRepo.find>> = [];
+    let workoutsRaw: Awaited<ReturnType<typeof workoutRepo.find>> = [];
+    let sonos7dRaw: Awaited<ReturnType<typeof sonoRepo.find>> = [];
+    let activeGoals: Awaited<ReturnType<typeof goalRepo.find>> = [];
+    let biometriasRaw: Awaited<ReturnType<typeof bioRepo.find>> = [];
+    let evolucoesRaw: Awaited<ReturnType<typeof evolucaoRepo.find>> = [];
+    let measurementsRaw: Awaited<ReturnType<typeof measurementRepo.find>> = [];
+
+    // Executa os 11 módulos secundários com concorrência controlada (=2, alinhada ao
+    // poolMax Serverless) e isolamento de falhas por módulo para nunca derrubar o Dashboard.
+    await runWithConcurrency(
+      [
+        async () => {
+          agendamentosFuturos = await carregarModulo(
+            "agendamentosFuturos",
+            () =>
+              agendamentoRepo.find({
+                where: { dataHora: MoreThanOrEqual(inicioHojeDate) },
+                select: {
+                  id: true,
+                  dataHora: true,
+                  tipo: true,
+                  status: true,
+                  especialidade: true,
+                  pacienteId: true,
+                  paciente: {
+                    id: true,
+                    fullName: true,
+                    recordCode: true,
+                  },
+                  medico: {
+                    id: true,
+                    nome: true,
+                  },
+                },
+                relations: { paciente: true, medico: true },
+                order: { dataHora: "ASC" },
+                take: 40,
+              }),
+            []
+          );
         },
-        relations: { prontuario: true },
-        order: { fullName: "ASC" },
-      }),
-      agendamentoRepo.find({
-        where: { dataHora: MoreThanOrEqual(inicioHojeDate) },
-        select: {
-          id: true,
-          dataHora: true,
-          tipo: true,
-          status: true,
-          especialidade: true,
-          pacienteId: true,
-          paciente: {
-            id: true,
-            fullName: true,
-            recordCode: true,
-          },
-          medico: {
-            id: true,
-            nome: true,
-          },
+        async () => {
+          checkinsRefeicoesRaw = await carregarModulo(
+            "checkinsRefeicoes",
+            () =>
+              checkinRefeicaoRepo.find({
+                where: { dataDia: MoreThanOrEqual(queryStartIso) },
+                select: {
+                  id: true,
+                  pacienteId: true,
+                  refeicaoId: true,
+                  dataDia: true,
+                  status: true,
+                  criadoEm: true,
+                  atualizadoEm: true,
+                  refeicao: {
+                    id: true,
+                    nome: true,
+                    horario: true,
+                    opcional: true,
+                  },
+                },
+                relations: { refeicao: true },
+                order: { dataDia: "DESC", criadoEm: "DESC" },
+              }),
+            []
+          );
         },
-        relations: { paciente: true, medico: true },
-        order: { dataHora: "ASC" },
-        take: 40,
-      }),
-      checkinRefeicaoRepo.find({
-        where: { dataDia: MoreThanOrEqual(queryStartIso) },
-        select: {
-          id: true,
-          pacienteId: true,
-          refeicaoId: true,
-          dataDia: true,
-          status: true,
-          criadoEm: true,
-          atualizadoEm: true,
-          refeicao: {
-            id: true,
-            nome: true,
-            horario: true,
-            opcional: true,
-          },
+        async () => {
+          glicemiasRaw = await carregarModulo(
+            "glicemias",
+            () =>
+              glicemiaRepo.find({
+                where: { dataRegistro: MoreThanOrEqual(queryStartDate) },
+                select: {
+                  id: true,
+                  pacienteId: true,
+                  dataRegistro: true,
+                  valor: true,
+                  momento: true,
+                },
+                order: { dataRegistro: "DESC" },
+              }),
+            []
+          );
         },
-        relations: { refeicao: true },
-        order: { dataDia: "DESC", criadoEm: "DESC" },
-      }),
-      glicemiaRepo.find({
-        where: { dataRegistro: MoreThanOrEqual(queryStartDate) },
-        select: {
-          id: true,
-          pacienteId: true,
-          dataRegistro: true,
-          valor: true,
-          momento: true,
+        async () => {
+          intestinosRaw = await carregarModulo(
+            "intestinos",
+            () =>
+              intestinoRepo.find({
+                where: { data: MoreThanOrEqual(queryStartDate) },
+                select: {
+                  id: true,
+                  pacienteId: true,
+                  tipoBristol: true,
+                  categoria: true,
+                  sintomas: true,
+                  data: true,
+                },
+                order: { data: "DESC" },
+              }),
+            []
+          );
         },
-        order: { dataRegistro: "DESC" },
-      }),
-      intestinoRepo.find({
-        where: { data: MoreThanOrEqual(queryStartDate) },
-        select: {
-          id: true,
-          pacienteId: true,
-          tipoBristol: true,
-          categoria: true,
-          sintomas: true,
-          data: true,
+        async () => {
+          hidratacoesRaw = await carregarModulo(
+            "hidratacoes",
+            () =>
+              hidraRepo.find({
+                where: { data: MoreThanOrEqual(queryStartDate) },
+                select: {
+                  id: true,
+                  pacienteId: true,
+                  volumeMl: true,
+                  data: true,
+                },
+                order: { data: "DESC" },
+              }),
+            []
+          );
         },
-        order: { data: "DESC" },
-      }),
-      hidraRepo.find({
-        where: { data: MoreThanOrEqual(queryStartDate) },
-        select: {
-          id: true,
-          pacienteId: true,
-          volumeMl: true,
-          data: true,
+        async () => {
+          workoutsRaw = await carregarModulo(
+            "workouts",
+            () =>
+              workoutRepo.find({
+                where: { date: MoreThanOrEqual(queryStartDate) },
+                select: {
+                  id: true,
+                  patientId: true,
+                  date: true,
+                },
+                order: { date: "DESC" },
+              }),
+            []
+          );
         },
-        order: { data: "DESC" },
-      }),
-      workoutRepo.find({
-        where: { date: MoreThanOrEqual(queryStartDate) },
-        select: {
-          id: true,
-          patientId: true,
-          date: true,
+        async () => {
+          sonos7dRaw = await carregarModulo(
+            "sonos7d",
+            () =>
+              sonoRepo.find({
+                where: { data: MoreThanOrEqual(seteDiasAtrasDate) },
+                select: {
+                  pacienteId: true,
+                  data: true,
+                },
+                order: { data: "DESC" },
+              }),
+            []
+          );
         },
-        order: { date: "DESC" },
-      }),
-      sonoRepo.find({
-        where: { data: MoreThanOrEqual(seteDiasAtrasDate) },
-        select: {
-          pacienteId: true,
-          data: true,
+        async () => {
+          activeGoals = await carregarModulo(
+            "activeGoals",
+            () =>
+              goalRepo.find({
+                where: { status: "ACTIVE", deletedAt: IsNull() },
+                select: {
+                  patientId: true,
+                  category: true,
+                  title: true,
+                  unit: true,
+                  targetValue: true,
+                },
+              }),
+            []
+          );
         },
-        order: { data: "DESC" },
-      }),
-      goalRepo.find({
-        where: { status: "ACTIVE", deletedAt: IsNull() },
-        select: {
-          patientId: true,
-          category: true,
-          title: true,
-          unit: true,
-          targetValue: true,
+        async () => {
+          biometriasRaw = await carregarModulo(
+            "biometrias",
+            () =>
+              bioRepo.find({
+                select: {
+                  id: true,
+                  patientId: true,
+                  measuredAt: true,
+                  createdAt: true,
+                  weightKg: true,
+                  bmi: true,
+                },
+                order: { measuredAt: "DESC", createdAt: "DESC" },
+                take: 600,
+              }),
+            []
+          );
         },
-      }),
-      bioRepo.find({
-        select: {
-          id: true,
-          patientId: true,
-          measuredAt: true,
-          createdAt: true,
-          weightKg: true,
-          bmi: true,
+        async () => {
+          evolucoesRaw = await carregarModulo(
+            "evolucoes",
+            () =>
+              evolucaoRepo.find({
+                select: {
+                  id: true,
+                  pacienteId: true,
+                  dataAtendimento: true,
+                  createdAt: true,
+                  pesoAtual: true,
+                  medicoResponsavel: true,
+                },
+                order: { dataAtendimento: "DESC", createdAt: "DESC" },
+                take: 600,
+              }),
+            []
+          );
         },
-        order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 600,
-      }),
-      evolucaoRepo.find({
-        select: {
-          id: true,
-          pacienteId: true,
-          dataAtendimento: true,
-          createdAt: true,
-          pesoAtual: true,
-          medicoResponsavel: true,
+        async () => {
+          measurementsRaw = await carregarModulo(
+            "measurements",
+            () =>
+              measurementRepo.find({
+                select: {
+                  id: true,
+                  patientId: true,
+                  measuredAt: true,
+                  createdAt: true,
+                  waist: true,
+                  abdomen: true,
+                  hips: true,
+                  rightArm: true,
+                  leftArm: true,
+                  rightThigh: true,
+                  leftThigh: true,
+                },
+                order: { measuredAt: "DESC", createdAt: "DESC" },
+                take: 400,
+              }),
+            []
+          );
         },
-        order: { dataAtendimento: "DESC", createdAt: "DESC" },
-        take: 600,
-      }),
-      measurementRepo.find({
-        select: {
-          id: true,
-          patientId: true,
-          measuredAt: true,
-          createdAt: true,
-          waist: true,
-          abdomen: true,
-          hips: true,
-          rightArm: true,
-          leftArm: true,
-          rightThigh: true,
-          leftThigh: true,
-        },
-        order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 400,
-      }),
-    ]);
+      ],
+      2
+    );
+
+    if (modulosComErro.length > 0) {
+      console.warn(
+        `[telemetria] consolidacao concluida com fallback parcial nos modulos: ${modulosComErro.join(", ")}`
+      );
+    }
+
     const dbDurMs = Math.round(performance.now() - dbStart);
 
     // Índice rápido de pacientes ativos
@@ -475,11 +621,14 @@ export async function GET(req: NextRequest) {
         t.includes("AGUA") ||
         u === "ml"
       ) {
-        if (!hidraGoalByPatient.has(g.patientId) && Number(g.targetValue) > 0) {
-          hidraGoalByPatient.set(
-            g.patientId,
-            Math.round(Number(g.targetValue))
-          );
+        const target = Number(g.targetValue);
+        if (
+          g.patientId &&
+          !hidraGoalByPatient.has(g.patientId) &&
+          Number.isFinite(target) &&
+          target > 0
+        ) {
+          hidraGoalByPatient.set(g.patientId, Math.round(target));
         }
       }
     }
@@ -488,44 +637,72 @@ export async function GET(req: NextRequest) {
       const fromGoal = hidraGoalByPatient.get(pacienteId);
       if (fromGoal && fromGoal > 0) return fromGoal;
       const p = pacienteMap.get(pacienteId);
-      return Number(p?.metaDiariaMl) || 2500;
+      const rawMeta = Number(p?.metaDiariaMl);
+      return Number.isFinite(rawMeta) && rawMeta > 0 ? rawMeta : 2500;
     };
 
-    // Filtragem estrita para o período selecionado (somente pacientes ativos existentes)
+    // Filtragem estrita para o período selecionado (somente pacientes ativos e datas válidas)
     const checkinsRefeicoes = checkinsRefeicoesRaw.filter(
       (c) =>
-        activePatientIds.has(c.pacienteId) && c.dataDia >= janela.inicioAtualIso
+        Boolean(c.pacienteId) &&
+        activePatientIds.has(c.pacienteId) &&
+        isIsoDateValid(c.dataDia) &&
+        c.dataDia >= janela.inicioAtualIso
     );
-    const glicemias = glicemiasRaw.filter(
-      (g) =>
+    const glicemias = glicemiasRaw.filter((g) => {
+      const dt = parseDateSafe(g.dataRegistro);
+      return (
+        Boolean(g.pacienteId) &&
         activePatientIds.has(g.pacienteId) &&
-        new Date(g.dataRegistro) >= janela.inicioAtualDate
-    );
-    const intestinos = intestinosRaw.filter(
-      (i) =>
+        dt !== null &&
+        dt >= janela.inicioAtualDate
+      );
+    });
+    const intestinos = intestinosRaw.filter((i) => {
+      const dt = parseDateSafe(i.data);
+      return (
+        Boolean(i.pacienteId) &&
         activePatientIds.has(i.pacienteId) &&
-        new Date(i.data) >= janela.inicioAtualDate
-    );
-    const hidratacoes = hidratacoesRaw.filter(
-      (h) =>
+        dt !== null &&
+        dt >= janela.inicioAtualDate
+      );
+    });
+    const hidratacoes = hidratacoesRaw.filter((h) => {
+      const dt = parseDateSafe(h.data);
+      return (
+        Boolean(h.pacienteId) &&
         activePatientIds.has(h.pacienteId) &&
-        new Date(h.data) >= janela.inicioAtualDate
-    );
-    const workouts = workoutsRaw.filter(
-      (w) =>
+        dt !== null &&
+        dt >= janela.inicioAtualDate
+      );
+    });
+    const workouts = workoutsRaw.filter((w) => {
+      const dt = parseDateSafe(w.date);
+      return (
+        Boolean(w.patientId) &&
         activePatientIds.has(w.patientId) &&
-        new Date(w.date) >= janela.inicioAtualDate
-    );
-    const biometriasNoPeriodo = biometriasRaw.filter(
-      (b) =>
+        dt !== null &&
+        dt >= janela.inicioAtualDate
+      );
+    });
+    const biometriasNoPeriodo = biometriasRaw.filter((b) => {
+      const dt = parseDateSafe(b.measuredAt);
+      return (
+        Boolean(b.patientId) &&
         activePatientIds.has(b.patientId) &&
-        new Date(b.measuredAt) >= janela.inicioAtualDate
-    );
-    const measurementsNoPeriodo = measurementsRaw.filter(
-      (m) =>
+        dt !== null &&
+        dt >= janela.inicioAtualDate
+      );
+    });
+    const measurementsNoPeriodo = measurementsRaw.filter((m) => {
+      const dt = parseDateSafe(m.measuredAt);
+      return (
+        Boolean(m.patientId) &&
         activePatientIds.has(m.patientId) &&
-        new Date(m.measuredAt) >= janela.inicioAtualDate
-    );
+        dt !== null &&
+        dt >= janela.inicioAtualDate
+      );
+    });
 
     // =========================================================================
     // 1. SINAIS DE ATIVIDADE (ENGAJAMENTO DO PERÍODO + ÚLTIMO SINAL 7D P/ EVASÃO)
@@ -534,11 +711,13 @@ export async function GET(req: NextRequest) {
     const ultimoSinalPorPaciente = new Map<string, Date>();
 
     const registrarSinal = (
-      pid: string,
-      dt: Date,
+      pid: string | null | undefined,
+      dt: Date | null,
       dentroDoPeriodo: boolean
     ) => {
-      if (!activePatientIds.has(pid) || Number.isNaN(dt.getTime())) return;
+      if (!pid || !activePatientIds.has(pid) || !dt || Number.isNaN(dt.getTime())) {
+        return;
+      }
       if (dentroDoPeriodo) pacientesAtivosNoPeriodo.add(pid);
       const prev = ultimoSinalPorPaciente.get(pid);
       if (!prev || dt > prev) {
@@ -547,36 +726,40 @@ export async function GET(req: NextRequest) {
     };
 
     for (const c of checkinsRefeicoesRaw) {
-      const dt = new Date(c.atualizadoEm || c.criadoEm);
-      registrarSinal(c.pacienteId, dt, c.dataDia >= janela.inicioAtualIso);
+      const dt = parseDateSafe(c.atualizadoEm ?? c.criadoEm);
+      registrarSinal(
+        c.pacienteId,
+        dt,
+        isIsoDateValid(c.dataDia) && c.dataDia >= janela.inicioAtualIso
+      );
     }
     for (const g of glicemiasRaw) {
-      const dt = new Date(g.dataRegistro);
-      registrarSinal(g.pacienteId, dt, dt >= janela.inicioAtualDate);
+      const dt = parseDateSafe(g.dataRegistro);
+      registrarSinal(g.pacienteId, dt, dt !== null && dt >= janela.inicioAtualDate);
     }
     for (const i of intestinosRaw) {
-      const dt = new Date(i.data);
-      registrarSinal(i.pacienteId, dt, dt >= janela.inicioAtualDate);
+      const dt = parseDateSafe(i.data);
+      registrarSinal(i.pacienteId, dt, dt !== null && dt >= janela.inicioAtualDate);
     }
     for (const h of hidratacoesRaw) {
-      const dt = new Date(h.data);
-      registrarSinal(h.pacienteId, dt, dt >= janela.inicioAtualDate);
+      const dt = parseDateSafe(h.data);
+      registrarSinal(h.pacienteId, dt, dt !== null && dt >= janela.inicioAtualDate);
     }
     for (const w of workoutsRaw) {
-      const dt = new Date(w.date);
-      registrarSinal(w.patientId, dt, dt >= janela.inicioAtualDate);
+      const dt = parseDateSafe(w.date);
+      registrarSinal(w.patientId, dt, dt !== null && dt >= janela.inicioAtualDate);
     }
     for (const s of sonos7dRaw) {
-      const dt = new Date(s.data);
-      registrarSinal(s.pacienteId, dt, dt >= janela.inicioAtualDate);
+      const dt = parseDateSafe(s.data);
+      registrarSinal(s.pacienteId, dt, dt !== null && dt >= janela.inicioAtualDate);
     }
     for (const b of biometriasRaw) {
-      const dt = new Date(b.measuredAt);
-      registrarSinal(b.patientId, dt, dt >= janela.inicioAtualDate);
+      const dt = parseDateSafe(b.measuredAt);
+      registrarSinal(b.patientId, dt, dt !== null && dt >= janela.inicioAtualDate);
     }
     for (const m of measurementsRaw) {
-      const dt = new Date(m.measuredAt);
-      registrarSinal(m.patientId, dt, dt >= janela.inicioAtualDate);
+      const dt = parseDateSafe(m.measuredAt);
+      registrarSinal(m.patientId, dt, dt !== null && dt >= janela.inicioAtualDate);
     }
 
     const totalPacientesAtivos = pacientesAtivos.length;
@@ -591,33 +774,43 @@ export async function GET(req: NextRequest) {
     // =========================================================================
     const agendamentosValidos = agendamentosFuturos.filter((a) => {
       const st = (a.status || "").toUpperCase();
-      return st !== "CANCELADO" && st !== "FALTOU";
+      if (st === "CANCELADO" || st === "FALTOU") return false;
+      if (!parseDateSafe(a.dataHora)) return false;
+      // Ignora agendamentos órfãos ou de pacientes inativos/excluídos
+      if (a.pacienteId && !activePatientIds.has(a.pacienteId)) return false;
+      return true;
     });
 
     const consultasHoje = agendamentosValidos.filter((a) => {
-      const dt = new Date(a.dataHora);
-      return dt >= inicioHojeDate && dt < fimHojeDate;
+      const dt = parseDateSafe(a.dataHora);
+      return dt !== null && dt >= inicioHojeDate && dt < fimHojeDate;
     }).length;
 
     const consultasProximos7Dias = agendamentosValidos.filter((a) => {
-      const dt = new Date(a.dataHora);
-      return dt >= inicioHojeDate && dt < fimProximos7DiasDate;
+      const dt = parseDateSafe(a.dataHora);
+      return dt !== null && dt >= inicioHojeDate && dt < fimProximos7DiasDate;
     }).length;
 
     const proximasConsultas: ConsultaProximaItem[] = agendamentosValidos
-      .filter((a) => new Date(a.dataHora) >= inicioHojeDate)
+      .filter((a) => {
+        const dt = parseDateSafe(a.dataHora);
+        return dt !== null && dt >= inicioHojeDate;
+      })
       .slice(0, 4)
-      .map((a) => ({
-        id: a.id,
-        dataHora: new Date(a.dataHora).toISOString(),
-        tipo: a.tipo || "CONSULTA",
-        status: a.status || "AGENDADO",
-        especialidade: a.especialidade || "Endocrinologia",
-        pacienteId: a.pacienteId,
-        pacienteNome: a.paciente?.fullName || "Paciente",
-        pacienteRecordCode: a.paciente?.recordCode || "",
-        medicoNome: a.medico?.nome || "Equipe Clínica FAAZ",
-      }));
+      .map((a) => {
+        const pac = a.paciente || (a.pacienteId ? pacienteMap.get(a.pacienteId) : null);
+        return {
+          id: a.id,
+          dataHora: toIsoSafe(a.dataHora, agora) ?? agora.toISOString(),
+          tipo: a.tipo || "CONSULTA",
+          status: a.status || "AGENDADO",
+          especialidade: a.especialidade || "Endocrinologia",
+          pacienteId: a.pacienteId,
+          pacienteNome: pac?.fullName || "Paciente",
+          pacienteRecordCode: pac?.recordCode || "",
+          medicoNome: a.medico?.nome || "Equipe Clínica FAAZ",
+        };
+      });
 
     // =========================================================================
     // 3. IMPACTO CORPORAL SEPARADO POR OBJETIVO (EMAGRECIMENTO vs HIPERTROFIA)
@@ -627,11 +820,17 @@ export async function GET(req: NextRequest) {
       Array<{ date: Date; peso: number }>
     >();
 
-    const addWeightPoint = (pid: string, date: Date, peso: number) => {
-      if (!activePatientIds.has(pid) || !Number.isFinite(peso) || peso <= 0) {
+    const addWeightPoint = (pid: string, date: Date | null, peso: number) => {
+      if (
+        !pid ||
+        !activePatientIds.has(pid) ||
+        !Number.isFinite(peso) ||
+        peso <= 0 ||
+        !date ||
+        Number.isNaN(date.getTime())
+      ) {
         return;
       }
-      if (Number.isNaN(date.getTime())) return;
       const arr = pesoTimelineByPatient.get(pid) || [];
       arr.push({ date, peso });
       pesoTimelineByPatient.set(pid, arr);
@@ -641,7 +840,7 @@ export async function GET(req: NextRequest) {
       if (ev.pesoAtual != null) {
         addWeightPoint(
           ev.pacienteId,
-          new Date(ev.createdAt || ev.dataAtendimento),
+          parseDateSafe(ev.createdAt ?? ev.dataAtendimento),
           Number(ev.pesoAtual)
         );
       }
@@ -650,7 +849,7 @@ export async function GET(req: NextRequest) {
       if (bio.weightKg != null) {
         addWeightPoint(
           bio.patientId,
-          new Date(bio.createdAt || bio.measuredAt),
+          parseDateSafe(bio.createdAt ?? bio.measuredAt),
           Number(bio.weightKg)
         );
       }
@@ -720,7 +919,10 @@ export async function GET(req: NextRequest) {
         let pesoAtual: number | null =
           timeline.length > 0 ? timeline[timeline.length - 1].peso : null;
         if (pesoAtual === null && p.prontuario?.pesoAtualKg != null) {
-          pesoAtual = Number(p.prontuario.pesoAtualKg);
+          const parsedPeso = Number(p.prontuario.pesoAtualKg);
+          if (Number.isFinite(parsedPeso) && parsedPeso > 0) {
+            pesoAtual = parsedPeso;
+          }
         }
 
         if (ptsNoPeriodo.length > 0) {
@@ -890,7 +1092,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const bucketKeyFromDate = (dt: Date): string => {
+    const bucketKeyFromDate = (dt: Date | null): string | null => {
+      if (!dt || Number.isNaN(dt.getTime())) return null;
       const sp = getPartesDataHoraBR(dt);
       if (periodo === "hoje") {
         const slot = Math.floor(sp.hour / 2) * 2;
@@ -900,9 +1103,10 @@ export async function GET(req: NextRequest) {
     };
 
     const incBucket = (
-      key: string,
+      key: string | null,
       campo: "dieta" | "glicemia" | "intestino" | "treinos" | "pesagens"
     ) => {
+      if (!key) return;
       const b = serieBuckets.get(key);
       if (!b) return;
       b[campo] += 1;
@@ -912,21 +1116,21 @@ export async function GET(req: NextRequest) {
     for (const c of checkinsRefeicoes) {
       const key =
         periodo === "hoje"
-          ? bucketKeyFromDate(new Date(c.atualizadoEm || c.criadoEm))
+          ? bucketKeyFromDate(parseDateSafe(c.atualizadoEm ?? c.criadoEm))
           : c.dataDia;
       incBucket(key, "dieta");
     }
     for (const g of glicemias) {
-      incBucket(bucketKeyFromDate(new Date(g.dataRegistro)), "glicemia");
+      incBucket(bucketKeyFromDate(parseDateSafe(g.dataRegistro)), "glicemia");
     }
     for (const i of intestinos) {
-      incBucket(bucketKeyFromDate(new Date(i.data)), "intestino");
+      incBucket(bucketKeyFromDate(parseDateSafe(i.data)), "intestino");
     }
     for (const w of workouts) {
-      incBucket(bucketKeyFromDate(new Date(w.date)), "treinos");
+      incBucket(bucketKeyFromDate(parseDateSafe(w.date)), "treinos");
     }
     for (const b of biometriasNoPeriodo) {
-      incBucket(bucketKeyFromDate(new Date(b.measuredAt)), "pesagens");
+      incBucket(bucketKeyFromDate(parseDateSafe(b.measuredAt)), "pesagens");
     }
 
     const serieAtividade = Array.from(serieBuckets.values());
@@ -956,8 +1160,9 @@ export async function GET(req: NextRequest) {
     >();
 
     for (const g of glicemias) {
+      const dt = parseDateSafe(g.dataRegistro);
+      if (!dt) continue;
       const val = Number(g.valor) || 0;
-      const dt = new Date(g.dataRegistro);
       somaGlic += val;
       const isHipo = val < 70;
       const isHiper = val > 180;
@@ -1020,20 +1225,22 @@ export async function GET(req: NextRequest) {
     const sparklineGlicemia: SparklineGlicemiaItem[] = [...glicemias]
       .slice(0, 24)
       .reverse()
-      .map((g) => {
-        const dt = new Date(g.dataRegistro);
+      .flatMap((g) => {
+        const dt = parseDateSafe(g.dataRegistro);
+        if (!dt) return [];
         const sp = getPartesDataHoraBR(dt);
-        return {
-          id: g.id,
-          valor: Number(g.valor) || 0,
-          momento: formatMomentoGlicemia(g.momento),
-          dataRegistro: dt.toISOString(),
-          horaLabel: `${formatDiaLabelPt(sp.isoDate)} ${String(sp.hour).padStart(
-            2,
-            "0"
-          )}h`,
-          pacienteNome: pacienteMap.get(g.pacienteId)?.fullName || "Paciente",
-        };
+        return [
+          {
+            id: g.id,
+            valor: Number(g.valor) || 0,
+            momento: formatMomentoGlicemia(g.momento),
+            dataRegistro: dt.toISOString(),
+            horaLabel: `${formatDiaLabelPt(sp.isoDate)} ${String(
+              sp.hour
+            ).padStart(2, "0")}h`,
+            pacienteNome: pacienteMap.get(g.pacienteId)?.fullName || "Paciente",
+          },
+        ];
       });
 
     const pacientesCriticosGlicemia: PacienteGlicemiaCritica[] = [];
@@ -1041,7 +1248,7 @@ export async function GET(req: NextRequest) {
 
     for (const [pid, st] of glicemiaPorPaciente.entries()) {
       const p = pacienteMap.get(pid);
-      if (!p) continue;
+      if (!p || st.medicoes <= 0) continue;
       detalhesGlicemia.push({
         pacienteId: pid,
         nome: p.fullName,
@@ -1050,7 +1257,7 @@ export async function GET(req: NextRequest) {
         mediaMgDl: Math.round(st.soma / st.medicoes),
         ultimoValor: st.ultimoValor,
         alertasCriticos: st.alertasCriticos,
-        ultimaData: st.ultimaData.toISOString(),
+        ultimaData: toIsoSafe(st.ultimaData, agora) ?? agora.toISOString(),
       });
       if (st.ultimoCritico) {
         pacientesCriticosGlicemia.push({
@@ -1061,7 +1268,8 @@ export async function GET(req: NextRequest) {
           telefone: p.phoneWhatsapp || "",
           ultimoValor: st.ultimoCritico.valor,
           momento: st.ultimoCritico.momento,
-          dataRegistro: st.ultimoCritico.data.toISOString(),
+          dataRegistro:
+            toIsoSafe(st.ultimoCritico.data, agora) ?? agora.toISOString(),
           tipo: st.ultimoCritico.tipo,
           totalAlertas: st.alertasCriticos,
         });
@@ -1069,7 +1277,8 @@ export async function GET(req: NextRequest) {
     }
     pacientesCriticosGlicemia.sort(
       (a, b) =>
-        new Date(b.dataRegistro).getTime() - new Date(a.dataRegistro).getTime()
+        (parseDateSafe(b.dataRegistro)?.getTime() ?? 0) -
+        (parseDateSafe(a.dataRegistro)?.getTime() ?? 0)
     );
     detalhesGlicemia.sort(
       (a, b) =>
@@ -1197,11 +1406,12 @@ export async function GET(req: NextRequest) {
     let gargaloPrincipal: TelemetriaDashboardResponse["dieta"]["gargaloPrincipal"] =
       null;
     for (const stats of gargaloMap.values()) {
-      if (stats.naoFez <= 0) continue;
+      if (stats.naoFez <= 0 || stats.total <= 0) continue;
       const prop: number = stats.naoFez / stats.total;
-      const bestProp: number = gargaloPrincipal
-        ? gargaloPrincipal.naoFez / gargaloPrincipal.totalRegistros
-        : -1;
+      const bestProp: number =
+        gargaloPrincipal && gargaloPrincipal.totalRegistros > 0
+          ? gargaloPrincipal.naoFez / gargaloPrincipal.totalRegistros
+          : -1;
       if (
         !gargaloPrincipal ||
         prop > bestProp ||
@@ -1278,6 +1488,8 @@ export async function GET(req: NextRequest) {
     >();
 
     for (const item of intestinos) {
+      const dt = parseDateSafe(item.data);
+      if (!dt) continue;
       const tipo = Math.min(7, Math.max(1, Math.round(Number(item.tipoBristol) || 4)));
       const key = `tipo${tipo}` as keyof typeof histograma;
       histograma[key] += 1;
@@ -1287,7 +1499,6 @@ export async function GET(req: NextRequest) {
       else if (cat === "constipacao") constipIntCount += 1;
       else diarreiaIntCount += 1;
 
-      const dt = new Date(item.data);
       const cur = intestinoPorPaciente.get(item.pacienteId) || {
         total: 0,
         ultimoTipo: tipo,
@@ -1345,12 +1556,13 @@ export async function GET(req: NextRequest) {
         ultimoTipo: st.ultimoTipo,
         padraoPredominante: padrao,
         sintomasRecentes: Array.from(st.sintomas).slice(0, 3),
-        ultimaData: st.ultimaData.toISOString(),
+        ultimaData: toIsoSafe(st.ultimaData, agora) ?? agora.toISOString(),
       });
     }
     detalhesIntestino.sort(
       (a, b) =>
-        new Date(b.ultimaData).getTime() - new Date(a.ultimaData).getTime()
+        (parseDateSafe(b.ultimaData)?.getTime() ?? 0) -
+        (parseDateSafe(a.ultimaData)?.getTime() ?? 0)
     );
 
     // =========================================================================
@@ -1362,9 +1574,11 @@ export async function GET(req: NextRequest) {
     >();
     let totalConsumidoMl = 0;
     for (const h of hidratacoes) {
+      const dt = parseDateSafe(h.data);
+      if (!dt) continue;
       const vol = Math.max(0, Number(h.volumeMl) || 0);
       totalConsumidoMl += vol;
-      const diaIso = getPartesDataHoraBR(new Date(h.data)).isoDate;
+      const diaIso = getPartesDataHoraBR(dt).isoDate;
       const cur = hidraPorPaciente.get(h.pacienteId) || {
         totalMl: 0,
         dias: new Set<string>(),
@@ -1424,7 +1638,9 @@ export async function GET(req: NextRequest) {
     // Treinos
     const treinosPorPaciente = new Map<string, Set<string>>();
     for (const w of workouts) {
-      const diaIso = getPartesDataHoraBR(new Date(w.date)).isoDate;
+      const dt = parseDateSafe(w.date);
+      if (!dt) continue;
+      const diaIso = getPartesDataHoraBR(dt).isoDate;
       const set = treinosPorPaciente.get(w.patientId) || new Set<string>();
       set.add(diaIso);
       treinosPorPaciente.set(w.patientId, set);
@@ -1435,7 +1651,7 @@ export async function GET(req: NextRequest) {
     const detalhesTreinos: DetalheTreinoPaciente[] = [];
 
     for (const p of pacientesAtivos) {
-      const freqSemanal = p.workoutFrequency ?? 3;
+      const freqSemanal = Math.max(1, Number(p.workoutFrequency) || 3);
       const metaPaciente = Math.max(
         1,
         Math.round((freqSemanal / 7) * janela.diasJanela)
@@ -1605,9 +1821,11 @@ export async function GET(req: NextRequest) {
         telefone: p.phoneWhatsapp || "",
         severidade: "ATENCAO",
         categoria: "DIETA",
-        motivo: `Adesão alimentar baixa (${det.percentualAdesao}%)`,
+        motivo: `Adesão alimentar baixa (${det.percentualAdesao ?? 0}%)`,
         detalhe: `${det.naoFez} de ${det.totalCheckins} refeições não concluídas`,
-        ultimoSinalEm: `${det.ultimoDia}T12:00:00-03:00`,
+        ultimoSinalEm: isIsoDateValid(det.ultimoDia)
+          ? `${det.ultimoDia}T12:00:00-03:00`
+          : null,
       });
     }
 
@@ -1658,7 +1876,8 @@ export async function GET(req: NextRequest) {
 
     for (const g of glicemias.slice(0, 15)) {
       const p = pacienteMap.get(g.pacienteId);
-      if (!p) continue;
+      const ts = toIsoSafe(g.dataRegistro);
+      if (!p || !ts) continue;
       const val = Number(g.valor) || 0;
       const isCrit = val < 70 || val > 180;
       feedCandidatos.push({
@@ -1672,13 +1891,14 @@ export async function GET(req: NextRequest) {
           g.momento
         )})`,
         severidade: isCrit ? "critico" : "positivo",
-        timestamp: new Date(g.dataRegistro).toISOString(),
+        timestamp: ts,
       });
     }
 
     for (const c of checkinsRefeicoes.slice(0, 15)) {
       const p = pacienteMap.get(c.pacienteId);
-      if (!p) continue;
+      const ts = toIsoSafe(c.atualizadoEm ?? c.criadoEm);
+      if (!p || !ts) continue;
       const nomeRef = c.refeicao?.nome || "Refeição";
       const statusTexto =
         c.status === "SEGUI"
@@ -1694,17 +1914,15 @@ export async function GET(req: NextRequest) {
         tipo: "DIETA",
         titulo: "Check-in de Dieta",
         resumo: `${nomeRef}: ${statusTexto}`,
-        severidade:
-          c.status === "NAO_FIZ"
-            ? "atencao"
-            : "positivo",
-        timestamp: new Date(c.atualizadoEm || c.criadoEm).toISOString(),
+        severidade: c.status === "NAO_FIZ" ? "atencao" : "positivo",
+        timestamp: ts,
       });
     }
 
     for (const i of intestinos.slice(0, 15)) {
       const p = pacienteMap.get(i.pacienteId);
-      if (!p) continue;
+      const ts = toIsoSafe(i.data);
+      if (!p || !ts) continue;
       const cat = normalizarCategoriaBristol(i.categoria, i.tipoBristol);
       const labelCat =
         cat === "ideal"
@@ -1721,13 +1939,20 @@ export async function GET(req: NextRequest) {
         titulo: "Escala de Bristol",
         resumo: `Intestino: Tipo ${i.tipoBristol} (${labelCat})`,
         severidade: cat === "ideal" ? "positivo" : "atencao",
-        timestamp: new Date(i.data).toISOString(),
+        timestamp: ts,
       });
     }
 
     for (const b of biometriasNoPeriodo.slice(0, 15)) {
       const p = pacienteMap.get(b.patientId);
-      if (!p) continue;
+      const ts = toIsoSafe(b.measuredAt);
+      const pesoNum = b.weightKg != null ? Number(b.weightKg) : NaN;
+      if (!p || !ts || !Number.isFinite(pesoNum) || pesoNum <= 0) continue;
+      const imcNum = b.bmi != null ? Number(b.bmi) : NaN;
+      const imcSuffix =
+        Number.isFinite(imcNum) && imcNum > 0
+          ? ` (IMC ${imcNum.toFixed(1).replace(".", ",")})`
+          : "";
       feedCandidatos.push({
         id: `feed-peso-${b.id}`,
         pacienteId: p.id,
@@ -1735,31 +1960,32 @@ export async function GET(req: NextRequest) {
         pacienteRecordCode: p.recordCode,
         tipo: "PESAGEM",
         titulo: "Pesagem Registrada",
-        resumo: `Registrou Peso: ${Number(b.weightKg)
-          .toFixed(1)
-          .replace(".", ",")} kg (IMC ${Number(b.bmi)
-          .toFixed(1)
-          .replace(".", ",")})`,
+        resumo: `Registrou Peso: ${pesoNum.toFixed(1).replace(".", ",")} kg${imcSuffix}`,
         severidade: "normal",
-        timestamp: new Date(b.measuredAt).toISOString(),
+        timestamp: ts,
       });
     }
 
     for (const m of measurementsNoPeriodo.slice(0, 15)) {
       const p = pacienteMap.get(m.patientId);
-      if (!p) continue;
+      const ts = toIsoSafe(m.measuredAt);
+      if (!p || !ts) continue;
       const partes: string[] = [];
-      if (m.waist != null) {
+      if (m.waist != null && Number.isFinite(Number(m.waist))) {
         partes.push(
           `Cintura ${Number(m.waist).toFixed(1).replace(".", ",")} cm`
         );
       }
-      if (m.abdomen != null) {
+      if (m.abdomen != null && Number.isFinite(Number(m.abdomen))) {
         partes.push(
           `Abdômen ${Number(m.abdomen).toFixed(1).replace(".", ",")} cm`
         );
       }
-      if (m.hips != null && partes.length < 2) {
+      if (
+        m.hips != null &&
+        Number.isFinite(Number(m.hips)) &&
+        partes.length < 2
+      ) {
         partes.push(`Quadril ${Number(m.hips).toFixed(1).replace(".", ",")} cm`);
       }
       feedCandidatos.push({
@@ -1774,13 +2000,14 @@ export async function GET(req: NextRequest) {
             ? `Atualizou medidas: ${partes.join(" · ")}`
             : "Registrou atualização de circunferências",
         severidade: "normal",
-        timestamp: new Date(m.measuredAt).toISOString(),
+        timestamp: ts,
       });
     }
 
     for (const w of workouts.slice(0, 15)) {
       const p = pacienteMap.get(w.patientId);
-      if (!p) continue;
+      const ts = toIsoSafe(w.date);
+      if (!p || !ts) continue;
       feedCandidatos.push({
         id: `feed-treino-${w.id}`,
         pacienteId: p.id,
@@ -1790,13 +2017,14 @@ export async function GET(req: NextRequest) {
         titulo: "Treino Concluído",
         resumo: `Concluiu treino (${p.workoutType || "Atividade física"})`,
         severidade: "positivo",
-        timestamp: new Date(w.date).toISOString(),
+        timestamp: ts,
       });
     }
 
     for (const h of hidratacoes.slice(0, 10)) {
       const p = pacienteMap.get(h.pacienteId);
-      if (!p) continue;
+      const ts = toIsoSafe(h.data);
+      if (!p || !ts) continue;
       feedCandidatos.push({
         id: `feed-hidra-${h.id}`,
         pacienteId: p.id,
@@ -1806,12 +2034,14 @@ export async function GET(req: NextRequest) {
         titulo: "Hidratação",
         resumo: `Registrou +${Number(h.volumeMl) || 0} ml de água`,
         severidade: "normal",
-        timestamp: new Date(h.data).toISOString(),
+        timestamp: ts,
       });
     }
 
     feedCandidatos.sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      (a, b) =>
+        (parseDateSafe(b.timestamp)?.getTime() ?? 0) -
+        (parseDateSafe(a.timestamp)?.getTime() ?? 0)
     );
     const liveFeed = feedCandidatos.slice(0, 10);
 

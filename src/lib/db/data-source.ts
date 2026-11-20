@@ -27,8 +27,18 @@ export const ORACLE_ADB_DEFAULTS = {
   serviceName: "ge6e02e943febad_l77mbqzsy42ovp1y_tp.adb.oraclecloud.com",
   ssl: true,
   connectString:
-    "(description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1521)(host=adb.sa-saopaulo-1.oraclecloud.com))(connect_data=(service_name=ge6e02e943febad_l77mbqzsy42ovp1y_tp.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))",
+    "(description=(retry_count=3)(retry_delay=1)(address=(protocol=tcps)(port=1521)(host=adb.sa-saopaulo-1.oraclecloud.com))(connect_data=(service_name=ge6e02e943febad_l77mbqzsy42ovp1y_tp.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))",
 } as const;
+
+/**
+ * Evita que descritores TNS com retry_count=20/retry_delay=3 travem o pool
+ * por até 60s durante picos de sessão no Oracle ADB, estourando o queueTimeout.
+ */
+function normalizeOracleConnectString(raw: string): string {
+  return raw
+    .replace(/\(\s*retry_count\s*=\s*\d+\s*\)/gi, "(retry_count=3)")
+    .replace(/\(\s*retry_delay\s*=\s*\d+\s*\)/gi, "(retry_delay=1)");
+}
 
 function readConfig() {
   // Garante carregamento do .env quando executado fora do Next.js (ex.: npx jiti prisma/seed.ts)
@@ -59,12 +69,13 @@ function readConfig() {
   // quando `connectString` é omitido e não possui propriedade `ssl` nativa; por isso
   // passamos tanto host/port/serviceName quanto `connectString` com protocol=tcps.
   const envUrl = process.env.DATABASE_URL?.trim();
-  const connectString =
+  const rawConnectString =
     envUrl && !/^postgres(ql)?:\/\//i.test(envUrl)
       ? envUrl
       : ssl
-        ? `(description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=${port})(host=${host}))(connect_data=(service_name=${serviceName}))(security=(ssl_server_dn_match=yes)))`
+        ? `(description=(retry_count=3)(retry_delay=1)(address=(protocol=tcps)(port=${port})(host=${host}))(connect_data=(service_name=${serviceName}))(security=(ssl_server_dn_match=yes)))`
         : `(description=(address=(protocol=tcp)(port=${port})(host=${host}))(connect_data=(service_name=${serviceName})))`;
+  const connectString = normalizeOracleConnectString(rawConnectString);
 
   const username =
     process.env.DATABASE_USER?.trim() ||
@@ -79,7 +90,12 @@ function readConfig() {
     );
   }
 
-  const poolMax = Number(process.env.DATABASE_POOL_MAX ?? 4);
+  // Oracle ADB Always Free impõe limite global de 30 sessões. Em Serverless (Vercel),
+  // várias instâncias quentes ficam abertas em paralelo; manter poolMax=2 por instância
+  // evita esgotamento global de sessões (NJS-040 / ORA-00018) mantendo alta vazão.
+  const poolMax = Number(process.env.DATABASE_POOL_MAX ?? 2);
+  const resolvedPoolMax =
+    Number.isFinite(poolMax) && poolMax >= 1 ? Math.min(poolMax, 8) : 2;
   return {
     host,
     port,
@@ -88,7 +104,7 @@ function readConfig() {
     connectString,
     username,
     password,
-    poolMax: Number.isFinite(poolMax) ? poolMax : 4,
+    poolMax: resolvedPoolMax,
   };
 }
 
@@ -116,16 +132,107 @@ function createDataSource(): DataSource {
       poolMin: 0,
       poolMax,
       poolIncrement: 1,
-      poolTimeout: 60,
-      queueTimeout: 10_000,
+      // Valida conexões ociosas (>15s) antes do checkout para descartar sockets
+      // encerrados durante congelamento de containers Serverless (NJS-500 / NJS-521).
+      poolPingInterval: 15,
+      poolPingTimeout: 3_000,
+      poolTimeout: 30,
+      maxLifetimeSession: 300,
+      queueTimeout: 15_000,
       stmtCacheSize: 40,
     },
   });
 }
 
+const TRANSIENT_ORACLE_CODES = [
+  "NJS-500",
+  "NJS-521",
+  "NJS-503",
+  "NJS-040",
+  "NJS-003",
+  "NJS-064",
+  "NJS-065",
+  "DPI-1010",
+  "ORA-03113",
+  "ORA-03114",
+  "ORA-03135",
+  "ORA-01012",
+  "ORA-00018",
+  "ORA-12170",
+  "ORA-12537",
+  "ORA-12514",
+  "ORA-12516",
+  "ORA-12520",
+  "ORA-12541",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+  "ECONNREFUSED",
+] as const;
+
+const POOL_RESET_ORACLE_CODES = [
+  "NJS-064",
+  "NJS-065",
+  "DPI-1010",
+  "ORA-03114",
+] as const;
+
+function extractOracleErrorSignature(error: unknown): string {
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const errObj = error as {
+    code?: unknown;
+    errorNum?: unknown;
+    message?: unknown;
+    driverError?: {
+      code?: unknown;
+      errorNum?: unknown;
+      message?: unknown;
+    };
+  };
+  const parts = [
+    errObj.code,
+    errObj.errorNum != null ? `ORA-${String(errObj.errorNum).padStart(5, "0")}` : null,
+    errObj.message,
+    errObj.driverError?.code,
+    errObj.driverError?.errorNum != null
+      ? `ORA-${String(errObj.driverError.errorNum).padStart(5, "0")}`
+      : null,
+    errObj.driverError?.message,
+  ].filter(Boolean);
+  return parts.map(String).join(" | ");
+}
+
+/** Identifica falhas transitórias de rede/conexão/pool do Oracle ADB elegíveis para retry único. */
+export function isTransientOracleError(error: unknown): boolean {
+  const sig = extractOracleErrorSignature(error).toUpperCase();
+  if (!sig) return false;
+  return TRANSIENT_ORACLE_CODES.some((code) => sig.includes(code));
+}
+
+function shouldResetPoolOnError(error: unknown): boolean {
+  const sig = extractOracleErrorSignature(error).toUpperCase();
+  if (!sig) return false;
+  return POOL_RESET_ORACLE_CODES.some((code) => sig.includes(code));
+}
+
 const globalForDb = globalThis as unknown as {
   endocDataSource?: Promise<DataSource>;
 };
+
+/** Descarta o DataSource singleton caso o pool tenha sido fechado ou corrompido. */
+export async function resetDataSource(): Promise<void> {
+  const existing = globalForDb.endocDataSource;
+  globalForDb.endocDataSource = undefined;
+  if (!existing) return;
+  try {
+    const ds = await existing;
+    if (ds.isInitialized) {
+      await ds.destroy();
+    }
+  } catch {
+    // Ignora erro ao encerrar pool já corrompido/fechado
+  }
+}
 
 /** Retorna o DataSource inicializado (singleton por instância / HMR-safe). */
 export function getDataSource(): Promise<DataSource> {
@@ -138,6 +245,39 @@ export function getDataSource(): Promise<DataSource> {
       });
   }
   return globalForDb.endocDataSource;
+}
+
+/**
+ * Executa uma operação contra o Oracle ADB com 1 retry seguro em erros transitórios
+ * de conexão fechada, rede ou timeout de fila do pool (NJS-500/521/503/040, ORA-03113/03114).
+ */
+export async function withOracleRetry<T>(
+  work: () => Promise<T>,
+  options?: { label?: string; retryDelayMs?: number },
+): Promise<T> {
+  try {
+    return await work();
+  } catch (error: unknown) {
+    if (!isTransientOracleError(error)) {
+      throw error;
+    }
+
+    const label = options?.label || "query";
+    const sig = extractOracleErrorSignature(error);
+    console.warn(
+      `[db] Erro transitório Oracle em ${label} (${sig.slice(0, 180)}); executando retry único...`,
+    );
+
+    if (shouldResetPoolOnError(error)) {
+      await resetDataSource();
+    }
+
+    const delayMs =
+      options?.retryDelayMs ?? (sig.includes("NJS-040") || sig.includes("ORA-00018") ? 350 : 150);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+    return await work();
+  }
 }
 
 /** Atalho para obter um Repository já conectado. */

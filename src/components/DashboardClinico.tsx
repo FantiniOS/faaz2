@@ -1154,24 +1154,24 @@ export function DashboardClinico({
 
               {/* HERO CENTRO/DIREITA: CURVA DE PULSO DO ECOSSISTEMA + 4 MINI-CHIPS KPI */}
               <div className="lg:col-span-7 flex flex-col justify-between gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700">
                         Curva de Pulso do Ecossistema
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
+                    <p className="text-xs text-slate-500 mt-0.5 leading-snug">
                       Volume real de interações diárias no App Mobile (Dieta,
                       Glicemia, Bristol, Treinos e Pesagens)
                     </p>
                   </div>
-                  <div className="text-right">
-                    <span className="text-lg font-black font-mono text-emerald-600 tabular-nums">
+                  <div className="text-right shrink-0 pl-2">
+                    <span className="text-lg font-black font-mono text-emerald-600 tabular-nums leading-none block">
                       <AnimatedCounter value={totalSinaisPeriodo} />
                     </span>
-                    <span className="text-[10px] font-semibold text-slate-500 block">
+                    <span className="text-[10px] font-semibold text-slate-500 block mt-0.5 whitespace-nowrap">
                       {totalSinaisPeriodo === 1
                         ? "sinal no período"
                         : "sinais no período"}
