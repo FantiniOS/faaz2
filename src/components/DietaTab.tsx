@@ -32,6 +32,9 @@ import {
   X,
   FileDown,
   MessageCircle,
+  BookOpen,
+  BookmarkPlus,
+  Sparkles,
 } from "lucide-react";
 import AuthContext, { type UsuarioLogado } from "@/contexts/AuthContext";
 import { formatarDataBR } from "@/lib/date-br";
@@ -45,6 +48,20 @@ import type {
   DietPlanPDFProps,
   DietPlanPdfVariacao,
 } from "@/components/DietPlanPDF";
+import {
+  ModelosDietaLibraryModal,
+  SalvarModeloDietaModal,
+} from "@/components/ModelosDietaModal";
+import {
+  inferirCategoriaRefeicao,
+  isConteudoPlanoCompleto,
+  type CategoriaRefeicaoModelo,
+  type EscopoModeloDieta,
+  type ModeloDietaDTO,
+  type ModeloDietaItemDTO,
+  type ModeloDietaRefeicaoDTO,
+  type ObjetivoTagModelo,
+} from "@/lib/modelos-dieta-types";
 import {
   AlimentoCombobox,
   AlimentoOption,
@@ -232,6 +249,146 @@ export function calcularNutrientesItem(
   };
 }
 
+function isDraftId(id?: string | null): boolean {
+  return Boolean(id && (id.startsWith("draft-") || id.startsWith("temp-")));
+}
+
+function genDraftId(prefix: "ref" | "item" | "sub"): string {
+  const rand =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `draft-${prefix}-${rand}`;
+}
+
+function inferirObjetivoTagPaciente(objetivo?: string | null): ObjetivoTagModelo {
+  const norm = (objetivo || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (norm.includes("hipertrof") || norm.includes("massa")) return "HIPERTROFIA";
+  if (norm.includes("emagrec") || norm.includes("peso") || norm.includes("gordura")) {
+    return "EMAGRECIMENTO";
+  }
+  if (norm.includes("glicem") || norm.includes("diabet") || norm.includes("insulin")) {
+    return "CONTROLE_GLICEMICO";
+  }
+  if (norm.includes("manuten") || norm.includes("longev")) return "MANUTENCAO";
+  return "GERAL";
+}
+
+function serializeRefeicaoParaModelo(ref: RefeicaoState): ModeloDietaRefeicaoDTO {
+  return {
+    nome: ref.nome,
+    horario: ref.horario ?? null,
+    opcional: Boolean(ref.opcional),
+    observacoes: ref.observacoes ?? null,
+    itens: ref.itens.map((it) => {
+      const base = getAlimentoBaseNutrientes(it.alimento);
+      return {
+        alimentoId: it.alimentoId,
+        nome: it.alimento?.nome || "Alimento",
+        quantidade: Number(it.quantidadeGramas) || 0,
+        unidade: it.unidade || "g",
+        medidaCaseira: it.medidaCaseira ?? null,
+        categoria: it.alimento?.categoria ?? "Geral",
+        thumbnailUrl:
+          it.alimento?.thumbnailUrl ||
+          it.alimento?.imageUrl ||
+          it.alimento?.fotoUrl ||
+          null,
+        porcaoBase: base.porcaoBase,
+        caloriasBase: base.kcal,
+        proteinas: base.protein,
+        carboidratos: base.carbo,
+        gorduras: base.fat,
+        fibras: base.fibers,
+        trocas: (it.substituicoes || []).map((sub) => ({
+          alimentoId: sub.alimentoId ?? null,
+          nome: sub.nomeExibicao,
+          quantidade: Number(sub.quantidade) || 0,
+          unidade: sub.unidade || "g",
+          medidaCaseira: sub.medidaCaseira ?? null,
+          categoria: sub.categoria ?? null,
+          thumbnailUrl: sub.thumbnailUrl ?? null,
+        })),
+      };
+    }),
+  };
+}
+
+function cloneModeloItensParaState(
+  itensModelo: ModeloDietaItemDTO[]
+): ItemRefeicaoState[] {
+  return itensModelo.map((mItem) => {
+    const newItemId = genDraftId("item");
+    const porcaoBase = Number(mItem.porcaoBase) || 100;
+    const kcal = Number(mItem.caloriasBase) || 0;
+    const prot = Number(mItem.proteinas) || 0;
+    const carb = Number(mItem.carboidratos) || 0;
+    const gord = Number(mItem.gorduras) || 0;
+    const fib = Number(mItem.fibras) || 0;
+
+    return {
+      id: newItemId,
+      alimentoId: mItem.alimentoId,
+      quantidadeGramas: Number(mItem.quantidade) || 100,
+      unidade: mItem.unidade || "g",
+      medidaCaseira: mItem.medidaCaseira ?? null,
+      observacao: null,
+      alimento: {
+        id: mItem.alimentoId,
+        nome: mItem.nome,
+        categoria: mItem.categoria || "Geral",
+        thumbnailUrl: mItem.thumbnailUrl ?? null,
+        porcaoBase,
+        caloriasBase: kcal,
+        calorias: kcal,
+        calories: kcal,
+        proteinas: prot,
+        protein: prot,
+        proteins: prot,
+        carboidratos: carb,
+        carbohydrate: carb,
+        carbohydrates: carb,
+        gorduras: gord,
+        lipid: gord,
+        lipids: gord,
+        fats: gord,
+        fibras: fib,
+      },
+      substituicoes: (mItem.trocas || []).map((tr, idx) => {
+        const subPorcao = Number(tr.porcaoBase) || 100;
+        const fator = subPorcao > 0 ? (Number(tr.quantidade) || 0) / subPorcao : 1;
+        const hasBase = typeof tr.caloriasBase === "number" && tr.caloriasBase > 0;
+        return {
+          id: genDraftId("sub"),
+          itemRefeicaoId: newItemId,
+          alimentoId: tr.alimentoId ?? null,
+          nomeExibicao: tr.nome,
+          quantidade: Number(tr.quantidade) || 100,
+          unidade: tr.unidade || "g",
+          medidaCaseira: tr.medidaCaseira ?? null,
+          ordem: idx + 1,
+          thumbnailUrl: tr.thumbnailUrl ?? null,
+          categoria: tr.categoria ?? null,
+          caloriasPorcao: hasBase ? Math.round((tr.caloriasBase || 0) * fator) : null,
+          proteinasPorcao: hasBase
+            ? Number(((tr.proteinas || 0) * fator).toFixed(1))
+            : null,
+          carboidratosPorcao: hasBase
+            ? Number(((tr.carboidratos || 0) * fator).toFixed(1))
+            : null,
+          gordurasPorcao: hasBase
+            ? Number(((tr.gorduras || 0) * fator).toFixed(1))
+            : null,
+        };
+      }),
+      substituicao: null,
+    };
+  });
+}
+
 function buildDietSnapshotSignature(
   nome: string,
   vars: VariacaoDietaState[]
@@ -318,6 +475,39 @@ export function DietaTab({
   const [pdfIncluirMacros, setPdfIncluirMacros] = useState(false);
   const [exportandoPdf, setExportandoPdf] = useState(false);
   const [pdfErro, setPdfErro] = useState<string | null>(null);
+
+  // Biblioteca de Modelos de Refeições e Planos Alimentares (carregamento sob demanda)
+  const [modelosDieta, setModelosDieta] = useState<ModeloDietaDTO[]>([]);
+  const [modelosCarregados, setModelosCarregados] = useState(false);
+  const [carregandoModelos, setCarregandoModelos] = useState(false);
+  const [erroModelos, setErroModelos] = useState<string | null>(null);
+  const [libraryModalState, setLibraryModalState] = useState<{
+    open: boolean;
+    key: number;
+    targetRefeicao: {
+      id: string;
+      nome: string;
+      categoriaInicial: CategoriaRefeicaoModelo;
+      possuiItens: boolean;
+    } | null;
+  }>({ open: false, key: 0, targetRefeicao: null });
+
+  const [saveModeloModalState, setSaveModeloModalState] = useState<{
+    open: boolean;
+    key: number;
+    escopo: EscopoModeloDieta;
+    refeicaoId?: string;
+    tituloInicial: string;
+    categoriaInicial: CategoriaRefeicaoModelo;
+    resumoInfo: string;
+  }>({
+    open: false,
+    key: 0,
+    escopo: "REFEICAO",
+    tituloInicial: "",
+    categoriaInicial: "GERAL",
+    resumoInfo: "",
+  });
 
   // Modal para Criar Nova Variação
   const [isNovaVariacaoModalOpen, setIsNovaVariacaoModalOpen] = useState(false);
@@ -472,6 +662,7 @@ export function DietaTab({
     refeicaoId: string,
     patch: Partial<Pick<RefeicaoState, "nome" | "horario" | "opcional" | "observacoes">>
   ) => {
+    if (isDraftId(refeicaoId)) return;
     try {
       await fetch(`/api/pacientes/${pacienteId}/dieta`, {
         method: "PUT",
@@ -558,13 +749,15 @@ export function DietaTab({
       )
     );
 
-    try {
-      await fetch(
-        `/api/pacientes/${pacienteId}/dieta?refeicaoId=${encodeURIComponent(refeicao.id)}`,
-        { method: "DELETE" }
-      );
-    } catch (err) {
-      console.error("Erro ao remover refeição:", err);
+    if (!isDraftId(refeicao.id)) {
+      try {
+        await fetch(
+          `/api/pacientes/${pacienteId}/dieta?refeicaoId=${encodeURIComponent(refeicao.id)}`,
+          { method: "DELETE" }
+        );
+      } catch (err) {
+        console.error("Erro ao remover refeição:", err);
+      }
     }
   };
 
@@ -608,7 +801,7 @@ export function DietaTab({
       medidaCaseira?: string | null;
     }
   ) => {
-    if (itemId.startsWith("temp-")) return;
+    if (isDraftId(itemId)) return;
     try {
       await fetch(`/api/pacientes/${pacienteId}/dieta`, {
         method: "PUT",
@@ -632,7 +825,8 @@ export function DietaTab({
   ) => {
     if (!variacaoAtiva) return;
     const targetVariacaoId = variacaoAtiva.id;
-    const tempId = `temp-${Date.now()}`;
+    const isRefDraft = isDraftId(refeicaoId);
+    const tempId = isRefDraft ? genDraftId("item") : `temp-${Date.now()}`;
     const unidadeFinal: UnidadeMedidaOption = extra?.unidade || "g";
     const medidaFinal = extra?.medidaCaseira ?? null;
 
@@ -662,6 +856,9 @@ export function DietaTab({
         };
       })
     );
+
+    // Se a refeição ainda está em rascunho (ex.: vinda de modelo), persiste ao clicar em "Salvar Alterações"
+    if (isRefDraft) return;
 
     try {
       const res = await fetch(`/api/pacientes/${pacienteId}/dieta`, {
@@ -733,7 +930,7 @@ export function DietaTab({
       })
     );
 
-    if (!itemId.startsWith("temp-")) {
+    if (!isDraftId(itemId)) {
       try {
         await fetch(
           `/api/pacientes/${pacienteId}/dieta?itemId=${encodeURIComponent(itemId)}`,
@@ -756,10 +953,63 @@ export function DietaTab({
     quantidade: number,
     extra?: AlimentoAddExtra
   ) => {
-    if (!variacaoAtiva || itemId.startsWith("temp-")) return;
+    if (!variacaoAtiva) return;
     const targetVarId = variacaoAtiva.id;
     const unidadeFinal: UnidadeMedidaOption = extra?.unidade || "g";
     const medidaFinal = extra?.medidaCaseira ?? null;
+
+    // Se o item ainda é rascunho (ex.: vindo de modelo), adiciona troca localmente até Salvar Alterações
+    if (isDraftId(itemId)) {
+      const nut = calcularNutrientesItem(alimento, quantidade || 100);
+      const draftSub: SubstituicaoPrescritaState = {
+        id: genDraftId("sub"),
+        itemRefeicaoId: itemId,
+        alimentoId: alimento.id,
+        nomeExibicao: alimento.nome,
+        quantidade: quantidade || 100,
+        unidade: unidadeFinal,
+        medidaCaseira: medidaFinal,
+        ordem: 1,
+        thumbnailUrl: alimento.thumbnailUrl ?? null,
+        categoria: alimento.categoria ?? null,
+        caloriasPorcao: nut.calorias,
+        proteinasPorcao: nut.proteinas,
+        carboidratosPorcao: nut.carboidratos,
+        gordurasPorcao: nut.gorduras,
+      };
+      setVariacoes((prev) =>
+        prev.map((v) =>
+          v.id !== targetVarId
+            ? v
+            : {
+                ...v,
+                refeicoes: v.refeicoes.map((r) =>
+                  r.id !== refeicaoId
+                    ? r
+                    : {
+                        ...r,
+                        itens: r.itens.map((it) =>
+                          it.id !== itemId
+                            ? it
+                            : {
+                                ...it,
+                                substituicoes: [
+                                  ...(it.substituicoes || []),
+                                  {
+                                    ...draftSub,
+                                    ordem: (it.substituicoes?.length || 0) + 1,
+                                  },
+                                ],
+                              }
+                        ),
+                      }
+                ),
+              }
+        )
+      );
+      setOpenSwapItemId(null);
+      return;
+    }
 
     try {
       const res = await fetch(`/api/pacientes/${pacienteId}/dieta`, {
@@ -858,6 +1108,7 @@ export function DietaTab({
       medidaCaseira?: string | null;
     }
   ) => {
+    if (isDraftId(subId)) return;
     try {
       await fetch(`/api/pacientes/${pacienteId}/dieta`, {
         method: "PUT",
@@ -908,13 +1159,15 @@ export function DietaTab({
       )
     );
 
-    try {
-      await fetch(
-        `/api/pacientes/${pacienteId}/dieta?substituicaoPrescritaId=${encodeURIComponent(subId)}`,
-        { method: "DELETE" }
-      );
-    } catch (err) {
-      console.error("Erro ao remover substituição prescrita:", err);
+    if (!isDraftId(subId)) {
+      try {
+        await fetch(
+          `/api/pacientes/${pacienteId}/dieta?substituicaoPrescritaId=${encodeURIComponent(subId)}`,
+          { method: "DELETE" }
+        );
+      } catch (err) {
+        console.error("Erro ao remover substituição prescrita:", err);
+      }
     }
   };
 
@@ -1030,7 +1283,7 @@ export function DietaTab({
     [pacienteId, variacoes]
   );
 
-  // 3. Salvar todas as alterações pendentes
+  // 3. Salvar todas as alterações pendentes (transação atômica única no Oracle ADB)
   const handleSalvarPlano = async () => {
     if (!plano || !variacaoAtiva) return;
     try {
@@ -1041,107 +1294,72 @@ export function DietaTab({
         nomePlano.trim() || "Plano Alimentar Individualizado";
 
       const activeIds = new Set(variacoes.map((v) => v.id));
-      const pendingRenames = Object.entries(pendingRenamesRef.current).filter(([id]) =>
-        activeIds.has(id)
-      );
+      const pendingRenames = Object.entries(pendingRenamesRef.current)
+        .filter(([id]) => activeIds.has(id))
+        .map(([variacaoId, nome]) => ({ variacaoId, nome }));
 
-      const updates: Array<Promise<Response>> = [];
+      const resSync = await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "sincronizar_variacao",
+          planoId: plano.id,
+          nomePlano: nomePlanoLimpo,
+          variacaoRenames: pendingRenames,
+          variacaoId: variacaoAtiva.id,
+          refeicoes: variacaoAtiva.refeicoes.map((ref, idx) => ({
+            id: ref.id,
+            nome: ref.nome,
+            horario: ref.horario ?? null,
+            ordem: idx + 1,
+            opcional: Boolean(ref.opcional),
+            observacoes: ref.observacoes ?? null,
+            itens: ref.itens.map((item) => ({
+              id: item.id,
+              alimentoId: item.alimentoId,
+              quantidadeGramas: item.quantidadeGramas,
+              unidade: item.unidade || "g",
+              medidaCaseira: item.medidaCaseira ?? null,
+              substituicoes: (item.substituicoes || []).map((sub, sIdx) => ({
+                id: sub.id,
+                alimentoId: sub.alimentoId ?? null,
+                nomeExibicao: sub.nomeExibicao,
+                quantidade: sub.quantidade,
+                unidade: sub.unidade || "g",
+                medidaCaseira: sub.medidaCaseira ?? null,
+                ordem: sIdx + 1,
+              })),
+            })),
+          })),
+        }),
+      });
 
-      updates.push(
-        fetch(`/api/pacientes/${pacienteId}/dieta`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            acao: "atualizar_plano",
-            planoId: plano.id,
-            nome: nomePlanoLimpo,
-            titulo: nomePlanoLimpo,
-          }),
-        })
-      );
-
-      for (const [variacaoId, nome] of pendingRenames) {
-        updates.push(
-          fetch(`/api/pacientes/${pacienteId}/dieta`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              acao: "atualizar_variacao",
-              variacaoId,
-              nome,
-            }),
-          })
-        );
-      }
-
-      for (const ref of variacaoAtiva.refeicoes) {
-        updates.push(
-          fetch(`/api/pacientes/${pacienteId}/dieta`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              acao: "atualizar_refeicao",
-              refeicaoId: ref.id,
-              nome: ref.nome,
-              horario: ref.horario ?? null,
-              opcional: Boolean(ref.opcional),
-              observacoes: ref.observacoes ?? null,
-            }),
-          })
-        );
-
-        for (const item of ref.itens) {
-          if (!item.id.startsWith("temp-")) {
-            updates.push(
-              fetch(`/api/pacientes/${pacienteId}/dieta`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  acao: "atualizar_item",
-                  itemId: item.id,
-                  quantidadeGramas: item.quantidadeGramas,
-                  unidade: item.unidade || "g",
-                  medidaCaseira: item.medidaCaseira ?? null,
-                }),
-              })
-            );
-
-            for (const sub of item.substituicoes || []) {
-              updates.push(
-                fetch(`/api/pacientes/${pacienteId}/dieta`, {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    acao: "atualizar_substituicao_prescrita",
-                    substituicaoPrescritaId: sub.id,
-                    quantidade: sub.quantidade,
-                    unidade: sub.unidade || "g",
-                    medidaCaseira: sub.medidaCaseira ?? null,
-                  }),
-                })
-              );
-            }
-          }
-        }
-      }
-
-      const responses = await Promise.all(updates);
-      const failed = responses.find((r) => !r.ok);
-      if (failed) {
-        const errData = await failed.json().catch(() => ({}));
+      if (!resSync.ok) {
+        const errData = await resSync.json().catch(() => ({}));
         throw new Error(errData?.error || "Falha ao salvar alterações.");
       }
 
-      setNomePlano(nomePlanoLimpo);
-      setPlano((prev) =>
-        prev ? { ...prev, nome: nomePlanoLimpo, titulo: nomePlanoLimpo } : prev
-      );
-
-      for (const [variacaoId] of pendingRenames) {
-        delete pendingRenamesRef.current[variacaoId];
+      for (const rn of pendingRenames) {
+        delete pendingRenamesRef.current[rn.variacaoId];
       }
 
-      setSavedSnapshot(buildDietSnapshotSignature(nomePlanoLimpo, variacoes));
+      // Recarrega o plano para sincronizar os UUIDs definitivos gravados no Oracle
+      const resReload = await fetch(`/api/pacientes/${pacienteId}/dieta`, {
+        cache: "no-store",
+      });
+      if (resReload.ok) {
+        const dataReload = await resReload.json();
+        aplicarDadosPlano(dataReload);
+      } else {
+        setNomePlano(nomePlanoLimpo);
+        setPlano((prev) =>
+          prev
+            ? { ...prev, nome: nomePlanoLimpo, titulo: nomePlanoLimpo }
+            : prev
+        );
+        setSavedSnapshot(buildDietSnapshotSignature(nomePlanoLimpo, variacoes));
+      }
+
       setMensagemSucesso("Plano, refeições, medidas e trocas salvos com sucesso!");
       setTimeout(() => setMensagemSucesso(null), 3000);
     } catch (err) {
@@ -1426,6 +1644,269 @@ export function DietaTab({
     }
   };
 
+  // ==========================================================================
+  // BIBLIOTECA DE MODELOS DE REFEIÇÕES E PLANOS ALIMENTARES
+  // ==========================================================================
+  const carregarModelosDieta = useCallback(async (force: boolean = false) => {
+    if (!force && modelosCarregados) return;
+    try {
+      setCarregandoModelos(true);
+      setErroModelos(null);
+      const res = await fetch("/api/modelos-dieta", { cache: "no-store" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(
+          errData?.error || "Não foi possível carregar os modelos de dieta."
+        );
+      }
+      const json = await res.json();
+      setModelosDieta(Array.isArray(json?.modelos) ? json.modelos : []);
+      setModelosCarregados(true);
+    } catch (err: unknown) {
+      console.error("[DietaTab] Erro ao carregar modelos de dieta:", err);
+      setErroModelos(
+        err instanceof Error ? err.message : "Erro ao carregar biblioteca."
+      );
+    } finally {
+      setCarregandoModelos(false);
+    }
+  }, [modelosCarregados]);
+
+  const handleAbrirModelosDaRefeicao = (refeicao: RefeicaoState) => {
+    void carregarModelosDieta(false);
+    setLibraryModalState((prev) => ({
+      open: true,
+      key: prev.key + 1,
+      targetRefeicao: {
+        id: refeicao.id,
+        nome: refeicao.nome,
+        categoriaInicial: inferirCategoriaRefeicao(refeicao.nome),
+        possuiItens: refeicao.itens.length > 0,
+      },
+    }));
+  };
+
+  const handleAbrirBibliotecaCompleta = () => {
+    void carregarModelosDieta(false);
+    setLibraryModalState((prev) => ({
+      open: true,
+      key: prev.key + 1,
+      targetRefeicao: null,
+    }));
+  };
+
+  const handleAplicarModeloRefeicao = (
+    modelo: ModeloDietaDTO,
+    modo: "substituir" | "adicionar"
+  ) => {
+    const targetRef = libraryModalState.targetRefeicao;
+    if (!variacaoAtiva || !targetRef || isConteudoPlanoCompleto(modelo.conteudo)) {
+      return;
+    }
+
+    const targetVarId = variacaoAtiva.id;
+    const conteudoRef = modelo.conteudo;
+    const itensClonados = cloneModeloItensParaState(conteudoRef.itens || []);
+
+    setVariacoes((prev) =>
+      prev.map((v) =>
+        v.id !== targetVarId
+          ? v
+          : {
+              ...v,
+              refeicoes: v.refeicoes.map((r) => {
+                if (r.id !== targetRef.id) return r;
+                if (modo === "adicionar") {
+                  const obsCombinada =
+                    r.observacoes && conteudoRef.observacoes
+                      ? `${r.observacoes}\n${conteudoRef.observacoes}`
+                      : r.observacoes || conteudoRef.observacoes || null;
+                  return {
+                    ...r,
+                    observacoes: obsCombinada,
+                    itens: [...r.itens, ...itensClonados],
+                  };
+                }
+                return {
+                  ...r,
+                  horario: r.horario || conteudoRef.horario || null,
+                  opcional:
+                    conteudoRef.opcional !== undefined
+                      ? Boolean(conteudoRef.opcional)
+                      : r.opcional,
+                  observacoes: conteudoRef.observacoes ?? null,
+                  itens: itensClonados,
+                };
+              }),
+            }
+      )
+    );
+
+    setLibraryModalState((prev) => ({ ...prev, open: false }));
+    setMensagemSucesso(
+      `Modelo "${modelo.titulo}" aplicado em rascunho — ajuste e clique em Salvar Alterações.`
+    );
+    setTimeout(() => setMensagemSucesso(null), 4500);
+  };
+
+  const handleAplicarModeloPlanoCompleto = (modelo: ModeloDietaDTO) => {
+    if (!variacaoAtiva || !isConteudoPlanoCompleto(modelo.conteudo)) return;
+    const targetVarId = variacaoAtiva.id;
+
+    const novasRefeicoes: RefeicaoState[] = modelo.conteudo.refeicoes.map(
+      (mRef, idx) => ({
+        id: genDraftId("ref"),
+        nome: mRef.nome || `Refeição ${idx + 1}`,
+        horario: mRef.horario ?? null,
+        ordem: idx + 1,
+        opcional: Boolean(mRef.opcional),
+        observacoes: mRef.observacoes ?? null,
+        itens: cloneModeloItensParaState(mRef.itens || []),
+      })
+    );
+
+    setVariacoes((prev) =>
+      prev.map((v) =>
+        v.id !== targetVarId ? v : { ...v, refeicoes: novasRefeicoes }
+      )
+    );
+
+    setLibraryModalState((prev) => ({ ...prev, open: false }));
+    setMensagemSucesso(
+      `Protocolo "${modelo.titulo}" aplicado em "${variacaoAtiva.nome}" — clique em Salvar Alterações para gravar.`
+    );
+    setTimeout(() => setMensagemSucesso(null), 5000);
+  };
+
+  const handleAbrirSalvarModeloRefeicao = (refeicao: RefeicaoState) => {
+    const totalTrocas = refeicao.itens.reduce(
+      (acc, it) => acc + (it.substituicoes?.length || 0),
+      0
+    );
+    setSaveModeloModalState((prev) => ({
+      open: true,
+      key: prev.key + 1,
+      escopo: "REFEICAO",
+      refeicaoId: refeicao.id,
+      tituloInicial: refeicao.nome,
+      categoriaInicial: inferirCategoriaRefeicao(refeicao.nome),
+      resumoInfo: `${refeicao.itens.length} ${refeicao.itens.length === 1 ? "alimento" : "alimentos"}${totalTrocas > 0 ? ` • ${totalTrocas} ${totalTrocas === 1 ? "troca" : "trocas"}` : ""}`,
+    }));
+  };
+
+  const handleAbrirSalvarModeloDia = () => {
+    if (!variacaoAtiva) return;
+    const totalItens = variacaoAtiva.refeicoes.reduce(
+      (acc, r) => acc + r.itens.length,
+      0
+    );
+    setSaveModeloModalState((prev) => ({
+      open: true,
+      key: prev.key + 1,
+      escopo: "PLANO_COMPLETO",
+      refeicaoId: undefined,
+      tituloInicial:
+        nomePlano.trim() &&
+        nomePlano.trim().toLowerCase() !== "plano alimentar individualizado"
+          ? nomePlano.trim()
+          : `Protocolo ${variacaoAtiva.nome}`,
+      categoriaInicial: "GERAL",
+      resumoInfo: `${variacaoAtiva.refeicoes.length} refeições • ${totalItens} itens`,
+    }));
+  };
+
+  const handleConfirmarSalvarModelo = async (dados: {
+    titulo: string;
+    categoriaRefeicao: CategoriaRefeicaoModelo;
+    objetivoTag: ObjetivoTagModelo;
+    descricao: string | null;
+  }) => {
+    if (!variacaoAtiva) return;
+
+    let conteudoPayload:
+      | ModeloDietaRefeicaoDTO
+      | { refeicoes: ModeloDietaRefeicaoDTO[] };
+
+    if (saveModeloModalState.escopo === "REFEICAO") {
+      const refAlvo = variacaoAtiva.refeicoes.find(
+        (r) => r.id === saveModeloModalState.refeicaoId
+      );
+      if (!refAlvo || refAlvo.itens.length === 0) {
+        throw new Error("Adicione ao menos 1 alimento antes de salvar.");
+      }
+      conteudoPayload = serializeRefeicaoParaModelo(refAlvo);
+    } else {
+      const refsSerializadas = variacaoAtiva.refeicoes
+        .filter((r) => r.itens.length > 0 || Boolean(r.observacoes?.trim()))
+        .map(serializeRefeicaoParaModelo);
+      if (refsSerializadas.length === 0) {
+        throw new Error(
+          "Adicione ao menos 1 alimento na variação para salvar o dia como modelo."
+        );
+      }
+      conteudoPayload = { refeicoes: refsSerializadas };
+    }
+
+    const res = await fetch("/api/modelos-dieta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        escopo: saveModeloModalState.escopo,
+        titulo: dados.titulo,
+        categoriaRefeicao: dados.categoriaRefeicao,
+        objetivoTag: dados.objetivoTag,
+        descricao: dados.descricao,
+        conteudo: conteudoPayload,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.modelo) {
+      throw new Error(json?.error || "Não foi possível salvar o modelo.");
+    }
+
+    setModelosDieta((prev) => [json.modelo as ModeloDietaDTO, ...prev]);
+    setMensagemSucesso(`Modelo "${dados.titulo}" salvo na sua biblioteca!`);
+    setTimeout(() => setMensagemSucesso(null), 3500);
+  };
+
+  const handleEditarModelo = async (
+    id: string,
+    patch: {
+      titulo: string;
+      descricao: string | null;
+      objetivoTag: ObjetivoTagModelo;
+    }
+  ) => {
+    const res = await fetch(`/api/modelos-dieta/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.modelo) {
+      throw new Error(json?.error || "Não foi possível atualizar o modelo.");
+    }
+    setModelosDieta((prev) =>
+      prev.map((m) => (m.id === id ? (json.modelo as ModeloDietaDTO) : m))
+    );
+  };
+
+  const handleExcluirModelo = async (id: string) => {
+    const res = await fetch(`/api/modelos-dieta/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json?.error || "Não foi possível excluir o modelo.");
+    }
+    setModelosDieta((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  const variacaoAtivaPossuiItens = Boolean(
+    variacaoAtiva?.refeicoes.some((r) => r.itens.length > 0)
+  );
+
   if (carregando) {
     return (
       <div className="flex-1 min-h-[360px] flex flex-col items-center justify-center p-8 text-slate-500">
@@ -1492,7 +1973,7 @@ export function DietaTab({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {erro && (
             <span className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-700 bg-rose-50 px-3 py-1 rounded-lg border border-rose-200 animate-in fade-in duration-150">
               <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
@@ -1508,9 +1989,35 @@ export function DietaTab({
 
           <button
             type="button"
+            onClick={handleAbrirBibliotecaCompleta}
+            disabled={!variacaoAtiva}
+            className="cl-btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-teal-700" />
+            <span>Modelos de Dieta</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleAbrirSalvarModeloDia}
+            disabled={!variacaoAtivaPossuiItens}
+            title={
+              variacaoAtivaPossuiItens
+                ? "Salvar variação ativa inteira como protocolo reutilizável"
+                : "Adicione ao menos 1 alimento na variação para salvar como modelo"
+            }
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-teal-800 bg-slate-50 hover:bg-teal-50 border border-slate-200 hover:border-teal-200 transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+          >
+            <BookmarkPlus className="w-3.5 h-3.5" />
+            <span className="hidden xl:inline">Salvar dia como modelo</span>
+            <span className="xl:hidden">Salvar dia</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleAbrirExportPdfModal}
             disabled={!variacaoAtiva}
-            className="cl-btn-secondary inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+            className="cl-btn-secondary inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
           >
             <FileDown className="w-3.5 h-3.5 text-teal-700" />
             <span>Exportar PDF</span>
@@ -1637,8 +2144,33 @@ export function DietaTab({
                   </button>
                 </div>
 
-                {/* Subtotais da Refeição + Remover Refeição */}
-                <div className="flex items-center gap-2.5">
+                {/* Ações de Modelos + Subtotais da Refeição + Remover Refeição */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleAbrirModelosDaRefeicao(refeicao)}
+                    title={`Aplicar modelo pronto em ${refeicao.nome}`}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-teal-700 bg-teal-50/80 hover:bg-teal-100 border border-teal-200/80 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>Modelos</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={refeicao.itens.length === 0}
+                    onClick={() => handleAbrirSalvarModeloRefeicao(refeicao)}
+                    title={
+                      refeicao.itens.length > 0
+                        ? `Salvar "${refeicao.nome}" na biblioteca de modelos`
+                        : "Adicione ao menos 1 alimento para salvar esta refeição como modelo"
+                    }
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-600 hover:text-teal-800 bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-200 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <BookmarkPlus className="w-3 h-3" />
+                    <span>Salvar modelo</span>
+                  </button>
+
                   <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
                     <span className="text-slate-700">
                       P: <strong className="text-emerald-700">{totais.proteinas}g</strong>
@@ -2288,6 +2820,48 @@ export function DietaTab({
           </div>
         </div>
       </div>
+
+      {/* ======================================================== */}
+      {/* BIBLIOTECA DE MODELOS DE DIETA & SALVAR MODELO */}
+      {/* ======================================================== */}
+      {libraryModalState.open && (
+        <ModelosDietaLibraryModal
+          key={libraryModalState.key}
+          isOpen={libraryModalState.open}
+          onClose={() =>
+            setLibraryModalState((prev) => ({ ...prev, open: false }))
+          }
+          modelos={modelosDieta}
+          carregando={carregandoModelos}
+          erro={erroModelos}
+          onRecarregar={() => void carregarModelosDieta(true)}
+          targetRefeicao={libraryModalState.targetRefeicao}
+          variacaoAtivaNome={variacaoAtiva?.nome || "Opção 1"}
+          variacaoAtivaPossuiItens={variacaoAtivaPossuiItens}
+          onAplicarRefeicao={handleAplicarModeloRefeicao}
+          onAplicarPlanoCompleto={handleAplicarModeloPlanoCompleto}
+          onEditarModelo={handleEditarModelo}
+          onExcluirModelo={handleExcluirModelo}
+        />
+      )}
+
+      {saveModeloModalState.open && (
+        <SalvarModeloDietaModal
+          key={saveModeloModalState.key}
+          isOpen={saveModeloModalState.open}
+          onClose={() =>
+            setSaveModeloModalState((prev) => ({ ...prev, open: false }))
+          }
+          escopo={saveModeloModalState.escopo}
+          tituloInicial={saveModeloModalState.tituloInicial}
+          categoriaInicial={saveModeloModalState.categoriaInicial}
+          objetivoInicial={inferirObjetivoTagPaciente(
+            pacienteObjetivo || plano?.objetivo
+          )}
+          resumoInfo={saveModeloModalState.resumoInfo}
+          onConfirmar={handleConfirmarSalvarModelo}
+        />
+      )}
 
       {/* ======================================================== */}
       {/* MODAL DE EXPORTAÇÃO DO PLANO ALIMENTAR EM PDF (CLINICAL LIGHT) */}

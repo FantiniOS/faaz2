@@ -445,3 +445,53 @@ export const DietSubstitutionEntity = new EntitySchema<DietSubstitution>({
     },
   },
 });
+
+// ============================================================================
+// 29. MODELOS_DIETA (Biblioteca de Modelos de Refeições e Planos Alimentares)
+// ============================================================================
+export interface ModeloDieta {
+  id: string;
+  organizationId: string | null;
+  medicoId: string | null;
+  escopo: "REFEICAO" | "PLANO_COMPLETO";
+  categoriaRefeicao:
+    | "DESJEJUM"
+    | "COLACAO"
+    | "ALMOCO"
+    | "LANCHE"
+    | "JANTAR"
+    | "CEIA"
+    | "GERAL"
+    | null;
+  titulo: string;
+  objetivoTag:
+    | "EMAGRECIMENTO"
+    | "HIPERTROFIA"
+    | "CONTROLE_GLICEMICO"
+    | "MANUTENCAO"
+    | "GERAL";
+  descricao: string | null;
+  conteudoJson: string;
+  padraoSistema: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export const ModeloDietaEntity = new EntitySchema<ModeloDieta>({
+  name: "ModeloDieta",
+  tableName: "MODELOS_DIETA",
+  columns: {
+    id: uuidPrimary,
+    organizationId: uuidRef("ORGANIZATION_ID", true),
+    medicoId: uuidRef("MEDICO_ID", true),
+    escopo: varchar("ESCOPO", 20),
+    categoriaRefeicao: varchar("CATEGORIA_REFEICAO", 30, true),
+    titulo: varchar("TITULO", 140),
+    objetivoTag: { ...varchar("OBJETIVO_TAG", 30), default: "GERAL" },
+    descricao: varchar("DESCRICAO", 300, true),
+    conteudoJson: clob("CONTEUDO_JSON", false),
+    padraoSistema: { ...bool("PADRAO_SISTEMA"), default: false },
+    createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
+    updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
+  },
+});

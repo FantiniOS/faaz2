@@ -1,7 +1,13 @@
 export const dynamic = "force-dynamic";
 
+import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getRepository, withTransaction } from "@/lib/db/data-source";
+import { In } from "typeorm";
+import {
+  getRepository,
+  withOracleRetry,
+  withTransaction,
+} from "@/lib/db/data-source";
 import {
   AlimentoEntity,
   DietSubstitutionEntity,
@@ -979,6 +985,313 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
             : body.variacaoId
               ? "atualizar_variacao"
               : "atualizar_plano");
+
+    if (acao === "sincronizar_variacao") {
+      const {
+        planoId,
+        nomePlano,
+        variacaoRenames,
+        variacaoId,
+        refeicoes: incomingRefeicoes,
+      } = body as {
+        planoId?: string;
+        nomePlano?: string;
+        variacaoRenames?: Array<{ variacaoId: string; nome: string }>;
+        variacaoId?: string;
+        refeicoes?: Array<{
+          id?: string;
+          nome: string;
+          horario?: string | null;
+          ordem?: number;
+          opcional?: boolean;
+          observacoes?: string | null;
+          itens?: Array<{
+            id?: string;
+            alimentoId: string;
+            quantidadeGramas: number;
+            unidade?: string;
+            medidaCaseira?: string | null;
+            substituicoes?: Array<{
+              id?: string;
+              alimentoId?: string | null;
+              nomeExibicao: string;
+              quantidade: number;
+              unidade?: string;
+              medidaCaseira?: string | null;
+              ordem?: number;
+            }>;
+          }>;
+        }>;
+      };
+
+      if (!variacaoId || !Array.isArray(incomingRefeicoes)) {
+        return NextResponse.json(
+          { error: "variacaoId e refeicoes são obrigatórios." },
+          { status: 400 },
+        );
+      }
+
+      const isTempOrDraft = (rawId?: string | null) =>
+        !rawId || rawId.startsWith("draft-") || rawId.startsWith("temp-");
+
+      await withOracleRetry(
+        () =>
+          withTransaction(async (tx) => {
+            const planoRepo = tx.getRepository(PlanoAlimentarEntity);
+            const variacaoRepo = tx.getRepository(VariacaoDietaEntity);
+            const refeicaoRepo = tx.getRepository(RefeicaoEntity);
+            const itemRepo = tx.getRepository(ItemRefeicaoEntity);
+            const subRepo = tx.getRepository(SubstituicaoItemRefeicaoEntity);
+            const alimRepo = tx.getRepository(AlimentoEntity);
+
+            const plano = await planoRepo.findOne({
+              where: planoId
+                ? { id: planoId, pacienteId: id }
+                : { pacienteId: id, ativo: true },
+            });
+            if (!plano) {
+              throw new Error("PLANO_NOT_FOUND");
+            }
+
+            if (typeof nomePlano === "string" && nomePlano.trim()) {
+              plano.titulo = nomePlano.trim().slice(0, 160);
+              await planoRepo.save(plano);
+            }
+
+            if (Array.isArray(variacaoRenames) && variacaoRenames.length > 0) {
+              for (const rn of variacaoRenames) {
+                const nm = String(rn?.nome || "").trim();
+                if (!rn?.variacaoId || !nm) continue;
+                await variacaoRepo.update(
+                  { id: rn.variacaoId, planoAlimentarId: plano.id },
+                  { nome: nm.slice(0, 100) },
+                );
+              }
+            }
+
+            const variacao = await variacaoRepo.findOne({
+              where: { id: variacaoId, planoAlimentarId: plano.id },
+            });
+            if (!variacao) {
+              throw new Error("VARIACAO_NOT_FOUND");
+            }
+
+            // Carrega estrutura atual da variação para preservar IDs existentes (histórico de check-ins)
+            const existingRefs = await refeicaoRepo.find({
+              where: { variacaoDietaId: variacao.id },
+              relations: {
+                itens: {
+                  substituicoesPrescritas: true,
+                },
+              },
+            });
+            const existingRefMap = new Map(existingRefs.map((r) => [r.id, r]));
+
+            // Valida todos os alimentoIds referenciados em 1 consulta única
+            const candidateAlimIds = new Set<string>();
+            for (const r of incomingRefeicoes) {
+              for (const it of r.itens || []) {
+                if (it.alimentoId) candidateAlimIds.add(it.alimentoId);
+                for (const s of it.substituicoes || []) {
+                  if (s.alimentoId) candidateAlimIds.add(s.alimentoId);
+                }
+              }
+            }
+            const validAlimIds = new Set<string>();
+            if (candidateAlimIds.size > 0) {
+              const foundAlims = await alimRepo.find({
+                where: { id: In(Array.from(candidateAlimIds)) },
+                select: { id: true },
+              });
+              for (const a of foundAlims) validAlimIds.add(a.id);
+            }
+
+            // Remove refeições excluídas da variação
+            const keptRefIds = new Set<string>();
+            for (const incRef of incomingRefeicoes) {
+              if (incRef.id && !isTempOrDraft(incRef.id) && existingRefMap.has(incRef.id)) {
+                keptRefIds.add(incRef.id);
+              }
+            }
+            for (const exRef of existingRefs) {
+              if (!keptRefIds.has(exRef.id)) {
+                await refeicaoRepo.delete({ id: exRef.id });
+              }
+            }
+
+            // Sincroniza cada refeição, seus itens e suas trocas prescritas
+            for (let rIdx = 0; rIdx < incomingRefeicoes.length; rIdx++) {
+              const incRef = incomingRefeicoes[rIdx];
+              const refNome = String(incRef.nome || "Refeição").trim().slice(0, 100);
+              const refHorario = incRef.horario
+                ? String(incRef.horario).trim().slice(0, 10)
+                : null;
+              const refOrdem =
+                Number.isFinite(Number(incRef.ordem)) && Number(incRef.ordem) > 0
+                  ? Math.round(Number(incRef.ordem))
+                  : rIdx + 1;
+              const refOpcional = Boolean(incRef.opcional);
+              const refObs = incRef.observacoes
+                ? String(incRef.observacoes).trim()
+                : null;
+
+              let persistedRefId: string;
+              const existingRef =
+                incRef.id && !isTempOrDraft(incRef.id)
+                  ? existingRefMap.get(incRef.id)
+                  : undefined;
+
+              if (existingRef) {
+                existingRef.nome = refNome;
+                existingRef.horario = refHorario;
+                existingRef.ordem = refOrdem;
+                existingRef.opcional = refOpcional;
+                existingRef.observacoes = refObs;
+                await refeicaoRepo.save(existingRef);
+                persistedRefId = existingRef.id;
+              } else {
+                const createdRef = refeicaoRepo.create({
+                  id: crypto.randomUUID(),
+                  variacaoDietaId: variacao.id,
+                  nome: refNome,
+                  horario: refHorario,
+                  ordem: refOrdem,
+                  opcional: refOpcional,
+                  observacoes: refObs,
+                });
+                const savedRef = await refeicaoRepo.save(createdRef);
+                persistedRefId = savedRef.id;
+              }
+
+              const existingItems = existingRef?.itens || [];
+              const existingItemMap = new Map(existingItems.map((it) => [it.id, it]));
+              const incItems = Array.isArray(incRef.itens) ? incRef.itens : [];
+
+              const keptItemIds = new Set<string>();
+              for (const incIt of incItems) {
+                if (
+                  incIt.id &&
+                  !isTempOrDraft(incIt.id) &&
+                  existingItemMap.has(incIt.id)
+                ) {
+                  keptItemIds.add(incIt.id);
+                }
+              }
+              for (const exIt of existingItems) {
+                if (!keptItemIds.has(exIt.id)) {
+                  await itemRepo.delete({ id: exIt.id });
+                }
+              }
+
+              for (const incIt of incItems) {
+                if (!incIt.alimentoId || !validAlimIds.has(incIt.alimentoId)) {
+                  continue;
+                }
+                const qtd = Math.max(0, Number(incIt.quantidadeGramas) || 0);
+                const un = normalizarUnidade(incIt.unidade);
+                const med = incIt.medidaCaseira
+                  ? String(incIt.medidaCaseira).trim().slice(0, 120)
+                  : null;
+
+                let persistedItemId: string;
+                const existingItem =
+                  incIt.id && !isTempOrDraft(incIt.id)
+                    ? existingItemMap.get(incIt.id)
+                    : undefined;
+
+                if (existingItem) {
+                  existingItem.quantidadeGramas = qtd;
+                  existingItem.unidade = un;
+                  existingItem.medidaCaseira = med;
+                  await itemRepo.save(existingItem);
+                  persistedItemId = existingItem.id;
+                } else {
+                  const createdItem = itemRepo.create({
+                    id: crypto.randomUUID(),
+                    refeicaoId: persistedRefId,
+                    alimentoId: incIt.alimentoId,
+                    quantidadeGramas: qtd,
+                    unidade: un,
+                    medidaCaseira: med,
+                  });
+                  const savedItem = await itemRepo.save(createdItem);
+                  persistedItemId = savedItem.id;
+                }
+
+                const existingSubs = existingItem?.substituicoesPrescritas || [];
+                const existingSubMap = new Map(existingSubs.map((s) => [s.id, s]));
+                const incSubs = Array.isArray(incIt.substituicoes)
+                  ? incIt.substituicoes
+                  : [];
+
+                const keptSubIds = new Set<string>();
+                for (const incSub of incSubs) {
+                  if (
+                    incSub.id &&
+                    !isTempOrDraft(incSub.id) &&
+                    existingSubMap.has(incSub.id)
+                  ) {
+                    keptSubIds.add(incSub.id);
+                  }
+                }
+                for (const exSub of existingSubs) {
+                  if (!keptSubIds.has(exSub.id)) {
+                    await subRepo.delete({ id: exSub.id });
+                  }
+                }
+
+                for (let sIdx = 0; sIdx < incSubs.length; sIdx++) {
+                  const incSub = incSubs[sIdx];
+                  const nomeSub = String(incSub.nomeExibicao || "").trim().slice(0, 160);
+                  if (!nomeSub) continue;
+                  const subQtd = Math.max(0, Number(incSub.quantidade) || 0);
+                  const subUn = normalizarUnidade(incSub.unidade);
+                  const subMed = incSub.medidaCaseira
+                    ? String(incSub.medidaCaseira).trim().slice(0, 120)
+                    : null;
+                  const subAlimId =
+                    incSub.alimentoId && validAlimIds.has(incSub.alimentoId)
+                      ? incSub.alimentoId
+                      : null;
+                  const subOrdem =
+                    Number.isFinite(Number(incSub.ordem)) && Number(incSub.ordem) > 0
+                      ? Math.round(Number(incSub.ordem))
+                      : sIdx + 1;
+
+                  const existingSub =
+                    incSub.id && !isTempOrDraft(incSub.id)
+                      ? existingSubMap.get(incSub.id)
+                      : undefined;
+
+                  if (existingSub) {
+                    existingSub.nomeExibicao = nomeSub;
+                    existingSub.quantidade = subQtd;
+                    existingSub.unidade = subUn;
+                    existingSub.medidaCaseira = subMed;
+                    existingSub.ordem = subOrdem;
+                    await subRepo.save(existingSub);
+                  } else {
+                    const createdSub = subRepo.create({
+                      id: crypto.randomUUID(),
+                      itemRefeicaoId: persistedItemId,
+                      alimentoId: subAlimId,
+                      nomeExibicao: nomeSub,
+                      quantidade: subQtd,
+                      unidade: subUn,
+                      medidaCaseira: subMed,
+                      ordem: subOrdem,
+                    });
+                    await subRepo.save(createdSub);
+                  }
+                }
+              }
+            }
+          }),
+        { label: "dieta:sincronizar_variacao" },
+      );
+
+      return NextResponse.json({ sucesso: true });
+    }
 
     if (acao === "atualizar_plano") {
       const { planoId, nome, titulo, objetivo } = body;

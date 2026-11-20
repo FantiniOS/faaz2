@@ -12,6 +12,7 @@ const COOKIE_NAME = "endoc_session";
 const ROTAS_CLINICAS_SENSIVEIS = [
   "/api/prontuarios",
   "/api/dietas",
+  "/api/modelos-dieta",
   "/api/consultas",
   "/api/dados-clinicos",
   "/api/checkins/glicemia",
