@@ -9,6 +9,7 @@ import {
   Ruler,
   Utensils,
 } from "lucide-react";
+import { TIMEZONE_BR } from "@/lib/date-br";
 
 interface TermometroData {
   success: boolean;
@@ -409,7 +410,7 @@ export function TermometroExecutivoCard({
                 <span className="text-[10px] font-semibold text-slate-400">
                   {new Date(dados.medidas.ultimaAfericaoEm).toLocaleDateString(
                     "pt-BR",
-                    { day: "2-digit", month: "2-digit" }
+                    { timeZone: TIMEZONE_BR, day: "2-digit", month: "2-digit" }
                   )}
                 </span>
               ) : null}

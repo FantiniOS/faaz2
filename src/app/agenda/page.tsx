@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
 import { mockUserSession } from "@/mocks/dashboard";
+import { getDataDiaBR, TIMEZONE_BR } from "@/lib/date-br";
 
 export type TipoAgendamento = "PRIMEIRA_CONSULTA" | "RETORNO" | "EXAME";
 export type EspecialidadeAgendamento = "ENDOCRINOLOGIA" | "CIRURGIA_PLASTICA";
@@ -110,13 +111,12 @@ const DURACAO_OPCOES = [
 ];
 
 function getLocalIsoDate(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return getDataDiaBR(d);
 }
 
 function parseLocalIsoDate(isoDate: string): Date {
-  const [ano, mes, dia] = isoDate.split("-").map(Number);
-  return new Date(ano, (mes || 1) - 1, dia || 1, 12, 0, 0);
+  const clean = isoDate.trim().slice(0, 10);
+  return new Date(`${clean}T12:00:00-03:00`);
 }
 
 function parseTimeToMinutes(horario: string): number {
@@ -377,21 +377,28 @@ export default function AgendaPage() {
     if (viewMode === "dia") {
       const dStr = getLocalIsoDate(baseDate);
       const diaSemanaCurto = baseDate
-        .toLocaleDateString("pt-BR", { weekday: "short" })
+        .toLocaleDateString("pt-BR", {
+          timeZone: TIMEZONE_BR,
+          weekday: "short",
+        })
         .replace(".", "")
         .toUpperCase();
       const diaSemanaLongo = baseDate.toLocaleDateString("pt-BR", {
+        timeZone: TIMEZONE_BR,
         weekday: "long",
       });
       return [
         {
           isoDate: dStr,
-          dayNumber: String(baseDate.getDate()).padStart(2, "0"),
+          dayNumber: dStr.slice(8, 10),
           weekdayShort: diaSemanaCurto,
           weekdayLong:
             diaSemanaLongo.charAt(0).toUpperCase() + diaSemanaLongo.slice(1),
           monthShort: baseDate
-            .toLocaleDateString("pt-BR", { month: "short" })
+            .toLocaleDateString("pt-BR", {
+              timeZone: TIMEZONE_BR,
+              month: "short",
+            })
             .replace(".", ""),
           isToday: dStr === hojeIso,
           isSelected: true,
@@ -411,18 +418,27 @@ export default function AgendaPage() {
       d.setDate(monday.getDate() + i);
       const dStr = getLocalIsoDate(d);
       const diaSemanaCurto = d
-        .toLocaleDateString("pt-BR", { weekday: "short" })
+        .toLocaleDateString("pt-BR", {
+          timeZone: TIMEZONE_BR,
+          weekday: "short",
+        })
         .replace(".", "")
         .toUpperCase();
-      const diaSemanaLongo = d.toLocaleDateString("pt-BR", { weekday: "long" });
+      const diaSemanaLongo = d.toLocaleDateString("pt-BR", {
+        timeZone: TIMEZONE_BR,
+        weekday: "long",
+      });
       cols.push({
         isoDate: dStr,
-        dayNumber: String(d.getDate()).padStart(2, "0"),
+        dayNumber: dStr.slice(8, 10),
         weekdayShort: diaSemanaCurto,
         weekdayLong:
           diaSemanaLongo.charAt(0).toUpperCase() + diaSemanaLongo.slice(1),
         monthShort: d
-          .toLocaleDateString("pt-BR", { month: "short" })
+          .toLocaleDateString("pt-BR", {
+            timeZone: TIMEZONE_BR,
+            month: "short",
+          })
           .replace(".", ""),
         isToday: dStr === hojeIso,
         isSelected: dStr === selectedDate,
@@ -435,18 +451,24 @@ export default function AgendaPage() {
   const headerPeriodTitle = useMemo(() => {
     const d = parseLocalIsoDate(selectedDate);
     if (viewMode === "dia") {
-      const diaSemanaRaw = d.toLocaleDateString("pt-BR", { weekday: "long" });
+      const diaSemanaRaw = d.toLocaleDateString("pt-BR", {
+        timeZone: TIMEZONE_BR,
+        weekday: "long",
+      });
       const diaSemana =
         diaSemanaRaw.charAt(0).toUpperCase() + diaSemanaRaw.slice(1);
-      const dia = String(d.getDate()).padStart(2, "0");
-      const mesRaw = d.toLocaleDateString("pt-BR", { month: "long" });
+      const dia = selectedDate.slice(8, 10);
+      const mesRaw = d.toLocaleDateString("pt-BR", {
+        timeZone: TIMEZONE_BR,
+        month: "long",
+      });
       const mes = mesRaw.charAt(0).toUpperCase() + mesRaw.slice(1);
-      return `${diaSemana}, ${dia} de ${mes} de ${d.getFullYear()}`;
+      return `${diaSemana}, ${dia} de ${mes} de ${selectedDate.slice(0, 4)}`;
     }
 
     const first = visibleColumns[0];
     const last = visibleColumns[visibleColumns.length - 1];
-    const ano = d.getFullYear();
+    const ano = selectedDate.slice(0, 4);
     return `${first.dayNumber} ${first.monthShort} – ${last.dayNumber} ${last.monthShort} de ${ano}`;
   }, [selectedDate, viewMode, visibleColumns]);
 
@@ -541,8 +563,12 @@ export default function AgendaPage() {
     if (typeof window === "undefined" || pacientes.length === 0 || hasCheckedAgendaParamRef.current) return;
     const params = new URLSearchParams(window.location.search);
     const paramPacId = params.get("pacienteId");
-    if (paramPacId) {
-      hasCheckedAgendaParamRef.current = true;
+    if (!paramPacId) return;
+
+    hasCheckedAgendaParamRef.current = true;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (!ativo) return;
       const pac = pacientes.find((p) => p.id === paramPacId);
       if (pac) {
         setPacienteIdForm(pac.id);
@@ -550,7 +576,10 @@ export default function AgendaPage() {
         setIsModalOpen(true);
       }
       window.history.replaceState({}, "", window.location.pathname);
-    }
+    });
+    return () => {
+      ativo = false;
+    };
   }, [pacientes]);
 
   // Efeito 2: Carrega agendamentos apenas quando valores primitivos [selectedDate, viewMode, filtroMedicoId, filtroEspecialidade, reloadTrigger] mudam

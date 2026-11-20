@@ -16,6 +16,7 @@ import {
   WorkoutLogEntity,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
+import { getDataDiaBR, getInicioFimDiaBR } from "@/lib/date-br";
 
 async function calcularMetricasReaisClinica(
   startOfDay: Date,
@@ -302,25 +303,7 @@ export async function POST(req: NextRequest) {
       }),
     );
 
-    const now = new Date();
-    const startOfDay = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      0,
-      0,
-      0,
-      0,
-    );
-    const endOfDay = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      23,
-      59,
-      59,
-      999,
-    );
+    const { inicioUtc: startOfDay, fimUtc: endOfDay } = getInicioFimDiaBR();
 
     const metricasClinica = await calcularMetricasReaisClinica(
       startOfDay,
@@ -395,25 +378,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const pacienteIdParam = searchParams.get("pacienteId");
 
-    const now = new Date();
-    const startOfDay = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      0,
-      0,
-      0,
-      0,
-    );
-    const endOfDay = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      23,
-      59,
-      59,
-      999,
-    );
+    const { inicioUtc: startOfDay, fimUtc: endOfDay } = getInicioFimDiaBR();
 
     const metricasClinica = await calcularMetricasReaisClinica(
       startOfDay,
@@ -466,7 +431,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        dataReferencia: now.toISOString().split("T")[0],
+        dataReferencia: getDataDiaBR(),
         totalConsumidoHojeMl,
         totalConsumidoHojeL,
         metaTotalHojeMl,

@@ -11,33 +11,16 @@ import {
   type StatusCheckinRefeicao,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
+import { getDataDiaBR, subtrairDiasDataBR } from "@/lib/date-br";
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function getHojeDataDia(): string {
-  // Usa fuso America/Sao_Paulo para alinhar o dia do paciente no Brasil
-  try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Sao_Paulo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date());
-    const y = parts.find((p) => p.type === "year")?.value;
-    const m = parts.find((p) => p.type === "month")?.value;
-    const d = parts.find((p) => p.type === "day")?.value;
-    if (y && m && d) return `${y}-${m}-${d}`;
-  } catch {
-    // Fallback ISO UTC
-  }
-  return new Date().toISOString().slice(0, 10);
+  return getDataDiaBR();
 }
 
 function subtrairDiasIso(baseIso: string, dias: number): string {
-  const [y, m, d] = baseIso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() - dias);
-  return dt.toISOString().slice(0, 10);
+  return subtrairDiasDataBR(baseIso, dias);
 }
 
 const checkinRefeicaoSchema = z.object({

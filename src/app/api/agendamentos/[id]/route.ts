@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRepository } from "@/lib/db/data-source";
 import { AgendamentoEntity } from "@/lib/db/entities";
+import { criarDataBR } from "@/lib/date-br";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
 const STATUS_VALIDOS = [
@@ -78,9 +79,7 @@ export async function PATCH(
         dataUpdate.dataHora = dt;
       }
     } else if (body.data && body.horario) {
-      const [ano, mes, dia] = String(body.data).split("-").map(Number);
-      const [hora, minuto] = String(body.horario).split(":").map(Number);
-      const dt = new Date(ano, mes - 1, dia, hora || 0, minuto || 0, 0, 0);
+      const dt = criarDataBR(String(body.data), String(body.horario));
       if (!isNaN(dt.getTime())) {
         dataUpdate.dataHora = dt;
       }

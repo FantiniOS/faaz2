@@ -13,34 +13,14 @@ import {
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
+import { getDataDiaBR, getIntervaloDiasBR } from "@/lib/date-br";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 function getDataIsoSaoPaulo(date: Date = new Date()): string {
-  try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Sao_Paulo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(date);
-    const y = parts.find((p) => p.type === "year")?.value;
-    const m = parts.find((p) => p.type === "month")?.value;
-    const d = parts.find((p) => p.type === "day")?.value;
-    if (y && m && d) return `${y}-${m}-${d}`;
-  } catch {
-    // Fallback UTC ISO
-  }
-  return date.toISOString().slice(0, 10);
-}
-
-function subtrairDiasIso(baseIso: string, dias: number): string {
-  const [y, m, d] = baseIso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() - dias);
-  return dt.toISOString().slice(0, 10);
+  return getDataDiaBR(date);
 }
 
 function round1(valor: number): number {
@@ -93,6 +73,7 @@ function formatHorarioCurto(horario?: string | null): string | null {
  * Consolida o Termômetro Executivo de 10 segundos no Prontuário Web (RBAC clínico).
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
+  const reqStart = performance.now();
   try {
     const sessao = await getSessao(req);
     if (!sessao) {
@@ -127,6 +108,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       ? Math.min(90, Math.max(7, parsedDias))
       : 30;
 
+    const dbStart = performance.now();
     const [
       patientRepo,
       checkinRefeicaoRepo,
@@ -143,42 +125,45 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       getRepository(MeasurementEntity),
     ]);
 
-    const paciente = await patientRepo.findOne({
-      where: { id, deletedAt: IsNull() },
-      select: {
-        id: true,
-        fullName: true,
-        workoutType: true,
-        workoutFrequency: true,
-        workoutDuration: true,
-      },
-    });
+    const { dataInicioIso: inicioIso, inicioUtc: inicioDate } =
+      getIntervaloDiasBR(dias);
 
-    if (!paciente) {
-      return NextResponse.json(
-        { error: "Paciente não encontrado." },
-        { status: 404 }
-      );
-    }
-
-    const hojeIso = getDataIsoSaoPaulo();
-    const inicioIso = subtrairDiasIso(hojeIso, dias - 1);
-
-    const inicioDate = new Date();
-    inicioDate.setDate(inicioDate.getDate() - dias);
-    inicioDate.setHours(0, 0, 0, 0);
-
+    // Paraleliza paciente + todas as séries em um único lote (economiza 1 round-trip Oracle)
+    // e projeta somente colunas necessárias (omite trocasJson e observacoes CLOB).
     const [
+      paciente,
       checkinsRefeicoes,
       registrosGlicemia,
       checkinsIntestinais,
       workoutLogs,
       measurements,
     ] = await Promise.all([
+      patientRepo.findOne({
+        where: { id, deletedAt: IsNull() },
+        select: {
+          id: true,
+          fullName: true,
+          workoutType: true,
+          workoutFrequency: true,
+          workoutDuration: true,
+        },
+      }),
       checkinRefeicaoRepo.find({
         where: {
           pacienteId: id,
           dataDia: MoreThanOrEqual(inicioIso),
+        },
+        select: {
+          id: true,
+          refeicaoId: true,
+          dataDia: true,
+          status: true,
+          refeicao: {
+            id: true,
+            nome: true,
+            horario: true,
+            opcional: true,
+          },
         },
         relations: { refeicao: true },
         order: { dataDia: "DESC", criadoEm: "DESC" },
@@ -188,12 +173,24 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           pacienteId: id,
           dataRegistro: MoreThanOrEqual(inicioDate),
         },
+        select: {
+          id: true,
+          valor: true,
+          dataRegistro: true,
+        },
         order: { dataRegistro: "DESC" },
       }),
       intestinoRepo.find({
         where: {
           pacienteId: id,
           data: MoreThanOrEqual(inicioDate),
+        },
+        select: {
+          id: true,
+          tipoBristol: true,
+          categoria: true,
+          sintomas: true,
+          data: true,
         },
         order: { data: "DESC" },
       }),
@@ -202,14 +199,32 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           patientId: id,
           date: MoreThanOrEqual(inicioDate),
         },
+        select: {
+          id: true,
+          date: true,
+        },
         order: { date: "DESC" },
       }),
       measurementRepo.find({
         where: { patientId: id },
+        select: {
+          id: true,
+          measuredAt: true,
+          waist: true,
+          abdomen: true,
+        },
         order: { measuredAt: "DESC", createdAt: "DESC" },
         take: 20,
       }),
     ]);
+    const dbDurMs = Math.round(performance.now() - dbStart);
+
+    if (!paciente) {
+      return NextResponse.json(
+        { error: "Paciente não encontrado." },
+        { status: 404 }
+      );
+    }
 
     // =========================================================================
     // 1. CONSISTÊNCIA ALIMENTAR (CHECKINS_REFEICOES + REFEICOES)
@@ -498,17 +513,26 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     };
 
-    return NextResponse.json({
-      success: true,
-      periodoDias: dias,
-      pacienteId: id,
-      geradoEm: new Date().toISOString(),
-      dieta,
-      glicemia,
-      intestino,
-      treinos,
-      medidas,
-    });
+    const totalDurMs = Math.round(performance.now() - reqStart);
+    return NextResponse.json(
+      {
+        success: true,
+        periodoDias: dias,
+        pacienteId: id,
+        geradoEm: new Date().toISOString(),
+        dieta,
+        glicemia,
+        intestino,
+        treinos,
+        medidas,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+          "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${totalDurMs}`,
+        },
+      }
+    );
   } catch (error: unknown) {
     console.error("[API_PACIENTES_TERMOMETRO_GET_ERROR]", error);
     const details = error instanceof Error ? error.message : String(error);

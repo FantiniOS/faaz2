@@ -7,6 +7,12 @@ import {
   OrganizationEntity,
   PatientEntity,
 } from "@/lib/db/entities";
+import {
+  criarDataBR,
+  formatarHoraBR,
+  getDataDiaBR,
+  getInicioFimDiaBR,
+} from "@/lib/date-br";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
 const STATUS_VALIDOS = [
@@ -59,6 +65,7 @@ function formatStatusLegivel(status: string): string {
 }
 
 export async function GET(request: NextRequest) {
+  const reqStart = performance.now();
   try {
     const { searchParams } = new URL(request.url);
     const dataParam = searchParams.get("data");
@@ -76,36 +83,19 @@ export async function GET(request: NextRequest) {
       /^\d{4}-\d{2}-\d{2}$/.test(inicioParam) &&
       /^\d{4}-\d{2}-\d{2}$/.test(fimParam)
     ) {
-      const [anoI, mesI, diaI] = inicioParam.split("-").map(Number);
-      const [anoF, mesF, diaF] = fimParam.split("-").map(Number);
-      inicioPeriodo = new Date(anoI, mesI - 1, diaI, 0, 0, 0, 0);
-      fimPeriodo = new Date(anoF, mesF - 1, diaF, 23, 59, 59, 999);
+      inicioPeriodo = getInicioFimDiaBR(inicioParam).inicioUtc;
+      fimPeriodo = getInicioFimDiaBR(fimParam).fimUtc;
     } else if (dataParam && /^\d{4}-\d{2}-\d{2}$/.test(dataParam)) {
-      const [ano, mes, dia] = dataParam.split("-").map(Number);
-      inicioPeriodo = new Date(ano, mes - 1, dia, 0, 0, 0, 0);
-      fimPeriodo = new Date(ano, mes - 1, dia, 23, 59, 59, 999);
+      const faixa = getInicioFimDiaBR(dataParam);
+      inicioPeriodo = faixa.inicioUtc;
+      fimPeriodo = faixa.fimUtc;
     } else {
-      const agora = new Date();
-      inicioPeriodo = new Date(
-        agora.getFullYear(),
-        agora.getMonth(),
-        agora.getDate(),
-        0,
-        0,
-        0,
-        0,
-      );
-      fimPeriodo = new Date(
-        agora.getFullYear(),
-        agora.getMonth(),
-        agora.getDate(),
-        23,
-        59,
-        59,
-        999,
-      );
+      const faixaHoje = getInicioFimDiaBR();
+      inicioPeriodo = faixaHoje.inicioUtc;
+      fimPeriodo = faixaHoje.fimUtc;
     }
 
+    const dbStart = performance.now();
     const agendamentoRepo = await getRepository(AgendamentoEntity);
     const registros = await agendamentoRepo.find({
       where: {
@@ -121,6 +111,33 @@ export async function GET(request: NextRequest) {
           ? { especialidade: especialidadeParam.toUpperCase() }
           : {}),
       },
+      select: {
+        id: true,
+        pacienteId: true,
+        medicoId: true,
+        especialidade: true,
+        dataHora: true,
+        duracaoMinutos: true,
+        encaixe: true,
+        tipo: true,
+        status: true,
+        observacao: true,
+        paciente: {
+          id: true,
+          fullName: true,
+          recordCode: true,
+          cpf: true,
+          phoneWhatsapp: true,
+          convenio: true,
+          planoFaaz: true,
+        },
+        medico: {
+          id: true,
+          nome: true,
+          especialidade: true,
+          corHex: true,
+        },
+      },
       relations: {
         paciente: true,
         medico: true,
@@ -129,12 +146,12 @@ export async function GET(request: NextRequest) {
         dataHora: "ASC",
       },
     });
+    const dbDurMs = Math.round(performance.now() - dbStart);
 
     const agendamentos = registros.map((item) => {
       const d = new Date(item.dataHora);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const horario = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      const dataIso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const horario = formatarHoraBR(d);
+      const dataIso = getDataDiaBR(d);
 
       return {
         id: item.id,
@@ -186,6 +203,9 @@ export async function GET(request: NextRequest) {
       {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${Math.round(
+            performance.now() - reqStart
+          )}`,
         },
       },
     );
@@ -236,9 +256,7 @@ export async function POST(request: NextRequest) {
     if (dataHora) {
       dataHoraDate = new Date(dataHora);
     } else if (data && horario) {
-      const [ano, mes, dia] = String(data).split("-").map(Number);
-      const [hora, minuto] = String(horario).split(":").map(Number);
-      dataHoraDate = new Date(ano, mes - 1, dia, hora || 0, minuto || 0, 0, 0);
+      dataHoraDate = criarDataBR(String(data), String(horario));
     } else {
       return NextResponse.json(
         { success: false, error: "Informe a data e o horário do agendamento." },
@@ -401,7 +419,6 @@ export async function POST(request: NextRequest) {
 
     const criado = resultado.agendamentoCriado;
     const d = new Date(criado.dataHora);
-    const pad = (n: number) => String(n).padStart(2, "0");
 
     return NextResponse.json(
       {
@@ -428,9 +445,9 @@ export async function POST(request: NextRequest) {
               ? "CIRURGIA_PLASTICA"
               : "ENDOCRINOLOGIA",
           especialidadeLegivel: formatEspecialidadeLegivel(criado.especialidade),
-          dataHora: new Date(criado.dataHora).toISOString(),
-          data: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-          horario: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+          dataHora: d.toISOString(),
+          data: getDataDiaBR(d),
+          horario: formatarHoraBR(d),
           duracaoMinutos: criado.duracaoMinutos || 30,
           encaixe: Boolean(criado.encaixe),
           tipo: criado.tipo,

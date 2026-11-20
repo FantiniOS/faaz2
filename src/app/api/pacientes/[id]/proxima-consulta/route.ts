@@ -2,42 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { IsNull, MoreThan, Not } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import { AgendamentoEntity, PatientEntity } from "@/lib/db/entities";
-
-const MESES_PT = [
-  "Janeiro",
-  "Fevereiro",
-  "Março",
-  "Abril",
-  "Maio",
-  "Junho",
-  "Julho",
-  "Agosto",
-  "Setembro",
-  "Outubro",
-  "Novembro",
-  "Dezembro",
-];
-
-const DIAS_SEMANA_PT = [
-  "Domingo",
-  "Segunda-feira",
-  "Terça-feira",
-  "Quarta-feira",
-  "Quinta-feira",
-  "Sexta-feira",
-  "Sábado",
-];
+import {
+  formatarDataHumanaBR,
+  formatarHoraBR,
+  getDataDiaBR,
+} from "@/lib/date-br";
 
 function formatDataHumanaLocal(d: Date): string {
-  const dia = d.getDate();
-  const mes = MESES_PT[d.getMonth()] || "";
-  const diaSemana = DIAS_SEMANA_PT[d.getDay()] || "";
-  return `${dia} de ${mes}, ${diaSemana}`;
+  return formatarDataHumanaBR(d);
 }
 
 function formatHorarioLocal(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatarHoraBR(d);
 }
 
 function formatStatusLegivel(status: string): string {
@@ -155,7 +131,6 @@ export async function GET(
     }
 
     const d = new Date(agendamento.dataHora);
-    const pad = (n: number) => String(n).padStart(2, "0");
 
     return NextResponse.json(
       {
@@ -169,8 +144,8 @@ export async function GET(
           medicoEspecialidade:
             agendamento.medico?.especialidade || "Endocrinologia & Metabologia",
           medicoCorHex: agendamento.medico?.corHex || "#059669",
-          dataHora: new Date(agendamento.dataHora).toISOString(),
-          dataLocalIso: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+          dataHora: d.toISOString(),
+          dataLocalIso: getDataDiaBR(d),
           dataFormatada: formatDataHumanaLocal(d),
           horario: formatHorarioLocal(d),
           duracaoMinutos: agendamento.duracaoMinutos || 30,

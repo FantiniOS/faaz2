@@ -42,6 +42,13 @@ import { TreinosTab } from "@/components/TreinosTab";
 import { MeasurementModal } from "@/components/MeasurementModal";
 import { TermometroExecutivoCard } from "@/components/TermometroExecutivoCard";
 import type { MeasurementDTO } from "@/actions/measurement-actions";
+import {
+  criarDataBR,
+  formatarDataBR,
+  formatarHoraBR,
+  formatarParaDatetimeLocalBR,
+  TIMEZONE_BR,
+} from "@/lib/date-br";
 
 const DocumentosTab = dynamic(
   () => import("@/components/DocumentosTab").then((mod) => mod.DocumentosTab),
@@ -525,18 +532,9 @@ export function ProntuarioModal({
     return val;
   }
 
-  // Formata data ISO para input type="datetime-local"
+  // Formata data ISO para input type="datetime-local" (sempre em America/Sao_Paulo)
   function formatToDatetimeLocal(isoStr?: string | null) {
-    if (!isoStr) return "";
-    const d = new Date(isoStr);
-    if (isNaN(d.getTime())) return "";
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const year = d.getFullYear();
-    const month = pad(d.getMonth() + 1);
-    const day = pad(d.getDate());
-    const hours = pad(d.getHours());
-    const minutes = pad(d.getMinutes());
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
+    return formatarParaDatetimeLocalBR(isoStr);
   }
 
   // Cálculo automático do IMC em tempo real para os campos editáveis
@@ -894,8 +892,8 @@ export function ProntuarioModal({
       pontos.push({
         id: item.id || `peso-${index}`,
         timestamp: d.getTime(),
-        data: d.toLocaleDateString("pt-BR"),
-        dataFormatada: `${d.getDate()} ${d.toLocaleString("pt-BR", { month: "short" })}`,
+        data: formatarDataBR(d),
+        dataFormatada: `${d.toLocaleDateString("pt-BR", { timeZone: TIMEZONE_BR, day: "numeric", month: "short" })}`,
         valor: v,
         unidade: "kg",
         variacao: diff,
@@ -965,8 +963,8 @@ export function ProntuarioModal({
       pontos.push({
         id: `imc-${item.id || index}`,
         timestamp: d.getTime(),
-        data: d.toLocaleDateString("pt-BR"),
-        dataFormatada: `${d.getDate()} ${d.toLocaleString("pt-BR", { month: "short" })}`,
+        data: formatarDataBR(d),
+        dataFormatada: `${d.toLocaleDateString("pt-BR", { timeZone: TIMEZONE_BR, day: "numeric", month: "short" })}`,
         valor: imc,
         unidade: "kg/m²",
         variacao,
@@ -1007,8 +1005,8 @@ export function ProntuarioModal({
       pontos.push({
         id: item.id || `glicemia-${idx}`,
         timestamp: d.getTime(),
-        data: d.toLocaleDateString("pt-BR"),
-        dataFormatada: `${d.getDate()} ${d.toLocaleString("pt-BR", { month: "short" })}`,
+        data: formatarDataBR(d),
+        dataFormatada: `${d.toLocaleDateString("pt-BR", { timeZone: TIMEZONE_BR, day: "numeric", month: "short" })}`,
         valor: valorFinal,
         unidade: "mg/dL",
         variacao: diff,
@@ -1106,8 +1104,8 @@ export function ProntuarioModal({
       pontos.push({
         id: item.id || `bf-legacy-${idx}`,
         timestamp: d.getTime(),
-        data: d.toLocaleDateString("pt-BR"),
-        dataFormatada: `${d.getDate()} ${d.toLocaleString("pt-BR", { month: "short" })}`,
+        data: formatarDataBR(d),
+        dataFormatada: `${d.toLocaleDateString("pt-BR", { timeZone: TIMEZONE_BR, day: "numeric", month: "short" })}`,
         valor: valorG,
         unidade: "%",
         variacao: diff,
@@ -1388,7 +1386,14 @@ export function ProntuarioModal({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          dataAtendimento: editDataAtendimento ? new Date(editDataAtendimento).toISOString() : undefined,
+          dataAtendimento: editDataAtendimento
+            ? (() => {
+                const [dPart, hPart] = editDataAtendimento.split("T");
+                return dPart && hPart
+                  ? criarDataBR(dPart, hPart).toISOString()
+                  : new Date(editDataAtendimento).toISOString();
+              })()
+            : undefined,
           pesoAtual: editPesoAtual,
           alturaCm: editAlturaCm,
           queixaPrincipal: editQueixaPrincipal ? editQueixaPrincipal.trim().toUpperCase() : editQueixaPrincipal,
@@ -1523,7 +1528,7 @@ export function ProntuarioModal({
                       <span className="text-slate-600 hidden sm:inline">•</span>
                       <span className="text-slate-300 flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span>Último atendimento: <strong className="text-slate-200">{new Date(ultimaAtualizacao).toLocaleDateString("pt-BR")}</strong></span>
+                        <span>Último atendimento: <strong className="text-slate-200">{formatarDataBR(ultimaAtualizacao)}</strong></span>
                       </span>
                     </>
                   )}
@@ -2130,7 +2135,7 @@ export function ProntuarioModal({
 
                       <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 shadow-2xs flex items-center gap-1.5 shrink-0">
                         <Calendar className="w-3.5 h-3.5 text-teal-600" />
-                        <span>Hoje • {new Date().toLocaleDateString("pt-BR")}</span>
+                        <span>Hoje • {formatarDataBR(new Date())}</span>
                       </span>
                     </div>
 
@@ -2273,15 +2278,8 @@ export function ProntuarioModal({
                 ) : (
                   <div className="relative pl-6 space-y-5 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-slate-200">
                     {historicoFiltrado.map((item, idx) => {
-                      const dataFormatada = new Date(item.dataAtendimento).toLocaleDateString("pt-BR", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      });
-                      const horaFormatada = new Date(item.dataAtendimento).toLocaleTimeString("pt-BR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      });
+                      const dataFormatada = formatarDataBR(item.dataAtendimento);
+                      const horaFormatada = formatarHoraBR(item.dataAtendimento);
 
                       const isFirst = idx === 0;
                       const isAutoApp = isRegistroAutoMonitoramento(item);
@@ -2647,8 +2645,8 @@ export function ProntuarioModal({
               <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs text-slate-700 space-y-1">
                 <div>
                   <strong>Data:</strong>{" "}
-                  {new Date(itemToDelete.dataAtendimento).toLocaleDateString("pt-BR")}{" "}
-                  às {new Date(itemToDelete.dataAtendimento).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                  {formatarDataBR(itemToDelete.dataAtendimento)}{" "}
+                  às {formatarHoraBR(itemToDelete.dataAtendimento)}
                 </div>
                 <div>
                   <strong>Médico:</strong> {itemToDelete.medicoResponsavel || "Dr. Carlos Fantini"}

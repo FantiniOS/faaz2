@@ -6,6 +6,11 @@ import { z } from "zod";
 import { getRepository } from "@/lib/db/data-source";
 import { PatientEntity, RegistroGlicemiaEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
+import {
+  formatarHoraBR,
+  getInicioFimDiaBR,
+  getIntervaloDiasBR,
+} from "@/lib/date-br";
 
 const checkinGlicemiaSchema = z.object({
   pacienteId: z.string().optional(),
@@ -207,11 +212,7 @@ export async function GET(req: NextRequest) {
       ? Math.min(90, Math.max(1, parsedDias))
       : 30;
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+    const { inicioUtc: startOfDay, fimUtc: endOfDay } = getInicioFimDiaBR();
 
     let resolvedId: string | undefined;
     if (pacienteId && pacienteId.trim().length > 0) {
@@ -241,10 +242,7 @@ export async function GET(req: NextRequest) {
             : "NORMAL";
 
       const dt = new Date(r.dataRegistro);
-      const horario = dt.toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      const horario = formatarHoraBR(dt);
 
       const birthIso = p?.birthDate
         ? String(p.birthDate).split("T")[0]
@@ -297,9 +295,7 @@ export async function GET(req: NextRequest) {
     } | null = null;
 
     if (incluirHistorico) {
-      const inicioPeriodo = new Date();
-      inicioPeriodo.setDate(inicioPeriodo.getDate() - dias);
-      inicioPeriodo.setHours(0, 0, 0, 0);
+      const { inicioUtc: inicioPeriodo } = getIntervaloDiasBR(dias);
 
       const historicoLimit = limitParam ? Math.min(limit, 500) : 500;
       const historicoDb = await glicemiaRepo.find({

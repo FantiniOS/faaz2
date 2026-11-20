@@ -14,6 +14,7 @@ import {
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { invalidarCacheMetricaPeso } from "@/lib/metrica-peso-eliminado";
+import { toIsoUtc } from "@/lib/date-br";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -25,6 +26,7 @@ interface RouteParams {
  * Acesso restrito: DONO_CLINICA, MEDICO.
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
+  const reqStart = performance.now();
   try {
     const { id } = await params;
     const sessao = await getSessao();
@@ -40,17 +42,103 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const patientRepo = await getRepository(PatientEntity);
-    const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
-    const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
-    const glicemiaRepo = await getRepository(RegistroGlicemiaEntity);
-    const bioRepo = await getRepository(BiometricMeasurementEntity);
-    const measurementRepo = await getRepository(MeasurementEntity);
-    const goalCheckinRepo = await getRepository(GoalCheckinEntity);
+    const dbStart = performance.now();
+    const [
+      patientRepo,
+      prontuarioRepo,
+      evolucaoRepo,
+      glicemiaRepo,
+      bioRepo,
+      measurementRepo,
+      goalCheckinRepo,
+    ] = await Promise.all([
+      getRepository(PatientEntity),
+      getRepository(ProntuarioPacienteEntity),
+      getRepository(EvolucaoClinicaEntity),
+      getRepository(RegistroGlicemiaEntity),
+      getRepository(BiometricMeasurementEntity),
+      getRepository(MeasurementEntity),
+      getRepository(GoalCheckinEntity),
+    ]);
 
-    const paciente = await patientRepo.findOne({
-      where: { id },
-    });
+    // Executa leitura do paciente e séries clínicas em paralelo (elimina 1 round-trip sequencial)
+    // e omite CLOBs pesados não exibidos no prontuário (workoutRestrictions, activeModules).
+    const [
+      paciente,
+      prontuario,
+      evolucoesClinicas,
+      registrosGlicemia,
+      biometricMeasurements,
+      measurements,
+    ] = await Promise.all([
+      patientRepo.findOne({
+        where: { id },
+        select: {
+          id: true,
+          recordCode: true,
+          fullName: true,
+          socialName: true,
+          cpf: true,
+          birthDate: true,
+          biologicalSex: true,
+          patientStatus: true,
+          convenio: true,
+          phoneWhatsapp: true,
+          heightCm: true,
+          clinicalFocus: true,
+          treatmentObjective: true,
+          avatarUrl: true,
+          photoUrl: true,
+          deletedAt: true,
+        },
+      }),
+      prontuarioRepo.findOne({ where: { pacienteId: id } }),
+      evolucaoRepo.find({
+        where: { pacienteId: id },
+        order: { dataAtendimento: "DESC", createdAt: "DESC" },
+      }),
+      glicemiaRepo.find({
+        where: { pacienteId: id },
+        select: {
+          id: true,
+          dataRegistro: true,
+          valor: true,
+          momento: true,
+        },
+        order: { dataRegistro: "DESC", createdAt: "DESC" },
+        take: 30,
+      }),
+      bioRepo.find({
+        where: { patientId: id },
+        select: {
+          id: true,
+          measuredAt: true,
+          waistCircumferenceCm: true,
+          bodyFatPercentage: true,
+        },
+        order: { measuredAt: "DESC", createdAt: "DESC" },
+        take: 30,
+      }),
+      measurementRepo.find({
+        where: { patientId: id },
+        select: {
+          id: true,
+          patientId: true,
+          measuredAt: true,
+          bodyFatPercentage: true,
+          waist: true,
+          abdomen: true,
+          hips: true,
+          rightArm: true,
+          leftArm: true,
+          rightThigh: true,
+          leftThigh: true,
+          notes: true,
+        },
+        order: { measuredAt: "DESC", createdAt: "DESC" },
+        take: 30,
+      }),
+    ]);
 
     if (!paciente || paciente.deletedAt) {
       return NextResponse.json(
@@ -59,46 +147,28 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const [
-      prontuario,
-      evolucoesClinicas,
-      registrosGlicemia,
-      biometricMeasurements,
-      measurements,
-      goalCheckins,
-    ] = await Promise.all([
-      prontuarioRepo.findOne({ where: { pacienteId: id } }),
-      evolucaoRepo.find({
-        where: { pacienteId: id },
-        order: { dataAtendimento: "DESC", createdAt: "DESC" },
-      }),
-      glicemiaRepo.find({
-        where: { pacienteId: id },
-        order: { dataRegistro: "DESC", createdAt: "DESC" },
-        take: 30,
-      }),
-      bioRepo.find({
-        where: { patientId: id },
-        order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 30,
-      }),
-      measurementRepo.find({
-        where: { patientId: id },
-        order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 30,
-      }),
-      goalCheckinRepo.find({
-        where: {
-          patientId: id,
-          patientGoal: {
-            category: "CAPILLARY_GLUCOSE",
-          },
-        },
-        relations: { patientGoal: true },
-        order: { referenceDate: "DESC", createdAt: "DESC" },
-        take: 30,
-      }),
-    ]);
+    // Fallback legado de glicemia (GOAL_CHECKINS) só é consultado quando REGISTROS_GLICEMIA está vazio
+    const goalCheckins =
+      registrosGlicemia.length === 0
+        ? await goalCheckinRepo.find({
+            where: {
+              patientId: id,
+              patientGoal: {
+                category: "CAPILLARY_GLUCOSE",
+              },
+            },
+            select: {
+              id: true,
+              referenceDate: true,
+              recordedValue: true,
+              patientGoal: { id: true, category: true },
+            },
+            relations: { patientGoal: true },
+            order: { referenceDate: "DESC", createdAt: "DESC" },
+            take: 30,
+          })
+        : [];
+    const dbDurMs = Math.round(performance.now() - dbStart);
 
     let idade: number | null = null;
     if (paciente.birthDate) {
@@ -261,9 +331,15 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           alergias: prontuario?.alergias || "",
           medicacoes: prontuario?.medicacoes || "",
           evolucao: prontuario?.evolucao || "",
-          ultimaAtualizacao: prontuario?.updatedAt || null,
+          ultimaAtualizacao: toIsoUtc(prontuario?.updatedAt) || null,
         },
-        historico: evolucoesClinicas,
+        historico: evolucoesClinicas.map((ev) => ({
+          ...ev,
+          dataAtendimento:
+            toIsoUtc(ev.dataAtendimento) ?? new Date(ev.dataAtendimento).toISOString(),
+          createdAt: toIsoUtc(ev.createdAt) ?? new Date(ev.createdAt).toISOString(),
+          updatedAt: toIsoUtc(ev.updatedAt) ?? new Date(ev.updatedAt).toISOString(),
+        })),
         biometriaHistorico,
         measurementsHistorico,
         glicemiaHistorico,
@@ -272,6 +348,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
           Pragma: "no-cache",
+          "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${Math.round(
+            performance.now() - reqStart
+          )}`,
         },
       },
     );

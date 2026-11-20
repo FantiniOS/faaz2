@@ -5,6 +5,12 @@ import { Between, IsNull, MoreThanOrEqual, Raw } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import { PatientEntity, WorkoutLogEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
+import {
+  getDataDiaBR,
+  getInicioFimDiaBR,
+  getIntervaloDiasBR,
+  toIsoUtc,
+} from "@/lib/date-br";
 
 async function resolverPacienteIdValido(rawId?: string): Promise<string | null> {
   const uuidRegex =
@@ -66,14 +72,7 @@ async function resolverPacienteIdValido(rawId?: string): Promise<string | null> 
 }
 
 function getIntervaloHoje() {
-  const agora = new Date();
-  const ano = agora.getFullYear();
-  const mes = agora.getMonth();
-  const dia = agora.getDate();
-
-  const inicioHoje = new Date(ano, mes, dia, 0, 0, 0, 0);
-  const fimHoje = new Date(ano, mes, dia, 23, 59, 59, 999);
-
+  const { inicioUtc: inicioHoje, fimUtc: fimHoje } = getInicioFimDiaBR();
   return { inicioHoje, fimHoje };
 }
 
@@ -105,9 +104,7 @@ export async function GET(req: NextRequest) {
       order: { date: "DESC" },
     });
 
-    const trintaDiasAtras = new Date();
-    trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
-    trintaDiasAtras.setHours(0, 0, 0, 0);
+    const { inicioUtc: trintaDiasAtras } = getIntervaloDiasBR(30);
 
     const checkinsUltimos30Dias = await workoutRepo.find({
       where: {
@@ -118,16 +115,21 @@ export async function GET(req: NextRequest) {
     });
 
     const diasDistintos = new Set(
-      checkinsUltimos30Dias.map((c) => new Date(c.date).toISOString().slice(0, 10)),
+      checkinsUltimos30Dias.map((c) => getDataDiaBR(new Date(c.date))),
     );
 
     return NextResponse.json({
       sucesso: true,
       pacienteId,
       treinouHoje: !!checkinHoje,
-      checkinHoje: checkinHoje || null,
+      checkinHoje: checkinHoje
+        ? { ...checkinHoje, date: toIsoUtc(checkinHoje.date) }
+        : null,
       totalCheckins30Dias: diasDistintos.size,
-      checkinsRecentes: checkinsUltimos30Dias.slice(0, 10),
+      checkinsRecentes: checkinsUltimos30Dias.slice(0, 10).map((c) => ({
+        ...c,
+        date: toIsoUtc(c.date),
+      })),
     });
   } catch (error: unknown) {
     console.error("[CHECKINS_TREINO_GET] Erro:", error);

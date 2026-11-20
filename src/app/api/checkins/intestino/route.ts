@@ -10,6 +10,7 @@ import {
   type CheckinIntestinal,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
+import { getDataDiaBR, getInicioFimDiaBR, toIsoUtc } from "@/lib/date-br";
 
 const checkinIntestinalSchema = z.object({
   pacienteId: z.string().optional().default("paciente-teste-faaz"),
@@ -96,6 +97,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const reqStart = performance.now();
   try {
     const sessao = await getSessao();
     const sessaoRole = (sessao as { role?: string } | null)?.role;
@@ -120,11 +122,11 @@ export async function GET(req: NextRequest) {
     const limitParam = searchParams.get("limit");
     const limit = limitParam ? parseInt(limitParam, 10) : 20;
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+    const {
+      dataDia: dataReferenciaHoje,
+      inicioUtc: startOfDay,
+      fimUtc: endOfDay,
+    } = getInicioFimDiaBR();
 
     const cleanId = pacienteId?.trim() || "";
     const targetIds = cleanId
@@ -133,14 +135,24 @@ export async function GET(req: NextRequest) {
         : [cleanId]
       : undefined;
 
+    const dbStart = performance.now();
     const bristolRepo = await getRepository(CheckinIntestinalEntity);
-    const registrosHoje = await bristolRepo.find({
-      where: {
-        data: Between(startOfDay, endOfDay),
-        ...(targetIds ? { pacienteId: In(targetIds) } : {}),
-      },
-      order: { data: "DESC" },
-    });
+    const [registrosHoje, historicoGeral] = await Promise.all([
+      bristolRepo.find({
+        where: {
+          data: Between(startOfDay, endOfDay),
+          ...(targetIds ? { pacienteId: In(targetIds) } : {}),
+        },
+        order: { data: "DESC" },
+      }),
+      incluirHistorico
+        ? bristolRepo.find({
+            where: targetIds ? { pacienteId: In(targetIds) } : {},
+            order: { data: "DESC" },
+            take: Math.min(limit, 50),
+          })
+        : Promise.resolve([] as CheckinIntestinal[]),
+    ]);
 
     const uniqueIds = Array.from(
       new Set(registrosHoje.map((r) => r.pacienteId)),
@@ -198,18 +210,12 @@ export async function GET(req: NextRequest) {
       }
       return {
         ...r,
+        data: toIsoUtc(r.data) ?? new Date(r.data).toISOString(),
         pacienteNome: nome,
       };
     });
 
-    let historicoGeral: CheckinIntestinal[] = [];
-    if (incluirHistorico) {
-      historicoGeral = await bristolRepo.find({
-        where: targetIds ? { pacienteId: In(targetIds) } : {},
-        order: { data: "DESC" },
-        take: Math.min(limit, 50),
-      });
-    }
+    const dbDurMs = Math.round(performance.now() - dbStart);
 
     const totalHoje = registrosFormatados.length;
     const temRegistroHoje = totalHoje > 0;
@@ -225,10 +231,15 @@ export async function GET(req: NextRequest) {
       (r) => r.categoria === "diarreia",
     ).length;
 
+    const historicoFormatado = historicoGeral.map((h) => ({
+      ...h,
+      data: toIsoUtc(h.data) ?? new Date(h.data).toISOString(),
+    }));
+
     return NextResponse.json(
       {
         success: true,
-        dataReferencia: new Date().toISOString().split("T")[0],
+        dataReferencia: dataReferenciaHoje || getDataDiaBR(),
         temRegistroHoje,
         count: totalHoje,
         countHoje: totalHoje,
@@ -238,12 +249,15 @@ export async function GET(req: NextRequest) {
         countDiarreiaHoje,
         data: registrosFormatados,
         registrosHoje: registrosFormatados,
-        historico: historicoGeral,
+        historico: historicoFormatado,
       },
       {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
           Pragma: "no-cache",
+          "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${Math.round(
+            performance.now() - reqStart
+          )}`,
         },
       },
     );
