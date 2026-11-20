@@ -52,7 +52,7 @@ export function TopMenu({
   const [searchQuery, setSearchQuery] = useState("");
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [authUser, setAuthUser] = useState<{ nome: string; cargo: string } | null>(
-    () => cachedAuthUser
+    null
   );
 
   // Atalho Global: Ctrl + K (Windows) / Cmd + K (Mac) para abrir a Busca Global Dinâmica
@@ -72,6 +72,11 @@ export function TopMenu({
 
     let mounted = true;
     async function loadSession() {
+      await Promise.resolve();
+      if (!mounted) return;
+      if (cachedAuthUser) {
+        setAuthUser(cachedAuthUser);
+      }
       try {
         const res = await fetch("/api/auth/me", { cache: "no-store" });
         if (res.ok) {

@@ -16,6 +16,7 @@ export function getClientCache<T>(
   key: string,
   ttlMs: number = DEFAULT_SWR_TTL_MS
 ): { data: T; isFresh: boolean } | null {
+  if (typeof window === "undefined") return null;
   const entry = memoryStore.get(key) as CacheEntry<T> | undefined;
   if (!entry) return null;
   const ageMs = Date.now() - entry.updatedAt;
@@ -26,6 +27,7 @@ export function getClientCache<T>(
 }
 
 export function setClientCache<T>(key: string, data: T): void {
+  if (typeof window === "undefined") return;
   memoryStore.set(key, {
     data,
     updatedAt: Date.now(),

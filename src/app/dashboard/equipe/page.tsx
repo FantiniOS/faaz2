@@ -23,6 +23,7 @@ import {
   Mail,
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
+import { formatarDataBR } from "@/lib/date-br";
 
 interface MembroEquipe {
   id: string;
@@ -340,7 +341,7 @@ export default function EquipePage() {
                               <div>
                                 <span className="font-bold text-slate-900 block">{membro.fullName}</span>
                                 <span className="text-[11px] text-slate-400 tabular-nums">
-                                  Cadastrado em {new Date(membro.createdAt).toLocaleDateString("pt-BR")}
+                                  Cadastrado em {formatarDataBR(membro.createdAt)}
                                 </span>
                               </div>
                             </div>

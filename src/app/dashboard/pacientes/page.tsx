@@ -61,12 +61,9 @@ export interface PacienteCadastral {
 }
 
 export default function PacientesPage() {
-  const [pacientes, setPacientes] = useState<PacienteCadastral[]>(
-    () => getClientCache<PacienteCadastral[]>("pacientes:list")?.data ?? []
-  );
-  const [isLoading, setIsLoading] = useState(
-    () => !getClientCache<PacienteCadastral[]>("pacientes:list")
-  );
+  // Inicialização 100% determinística idêntica ao SSR (cache SWR hidrata em useEffect)
+  const [pacientes, setPacientes] = useState<PacienteCadastral[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [apenasMembrosFaaz, setApenasMembrosFaaz] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);

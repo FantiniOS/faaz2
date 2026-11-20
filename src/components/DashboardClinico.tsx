@@ -118,11 +118,15 @@ function getSaudacaoHora(): string {
   return "Boa noite";
 }
 
-function formatTempoRelativo(iso?: string | null): string {
+function formatTempoRelativo(
+  iso?: string | null,
+  agoraMs: number | null = null
+): string {
   if (!iso) return "Sem sinal";
+  if (agoraMs === null) return "--";
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return "--";
-  const diffMin = Math.max(0, Math.floor((Date.now() - dt.getTime()) / 60000));
+  const diffMin = Math.max(0, Math.floor((agoraMs - dt.getTime()) / 60000));
   if (diffMin < 1) return "agora";
   if (diffMin < 60) return `há ${diffMin}m`;
   const diffH = Math.floor(diffMin / 60);
@@ -299,6 +303,10 @@ export function DashboardClinico({
   user,
   isLoadingUser = false,
 }: DashboardClinicoProps) {
+  const [mounted, setMounted] = useState(false);
+  const [saudacaoHora, setSaudacaoHora] = useState<string>("Olá");
+  const [agoraMs, setAgoraMs] = useState<number | null>(null);
+
   const [periodo, setPeriodo] = useState<PeriodoTelemetria>("30d");
   const [objetivoHero, setObjetivoHero] = useState<
     "emagrecimento" | "hipertrofia"
@@ -306,14 +314,9 @@ export function DashboardClinico({
   const [modulos, setModulos] = useState<ModulosVisiveis>(DEFAULT_MODULOS);
   const [isCustomizingOpen, setIsCustomizingOpen] = useState(false);
 
-  const [dados, setDados] = useState<TelemetriaDashboardResponse | null>(
-    () =>
-      getClientCache<TelemetriaDashboardResponse>("telemetria:30d")?.data ??
-      null
-  );
-  const [isLoading, setIsLoading] = useState<boolean>(
-    () => !getClientCache<TelemetriaDashboardResponse>("telemetria:30d")
-  );
+  // Inicialização 100% determinística idêntica ao SSR (cache SWR e localStorage hidratam em useEffect)
+  const [dados, setDados] = useState<TelemetriaDashboardResponse | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [erroCarga, setErroCarga] = useState<string | null>(null);
 
@@ -325,12 +328,15 @@ export function DashboardClinico({
 
   const customizerRef = useRef<HTMLDivElement | null>(null);
 
-  // Hidrata preferências de módulos persistidas no localStorage (somente no cliente)
+  // Hidrata saudação horária, relógio relativo e preferências do localStorage somente após montagem no cliente
   useEffect(() => {
     let ativo = true;
-    async function hydratePrefs() {
+    async function hydrateClientState() {
       await Promise.resolve();
       if (!ativo || typeof window === "undefined") return;
+      setMounted(true);
+      setSaudacaoHora(getSaudacaoHora());
+      setAgoraMs(Date.now());
       try {
         const savedPrefs = window.localStorage.getItem(STORAGE_PREFS_KEY);
         if (savedPrefs) {
@@ -341,9 +347,17 @@ export function DashboardClinico({
         // Ignora preferências corrompidas
       }
     }
-    void hydratePrefs();
+    void hydrateClientState();
+
+    const clockTimer = setInterval(() => {
+      if (!ativo) return;
+      setSaudacaoHora(getSaudacaoHora());
+      setAgoraMs(Date.now());
+    }, 60_000);
+
     return () => {
       ativo = false;
+      clearInterval(clockTimer);
     };
   }, []);
 
@@ -573,11 +587,13 @@ export function DashboardClinico({
   }, [dados]);
 
   const nomeProfissional = user?.nome?.trim() || null;
-  const saudacaoCompleta = isLoadingUser
-    ? `${getSaudacaoHora()}`
-    : nomeProfissional
-      ? `${getSaudacaoHora()}, ${nomeProfissional}`
-      : `${getSaudacaoHora()} · Painel Clínico FAAZ`;
+  const saudacaoCompleta = !mounted
+    ? "Olá"
+    : isLoadingUser
+      ? saudacaoHora
+      : nomeProfissional
+        ? `${saudacaoHora}, ${nomeProfissional}`
+        : `${saudacaoHora} · Painel Clínico FAAZ`;
 
   const subText = "text-slate-500";
   const headingText = "text-slate-900";
@@ -605,7 +621,9 @@ export function DashboardClinico({
 
               <span className={`text-[11px] font-mono tabular-nums ${subText}`}>
                 Sincronizado{" "}
-                {dados ? formatHoraSincronizacao(dados.geradoEm) : "--:--"}
+                {mounted && dados
+                  ? formatHoraSincronizacao(dados.geradoEm)
+                  : "--:--:--"}
               </span>
 
               <button
@@ -1784,7 +1802,7 @@ export function DashboardClinico({
                             {item.motivo}
                           </p>
                           <p className={`text-[10px] mt-0.5 ${subText}`}>
-                            {formatTempoRelativo(item.ultimoSinalEm)}
+                            {formatTempoRelativo(item.ultimoSinalEm, agoraMs)}
                           </p>
                         </button>
                       ))}
@@ -2158,7 +2176,7 @@ export function DashboardClinico({
                               <span
                                 className={`text-[10px] font-mono shrink-0 ${subText}`}
                               >
-                                {formatTempoRelativo(ev.timestamp)}
+                                {formatTempoRelativo(ev.timestamp, agoraMs)}
                               </span>
                             </div>
                             <p

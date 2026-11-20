@@ -19,6 +19,7 @@ import {
   Building2,
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
+import { formatarDataHumanaBR, getDataDiaBR } from "@/lib/date-br";
 
 export interface OperacionalAgendamentoItem {
   id: string;
@@ -51,20 +52,29 @@ interface DashboardOperacionalProps {
 }
 
 export function DashboardOperacional({ user }: DashboardOperacionalProps) {
-  const [hojeIso] = useState<string>(() => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  });
+  const [hojeIso, setHojeIso] = useState<string>("");
+  const [dataHojeHumana, setDataHojeHumana] = useState<string>("");
 
   const [agendamentos, setAgendamentos] = useState<OperacionalAgendamentoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [filtroEspecialidade, setFiltroEspecialidade] = useState<"TODAS" | "ENDOCRINOLOGIA" | "CIRURGIA_PLASTICA">("TODAS");
   const [filtroStatus, setFiltroStatus] = useState<"TODOS" | "CONFIRMADOS" | "PENDENTES" | "ENCAIXES">("TODOS");
 
+  useEffect(() => {
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (!ativo) return;
+      const agora = new Date();
+      setHojeIso(getDataDiaBR(agora));
+      setDataHojeHumana(formatarDataHumanaBR(agora));
+    });
+    return () => {
+      ativo = false;
+    };
+  }, []);
+
   const carregarAgendamentos = useCallback(async () => {
+    if (!hojeIso) return;
     try {
       setIsLoading(true);
       const res = await fetch(`/api/agendamentos?data=${hojeIso}`, {
@@ -84,6 +94,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
   }, [hojeIso]);
 
   useEffect(() => {
+    if (!hojeIso) return;
     let ativo = true;
     void Promise.resolve().then(() => {
       if (ativo) void carregarAgendamentos();
@@ -91,7 +102,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
     return () => {
       ativo = false;
     };
-  }, [carregarAgendamentos]);
+  }, [hojeIso, carregarAgendamentos]);
 
   // Cálculos consolidados da operação do dia
   const totalAgendamentos = agendamentos.length;
@@ -125,15 +136,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
     return `https://wa.me/${cleanNumber}`;
   }
 
-  const nomeSecretaria = user?.nome || "Patrícia Santos";
-
-  // Data humana
-  const dataHojeHumana = new Date().toLocaleDateString("pt-BR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const nomeSecretaria = user?.nome || "Recepção FAAZ";
 
   return (
     <div className="min-h-screen cl-page flex flex-col font-sans">
@@ -155,8 +158,8 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
               Olá, {nomeSecretaria}
             </h1>
-            <p className="text-sm text-slate-500 font-medium mt-0.5 capitalize">
-              {dataHojeHumana} • Controle de fila, status de confirmação e encaixes do dia.
+            <p className="text-sm text-slate-500 font-medium mt-0.5">
+              {dataHojeHumana ? `${dataHojeHumana} • ` : ""}Controle de fila, status de confirmação e encaixes do dia.
             </p>
           </div>
 

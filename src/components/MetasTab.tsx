@@ -34,6 +34,7 @@ import {
   CartesianGrid,
   ReferenceLine,
 } from "recharts";
+import { TIMEZONE_BR } from "@/lib/date-br";
 import { CLINICAL_OBJECTIVES } from "@/lib/clinical-objectives";
 
 export interface MetasTabProps {
@@ -539,7 +540,11 @@ export function MetasTab({
                   </span>
                 </div>
                 <span className="text-[10px] text-violet-600 font-mono">
-                  {new Date(ultimoSono.data).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}
+                  {new Date(ultimoSono.data).toLocaleDateString("pt-BR", {
+                  timeZone: TIMEZONE_BR,
+                  day: "2-digit",
+                  month: "2-digit",
+                })}
                 </span>
               </div>
             )}

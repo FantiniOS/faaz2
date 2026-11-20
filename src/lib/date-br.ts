@@ -238,6 +238,8 @@ export function toIsoUtc(input?: Date | string | number | null): string | null {
 
 /**
  * Formata data em pt-BR sempre no fuso America/Sao_Paulo (ex.: "19/11/2026").
+ * Sem options customizadas, usa formatação numérica determinística para evitar
+ * divergências de ICU entre Node (Vercel) e navegadores.
  */
 export function formatarDataBR(
   input?: Date | string | number | null,
@@ -246,6 +248,13 @@ export function formatarDataBR(
   if (input === null || input === undefined) return "--";
   const d = toValidDate(input);
   if (Number.isNaN(d.getTime())) return "--";
+  if (!options) {
+    const sp = getPartesDataHoraBR(d);
+    return `${String(sp.day).padStart(2, "0")}/${String(sp.month).padStart(
+      2,
+      "0"
+    )}/${String(sp.year).padStart(4, "0")}`;
+  }
   return d.toLocaleDateString("pt-BR", {
     timeZone: TIMEZONE_BR,
     day: "2-digit",
@@ -262,15 +271,19 @@ export function formatarHoraBR(
   input?: Date | string | number | null,
   incluirSegundos: boolean = false
 ): string {
-  if (input === null || input === undefined) return "--:--";
+  if (input === null || input === undefined) {
+    return incluirSegundos ? "--:--:--" : "--:--";
+  }
   const d = toValidDate(input);
-  if (Number.isNaN(d.getTime())) return "--:--";
-  return d.toLocaleTimeString("pt-BR", {
-    timeZone: TIMEZONE_BR,
-    hour: "2-digit",
-    minute: "2-digit",
-    ...(incluirSegundos ? { second: "2-digit" } : {}),
-  });
+  if (Number.isNaN(d.getTime())) {
+    return incluirSegundos ? "--:--:--" : "--:--";
+  }
+  const sp = getPartesDataHoraBR(d);
+  const hh = String(sp.hour).padStart(2, "0");
+  const mm = String(sp.minute).padStart(2, "0");
+  if (!incluirSegundos) return `${hh}:${mm}`;
+  const ss = String(sp.second).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 /**
@@ -283,14 +296,13 @@ export function formatarDataHoraBR(
   if (input === null || input === undefined) return "--";
   const d = toValidDate(input);
   if (Number.isNaN(d.getTime())) return "--";
-  return d.toLocaleString("pt-BR", {
-    timeZone: TIMEZONE_BR,
-    day: "2-digit",
-    month: "2-digit",
-    ...(incluirAno ? { year: "numeric" } : {}),
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const sp = getPartesDataHoraBR(d);
+  const dd = String(sp.day).padStart(2, "0");
+  const mm = String(sp.month).padStart(2, "0");
+  const yyyy = String(sp.year).padStart(4, "0");
+  const hh = String(sp.hour).padStart(2, "0");
+  const min = String(sp.minute).padStart(2, "0");
+  return `${dd}/${mm}${incluirAno ? `/${yyyy}` : ""}, ${hh}:${min}`;
 }
 
 /**

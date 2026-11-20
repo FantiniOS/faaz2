@@ -360,6 +360,18 @@ export function ProntuarioModal({
   const [glicemiaHistorico, setGlicemiaHistorico] = useState<GlicemiaHistoricoItem[]>([]);
   const [measurementsHistorico, setMeasurementsHistorico] = useState<MeasurementDTO[]>([]);
   const [isMeasurementModalOpen, setIsMeasurementModalOpen] = useState(false);
+  const [dataHojeBR, setDataHojeBR] = useState<string>("");
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) setDataHojeBR(formatarDataBR(new Date()));
+    });
+    return () => {
+      ativo = false;
+    };
+  }, [isOpen]);
 
   // ========================================================
   // ESTADOS PARA EDIÇÃO E EXCLUSÃO DO HISTÓRICO CLÍNICO
@@ -1059,8 +1071,12 @@ export function ProntuarioModal({
         pontos.push({
           id: item.id || `bf-${idx}`,
           timestamp: d.getTime(),
-          data: d.toLocaleDateString("pt-BR"),
-          dataFormatada: `${d.getDate()} ${d.toLocaleString("pt-BR", { month: "short" })}`,
+          data: formatarDataBR(d),
+          dataFormatada: d.toLocaleDateString("pt-BR", {
+            timeZone: TIMEZONE_BR,
+            day: "numeric",
+            month: "short",
+          }),
           valor: valorG,
           unidade: "%",
           variacao: diff,
@@ -2151,7 +2167,7 @@ export function ProntuarioModal({
 
                       <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 shadow-2xs flex items-center gap-1.5 shrink-0">
                         <Calendar className="w-3.5 h-3.5 text-teal-600" />
-                        <span>Hoje • {formatarDataBR(new Date())}</span>
+                        <span>Hoje{dataHojeBR ? ` • ${dataHojeBR}` : ""}</span>
                       </span>
                     </div>
 

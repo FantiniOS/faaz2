@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { CLINICAL_OBJECTIVES } from "@/lib/clinical-objectives";
+import { formatarDataBR } from "@/lib/date-br";
 import { TopMenu } from "@/components/TopMenu";
 import { MetasTab } from "@/components/MetasTab";
 import { DietaTab } from "@/components/DietaTab";
@@ -56,6 +57,17 @@ export function PacienteProntuarioView({
   );
   const [isUpdatingObjective, setIsUpdatingObjective] = useState(false);
   const [objectiveSavedRecently, setObjectiveSavedRecently] = useState(false);
+  const [dataHojeBR, setDataHojeBR] = useState<string>("");
+
+  useEffect(() => {
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) setDataHojeBR(formatarDataBR(new Date()));
+    });
+    return () => {
+      ativo = false;
+    };
+  }, []);
 
   const handleObjectiveChange = async (novo: string) => {
     setCurrentObjective(novo);
@@ -331,7 +343,7 @@ export function PacienteProntuarioView({
                   </div>
                   <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Hoje • {new Date().toLocaleDateString("pt-BR")}</span>
+                    <span>Hoje{dataHojeBR ? ` • ${dataHojeBR}` : ""}</span>
                   </span>
                 </div>
 

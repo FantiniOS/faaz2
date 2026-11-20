@@ -27,6 +27,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import AuthContext, { UsuarioLogado } from "@/contexts/AuthContext";
+import { formatarDataBR, getDataDiaBR } from "@/lib/date-br";
 import {
   Dialog,
   DialogContent,
@@ -204,11 +205,7 @@ function appendShortcutLine(prevText: string, itemText: string): string {
 }
 
 function getTodayDisplayDate(): string {
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(new Date());
+  return formatarDataBR(new Date());
 }
 
 function buildSafeFileName(
@@ -230,7 +227,7 @@ function buildSafeFileName(
     .replace(/\s+/g, "-")
     .toLowerCase();
 
-  const dateStamp = new Date().toISOString().slice(0, 10);
+  const dateStamp = getDataDiaBR();
   return `Clinica-FAAZ-${cleanType}-${normalizedName || "paciente"}-${dateStamp}.pdf`;
 }
 

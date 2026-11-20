@@ -270,11 +270,9 @@ function computeDayLayout(items: AgendamentoItem[]): PositionedAgendamento[] {
 }
 
 export default function AgendaPage() {
-  // Datas em formato primitivo 'YYYY-MM-DD' (nunca objetos Date reativos)
-  const [hojeIso] = useState<string>(() => getLocalIsoDate(new Date()));
-  const [selectedDate, setSelectedDate] = useState<string>(() =>
-    getLocalIsoDate(new Date())
-  );
+  // Datas inicializadas vazias no SSR e hidratadas em useEffect (evita hydration mismatch #418)
+  const [hojeIso, setHojeIso] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState<string>("");
   const [viewMode, setViewMode] = useState<"dia" | "semana">("dia");
   const [reloadTrigger, setReloadTrigger] = useState<number>(0);
 
@@ -370,8 +368,24 @@ export default function AgendaPage() {
     };
   }, []);
 
+  // Hidrata data corrente em America/Sao_Paulo apenas no cliente após montagem
+  useEffect(() => {
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (!ativo) return;
+      const hoje = getLocalIsoDate(new Date());
+      setHojeIso(hoje);
+      setSelectedDate((prev) => prev || hoje);
+      setDataForm((prev) => prev || hoje);
+    });
+    return () => {
+      ativo = false;
+    };
+  }, []);
+
   // Colunas visíveis na grade (1 coluna no modo "dia", 7 colunas no modo "semana")
   const visibleColumns = useMemo(() => {
+    if (!selectedDate) return [];
     const baseDate = parseLocalIsoDate(selectedDate);
 
     if (viewMode === "dia") {
@@ -449,6 +463,7 @@ export default function AgendaPage() {
 
   // Título formatado do período no cabeçalho
   const headerPeriodTitle = useMemo(() => {
+    if (!selectedDate) return "Agenda Clínica";
     const d = parseLocalIsoDate(selectedDate);
     if (viewMode === "dia") {
       const diaSemanaRaw = d.toLocaleDateString("pt-BR", {
@@ -466,6 +481,7 @@ export default function AgendaPage() {
       return `${diaSemana}, ${dia} de ${mes} de ${selectedDate.slice(0, 4)}`;
     }
 
+    if (visibleColumns.length === 0) return "Agenda Clínica";
     const first = visibleColumns[0];
     const last = visibleColumns[visibleColumns.length - 1];
     const ano = selectedDate.slice(0, 4);
@@ -584,6 +600,7 @@ export default function AgendaPage() {
 
   // Efeito 2: Carrega agendamentos apenas quando valores primitivos [selectedDate, viewMode, filtroMedicoId, filtroEspecialidade, reloadTrigger] mudam
   useEffect(() => {
+    if (!selectedDate) return;
     let isMounted = true;
     const controller = new AbortController();
     const query = buildAgendamentosQuery(
@@ -675,6 +692,7 @@ export default function AgendaPage() {
   }, [agendamentos, filtroEspecialidade]);
 
   function handleStepPeriod(direction: -1 | 1) {
+    if (!selectedDate) return;
     const current = parseLocalIsoDate(selectedDate);
     const delta = viewMode === "semana" ? direction * 7 : direction;
     current.setDate(current.getDate() + delta);
@@ -1146,7 +1164,7 @@ export default function AgendaPage() {
           <div
             className="flex-1 grid"
             style={{
-              gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(0, 1fr))`,
+              gridTemplateColumns: `repeat(${Math.max(1, visibleColumns.length)}, minmax(0, 1fr))`,
             }}
           >
             {visibleColumns.map((col) => (
@@ -1223,7 +1241,7 @@ export default function AgendaPage() {
         <div
           className="flex-1 grid h-full min-h-0 overflow-hidden"
           style={{
-            gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(0, 1fr))`,
+            gridTemplateColumns: `repeat(${Math.max(1, visibleColumns.length)}, minmax(0, 1fr))`,
           }}
         >
           {visibleColumns.map((col) => {

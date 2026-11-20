@@ -54,11 +54,15 @@ function formatDataHoraCurta(iso?: string | null): string {
   return formatarDataHoraBR(iso);
 }
 
-function formatTempoRelativo(iso?: string | null): string {
+function formatTempoRelativo(
+  iso?: string | null,
+  agoraMs: number | null = null
+): string {
   if (!iso) return "Sem registro recente";
+  if (agoraMs === null) return "--";
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return "--";
-  const diffMin = Math.max(0, Math.floor((Date.now() - dt.getTime()) / 60000));
+  const diffMin = Math.max(0, Math.floor((agoraMs - dt.getTime()) / 60000));
   if (diffMin < 1) return "agora";
   if (diffMin < 60) return `há ${diffMin} min`;
   const diffH = Math.floor(diffMin / 60);
@@ -130,14 +134,22 @@ export function TelemetryDrawer({
   const [radarFiltro, setRadarFiltro] = useState<
     "TODOS" | "CRITICO" | "ATENCAO" | "EVASAO"
   >("TODOS");
+  const [agoraMs, setAgoraMs] = useState<number | null>(null);
 
   useEffect(() => {
     if (!modulo) return;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) setAgoraMs(Date.now());
+    });
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      ativo = false;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [modulo, onClose]);
 
   const meta = modulo ? TITULO_MODULO[modulo] : null;
@@ -457,7 +469,7 @@ export function TelemetryDrawer({
                             Média: {item.mediaMgDl} mg/dL · Última:{" "}
                             {item.ultimoValor} mg/dL ·{" "}
                             {pluralizar(item.medicoes, "medição", "medições")} ·{" "}
-                            {formatTempoRelativo(item.ultimaData)}
+                            {formatTempoRelativo(item.ultimaData, agoraMs)}
                           </p>
                         </div>
                         <OpenProntuarioBtn
@@ -795,7 +807,7 @@ export function TelemetryDrawer({
                               </p>
                               <p className={`text-[11px] mt-0.5 ${mutedText}`}>
                                 {item.detalhe} ·{" "}
-                                {formatTempoRelativo(item.ultimoSinalEm)}
+                                {formatTempoRelativo(item.ultimoSinalEm, agoraMs)}
                               </p>
                             </div>
                             <OpenProntuarioBtn

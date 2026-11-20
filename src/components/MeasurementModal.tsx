@@ -24,6 +24,7 @@ import {
   saveAnthropometricMeasurement,
   MeasurementDTO,
 } from "@/actions/measurement-actions";
+import { formatarDataBR } from "@/lib/date-br";
 
 export interface MeasurementModalProps {
   open: boolean;
@@ -221,7 +222,7 @@ export function MeasurementModal({
             {latestMeasurement && (
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-sky-50/70 border border-sky-200/80 text-xs">
                 <div className="text-sky-950">
-                  <span className="font-bold">Última aferição ({new Date(latestMeasurement.measuredAt).toLocaleDateString("pt-BR")}): </span>
+                  <span className="font-bold">Última aferição ({formatarDataBR(latestMeasurement.measuredAt)}): </span>
                   <span>
                     Gordura:{" "}
                     <strong>

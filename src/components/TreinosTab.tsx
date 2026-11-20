@@ -16,6 +16,7 @@ import {
   TrendingUp,
   ShieldAlert,
 } from "lucide-react";
+import { getDataDiaBR, subtrairDiasDataBR, TIMEZONE_BR } from "@/lib/date-br";
 
 export interface TreinosTabProps {
   pacienteId: string;
@@ -61,6 +62,17 @@ export function TreinosTab({ pacienteId, pacienteNome }: TreinosTabProps) {
   const [salvando, setSalvando] = useState<boolean>(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
+  const [hojeIsoBR, setHojeIsoBR] = useState<string>("");
+
+  useEffect(() => {
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) setHojeIsoBR(getDataDiaBR());
+    });
+    return () => {
+      ativo = false;
+    };
+  }, []);
 
   // Carrega as diretrizes do paciente e o histórico de adesão
   useEffect(() => {
@@ -140,21 +152,18 @@ export function TreinosTab({ pacienteId, pacienteNome }: TreinosTabProps) {
     }
   }
 
-  // Gera dias dos últimos 30 dias para o mini calendário de adesão
+  // Gera dias dos últimos 30 dias em America/Sao_Paulo para o mini calendário de adesão
   const diasUltimos30 = React.useMemo(() => {
+    if (!hojeIsoBR) return [];
     const list: { dataStr: string; diaMes: string; ativo: boolean }[] = [];
     const checkinDates = new Set(
-      adesao.historicoCheckins.map((c) => {
-        const d = new Date(c.data);
-        return d.toISOString().slice(0, 10);
-      })
+      adesao.historicoCheckins.map((c) => getDataDiaBR(c.data))
     );
 
     for (let i = 29; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dataStr = d.toISOString().slice(0, 10);
-      const diaMes = `${d.getDate()}/${d.getMonth() + 1}`;
+      const dataStr = subtrairDiasDataBR(hojeIsoBR, i);
+      const [, mm, dd] = dataStr.split("-");
+      const diaMes = `${Number(dd)}/${Number(mm)}`;
       list.push({
         dataStr,
         diaMes,
@@ -163,7 +172,7 @@ export function TreinosTab({ pacienteId, pacienteNome }: TreinosTabProps) {
     }
 
     return list;
-  }, [adesao.historicoCheckins]);
+  }, [adesao.historicoCheckins, hojeIsoBR]);
 
   const volumeMinutosSemanal = frequenciaDias * duracaoMinutos;
   const atingeRecomendacaoOMS = volumeMinutosSemanal >= 150;
@@ -317,6 +326,7 @@ export function TreinosTab({ pacienteId, pacienteNome }: TreinosTabProps) {
                   Último treino em:{" "}
                   <strong className="text-slate-800">
                     {new Date(adesao.historicoCheckins[0].data).toLocaleDateString("pt-BR", {
+                      timeZone: TIMEZONE_BR,
                       day: "2-digit",
                       month: "2-digit",
                       hour: "2-digit",
