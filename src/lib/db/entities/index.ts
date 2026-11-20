@@ -28,6 +28,10 @@ import {
   VariacaoDietaEntity,
 } from "./nutrition";
 import { OrganizationEntity } from "./organization";
+import {
+  ConsultaPacoteEntity,
+  PacoteAcompanhamentoEntity,
+} from "./packages";
 import { PatientEntity } from "./patient";
 import { UserEntity } from "./user";
 
@@ -64,6 +68,13 @@ export type {
   VariacaoDieta,
 } from "./nutrition";
 export type { Organization } from "./organization";
+export type {
+  ConsultaPacote,
+  PacoteAcompanhamento,
+  StatusConsultaPacote,
+  StatusPacoteAcompanhamento,
+  TipoConsultaPacote,
+} from "./packages";
 export type { Patient } from "./patient";
 export type { User } from "./user";
 
@@ -75,6 +86,7 @@ export {
   CheckinIntestinalEntity,
   CheckinRefeicaoEntity,
   CheckInSonoEntity,
+  ConsultaPacoteEntity,
   DietSubstitutionEntity,
   DocumentTemplateEntity,
   EvolucaoClinicaEntity,
@@ -84,6 +96,7 @@ export {
   MeasurementEntity,
   MedicoEntity,
   OrganizationEntity,
+  PacoteAcompanhamentoEntity,
   PatientEntity,
   PatientGoalEntity,
   PlanoAlimentarEntity,
@@ -97,7 +110,7 @@ export {
 };
 
 /**
- * Todas as entidades registradas no DataSource (Lotes 1 a 5).
+ * Todas as entidades registradas no DataSource (Lotes 1 a 6).
  */
 export const entities = [
   OrganizationEntity,
@@ -126,4 +139,6 @@ export const entities = [
   CheckinHidratacaoEntity,
   CheckInSonoEntity,
   WorkoutLogEntity,
+  PacoteAcompanhamentoEntity,
+  ConsultaPacoteEntity,
 ];

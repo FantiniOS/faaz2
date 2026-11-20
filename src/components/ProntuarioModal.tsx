@@ -36,13 +36,16 @@ import {
   Info,
   Plus,
   Smartphone,
+  Award,
 } from "lucide-react";
 import { DietaTab } from "@/components/DietaTab";
 import { MetasTab } from "@/components/MetasTab";
 import { TreinosTab } from "@/components/TreinosTab";
+import { PlanoFaazTab } from "@/components/PlanoFaazTab";
 import { MeasurementModal } from "@/components/MeasurementModal";
 import { TermometroExecutivoCard } from "@/components/TermometroExecutivoCard";
 import type { MeasurementDTO } from "@/actions/measurement-actions";
+import type { PacotesPacienteResponse } from "@/lib/pacotes-faaz";
 import {
   criarDataBR,
   formatarDataBR,
@@ -109,6 +112,7 @@ interface PacienteApiData {
   sexo?: string;
   status?: string;
   convenio?: string;
+  planoFaaz?: boolean;
   telefoneWhatsapp?: string;
   heightCm?: number | null;
   clinicalFocus?: string | null;
@@ -451,7 +455,14 @@ export function ProntuarioModal({
   currentUserCargo,
 }: ProntuarioModalProps) {
   // Controle da Aba Selecionada (Prontuário ativa por padrão)
-  const [activeTab, setActiveTab] = useState<"prontuario" | "dieta" | "metas" | "treinos" | "documentos">("prontuario");
+  const [activeTab, setActiveTab] = useState<
+    "prontuario" | "dieta" | "metas" | "treinos" | "documentos" | "plano_faaz"
+  >("prontuario");
+
+  // Controle de Pacotes e Consultas (Plano FAAZ)
+  const [pacotesData, setPacotesData] =
+    useState<PacotesPacienteResponse | null>(null);
+  const [contabilizarNoPacote, setContabilizarNoPacote] = useState(true);
 
   // Estados de carregamento e salvamento
   const [isLoading, setIsLoading] = useState(false);
@@ -573,13 +584,28 @@ export function ProntuarioModal({
         setMedicacoes("");
         setEvolucao("");
         setUltimaAtualizacao(null);
+        setPacotesData(null);
+        setContabilizarNoPacote(true);
 
-        const res = await fetch(`/api/pacientes/${paciente.id}/prontuario`, {
-          cache: "no-store",
-          headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
-        });
+        const [res, resPacotes] = await Promise.all([
+          fetch(`/api/pacientes/${paciente.id}/prontuario`, {
+            cache: "no-store",
+            headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+          }),
+          fetch(`/api/pacientes/${paciente.id}/pacotes`, {
+            cache: "no-store",
+            headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+          }).catch(() => null),
+        ]);
 
         if (!ativo) return;
+
+        if (resPacotes && resPacotes.ok) {
+          const jsonPacotes = await resPacotes.json().catch(() => null);
+          if (ativo && jsonPacotes?.success) {
+            setPacotesData(jsonPacotes as PacotesPacienteResponse);
+          }
+        }
 
         if (res.status === 403) {
           setIsAccessDenied(true);
@@ -1820,6 +1846,17 @@ export function ProntuarioModal({
     }
   }
 
+  const pacoteAtivo = pacotesData?.pacoteAtivo ?? null;
+  const ultimoPacoteConcluido = pacotesData?.ultimoPacoteConcluido ?? null;
+  const isMembroPlanoFaaz = Boolean(
+    pacotesData?.membroPlanoFaaz ||
+      pacienteApiData?.planoFaaz ||
+      paciente?.planoFaaz
+  );
+  const pacoteAtivoComSaldo = Boolean(
+    pacoteAtivo && pacoteAtivo.consultasRestantes > 0
+  );
+
   // Salvar Ficha e Registrar Novo Atendimento na Linha do Tempo
   async function handleSalvarERegistrarAtendimento(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -1828,6 +1865,9 @@ export function ProntuarioModal({
     try {
       setIsSaving(true);
       const objetivoNormalizado = normalizarObjetivoClinicoValor(objetivo);
+      const deveContabilizarPacote = Boolean(
+        pacoteAtivoComSaldo && contabilizarNoPacote
+      );
       const res = await fetch(`/api/pacientes/${paciente.id}/prontuario`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -1840,6 +1880,7 @@ export function ProntuarioModal({
           medicacoes: medicacoes ? medicacoes.trim().toUpperCase() : medicacoes,
           evolucao: evolucao ? evolucao.trim().toUpperCase() : evolucao,
           registrarAtendimento: true,
+          contabilizarNoPacote: deveContabilizarPacote,
         }),
       });
 
@@ -1872,8 +1913,34 @@ export function ProntuarioModal({
       setEvolucao("");
       setTermometroRefreshKey((k) => k + 1);
 
-      setSuccessToast("Atendimento registrado e histórico clínico atualizado com sucesso!");
-      setTimeout(() => setSuccessToast(null), 3000);
+      if (json.consultaPacoteRegistrada) {
+        try {
+          const resPac = await fetch(`/api/pacientes/${paciente.id}/pacotes`, {
+            cache: "no-store",
+          });
+          if (resPac.ok) {
+            const jsonPac = await resPac.json().catch(() => null);
+            if (jsonPac?.success) {
+              setPacotesData(jsonPac as PacotesPacienteResponse);
+            }
+          }
+        } catch {
+          // silencioso
+        }
+        const cp = json.consultaPacoteRegistrada as {
+          numeroConsulta: number;
+          qtdTotalConsultas: number;
+          nomePlano: string;
+        };
+        setSuccessToast(
+          `Atendimento salvo e consulta ${cp.numeroConsulta}/${cp.qtdTotalConsultas} contabilizada no ${cp.nomePlano}!`
+        );
+      } else {
+        setSuccessToast(
+          "Atendimento registrado e histórico clínico atualizado com sucesso!"
+        );
+      }
+      setTimeout(() => setSuccessToast(null), 3500);
     } catch (err) {
       console.error("Erro ao registrar atendimento:", err);
       alert("Falha de comunicação ao salvar o prontuário.");
@@ -2052,6 +2119,65 @@ export function ProntuarioModal({
                   <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-slate-600 border border-slate-200 shrink-0">
                     {pacienteConvenio}
                   </span>
+
+                  {/* BADGE CLICÁVEL DE SALDO DO PLANO FAAZ */}
+                  {pacoteAtivo ? (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("plano_faaz")}
+                      title={`Abrir controle do pacote: ${pacoteAtivo.nomePlano}`}
+                      className={`px-2.5 py-0.5 text-[11px] font-mono tabular-nums cursor-pointer transition-all hover:shadow-xs shrink-0 ${
+                        pacoteAtivo.vencido || pacoteAtivo.consultasRestantes === 0
+                          ? "cl-badge-rose"
+                          : pacoteAtivo.alertaRenovacao
+                            ? "cl-badge-amber"
+                            : "cl-badge-emerald"
+                      }`}
+                    >
+                      <Award className="w-3 h-3 shrink-0" />
+                      <span className="font-sans">
+                        Plano FAAZ ·{" "}
+                        <strong className="font-mono">
+                          {pacoteAtivo.consultasRealizadas}/
+                          {pacoteAtivo.qtdTotalConsultas}
+                        </strong>{" "}
+                        {pacoteAtivo.vencido
+                          ? "· Vencido"
+                          : pacoteAtivo.consultasRestantes === 0
+                            ? "· Concluído"
+                            : pacoteAtivo.alertaRenovacao
+                              ? "· Renovar"
+                              : "consultas"}
+                      </span>
+                    </button>
+                  ) : ultimoPacoteConcluido ? (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("plano_faaz")}
+                      title={`Pacote concluído: ${ultimoPacoteConcluido.nomePlano}. Clique para renovar.`}
+                      className="cl-badge-rose px-2.5 py-0.5 text-[11px] cursor-pointer transition-all hover:shadow-xs shrink-0"
+                    >
+                      <Award className="w-3 h-3 shrink-0" />
+                      <span>
+                        Plano FAAZ ·{" "}
+                        <strong className="font-mono tabular-nums">
+                          {ultimoPacoteConcluido.consultasRealizadas}/
+                          {ultimoPacoteConcluido.qtdTotalConsultas}
+                        </strong>{" "}
+                        · Concluído
+                      </span>
+                    </button>
+                  ) : isMembroPlanoFaaz ? (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("plano_faaz")}
+                      title="Configurar pacote de consultas do Plano FAAZ"
+                      className="cl-badge-teal px-2.5 py-0.5 text-[11px] cursor-pointer transition-all hover:shadow-xs shrink-0"
+                    >
+                      <Award className="w-3 h-3 shrink-0" />
+                      <span>Membro Plano FAAZ</span>
+                    </button>
+                  ) : null}
                 </div>
 
                 {/* LINHA 2: DADOS SECUNDÁRIOS COMPACTOS (CPF, GÊNERO, IDADE, ATENDIMENTO, OBJETIVO) */}
@@ -2448,6 +2574,47 @@ export function ProntuarioModal({
                 PDF
               </span>
             </button>
+
+            {/* ABA 6: PLANO FAAZ (CONTROLE DE PACOTES E CONSULTAS) */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("plano_faaz")}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t-2 shrink-0 ${
+                activeTab === "plano_faaz"
+                  ? "bg-white text-emerald-800 border-emerald-600 shadow-2xs"
+                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-white/70"
+              }`}
+            >
+              <Award
+                className={`w-4 h-4 ${
+                  activeTab === "plano_faaz"
+                    ? "text-emerald-600"
+                    : "text-slate-400"
+                }`}
+              />
+              <span>Plano FAAZ</span>
+              {pacoteAtivo ? (
+                <span
+                  className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold tabular-nums border ${
+                    pacoteAtivo.vencido || pacoteAtivo.consultasRestantes === 0
+                      ? "bg-rose-50 text-rose-700 border-rose-200"
+                      : pacoteAtivo.alertaRenovacao
+                        ? "bg-amber-50 text-amber-800 border-amber-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200/80"
+                  }`}
+                >
+                  {pacoteAtivo.consultasRealizadas}/
+                  {pacoteAtivo.qtdTotalConsultas}
+                </span>
+              ) : ultimoPacoteConcluido ? (
+                <span className="px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold tabular-nums bg-rose-50 text-rose-700 border border-rose-200">
+                  {ultimoPacoteConcluido.consultasRealizadas}/
+                  {ultimoPacoteConcluido.qtdTotalConsultas}
+                </span>
+              ) : (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              )}
+            </button>
           </div>
         </div>
 
@@ -2739,6 +2906,33 @@ export function ProntuarioModal({
                         className="w-full flex-1 flex-grow min-h-[180px] h-full text-xs font-normal leading-relaxed p-4 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 transition-all placeholder:text-slate-400 bg-white resize-y shadow-2xs uppercase"
                       />
                     </div>
+
+                    {/* CHECKBOX DE BAIXA AUTOMÁTICA NO PACOTE ATIVO (PLANO FAAZ) */}
+                    {pacoteAtivoComSaldo && pacoteAtivo && (
+                      <label className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200/80 hover:border-emerald-300 transition-colors cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={contabilizarNoPacote}
+                          onChange={(e) =>
+                            setContabilizarNoPacote(e.target.checked)
+                          }
+                          className="mt-0.5 w-4 h-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500/30 cursor-pointer shrink-0 accent-emerald-600"
+                        />
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-emerald-950 block">
+                            Contabilizar como consulta{" "}
+                            <span className="font-mono tabular-nums">
+                              {pacoteAtivo.consultasRealizadas + 1}/
+                              {pacoteAtivo.qtdTotalConsultas}
+                            </span>{" "}
+                            do {pacoteAtivo.nomePlano}
+                          </span>
+                          <span className="text-[10px] font-medium text-emerald-800/75 block mt-0.5">
+                            Desmarque caso seja apenas anotação sem descontar do pacote
+                          </span>
+                        </div>
+                      </label>
+                    )}
 
                     {/* BARRA DE AÇÃO DA SEÇÃO SUPERIOR COM BOTÃO DE DESTAQUE */}
                     <div className="flex items-center justify-between pt-1 shrink-0">
@@ -3155,6 +3349,21 @@ export function ProntuarioModal({
           <TreinosTab
             pacienteId={paciente?.id || ""}
             pacienteNome={paciente?.nome || "Paciente"}
+          />
+        ) : activeTab === "plano_faaz" ? (
+          /* CONTEÚDO DA ABA PLANO FAAZ (CONTROLE DE PACOTES E CONSULTAS) */
+          <PlanoFaazTab
+            pacienteId={paciente?.id || ""}
+            pacienteNome={pacienteNome}
+            pacotesDataInicial={pacotesData}
+            onPacotesUpdated={(next) => {
+              setPacotesData(next);
+              if (next.membroPlanoFaaz) {
+                setPacienteApiData((prev) =>
+                  prev ? { ...prev, planoFaaz: true } : prev
+                );
+              }
+            }}
           />
         ) : (
           /* CONTEÚDO DA ABA RECEITAS, EXAMES & ATESTADOS (PDF NATIVO) */

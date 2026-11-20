@@ -5,9 +5,11 @@ import { In } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import {
   BiometricMeasurementEntity,
+  ConsultaPacoteEntity,
   EvolucaoClinicaEntity,
   GoalCheckinEntity,
   MeasurementEntity,
+  PacoteAcompanhamentoEntity,
   PatientEntity,
   ProntuarioPacienteEntity,
   RegistroGlicemiaEntity,
@@ -16,7 +18,8 @@ import {
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { invalidarCacheMetricaPeso } from "@/lib/metrica-peso-eliminado";
-import { toIsoUtc } from "@/lib/date-br";
+import { formatarHoraBR, getDataDiaBR, toIsoUtc } from "@/lib/date-br";
+import { consultaDescontaSaldo } from "@/lib/pacotes-faaz";
 import {
   normalizarObjetivoClinicoValor,
   resolverObjetivoAtivo,
@@ -89,6 +92,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           biologicalSex: true,
           patientStatus: true,
           convenio: true,
+          planoFaaz: true,
           phoneWhatsapp: true,
           heightCm: true,
           clinicalFocus: true,
@@ -384,6 +388,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           sexo: sexoFormatado,
           status: statusFormatado,
           convenio: paciente.convenio,
+          planoFaaz: Boolean(paciente.planoFaaz),
           telefoneWhatsapp: paciente.phoneWhatsapp,
           heightCm: paciente.heightCm != null ? Number(paciente.heightCm) : null,
           clinicalFocus: objetivoUnificado || null,
@@ -484,6 +489,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       evolucao,
       queixaPrincipal,
       registrarAtendimento = true,
+      contabilizarNoPacote = false,
     } = body;
 
     const pesoNum =
@@ -551,8 +557,9 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       await patientRepo.update({ id }, patientUpdateData);
     }
 
+    let evolucaoSalvaId: string | null = null;
     if (registrarAtendimento && (evolucao || queixaPrincipal || pesoNum)) {
-      await evolucaoRepo.save(
+      const evolucaoCriada = await evolucaoRepo.save(
         evolucaoRepo.create({
           pacienteId: id,
           dataAtendimento: new Date(),
@@ -571,6 +578,74 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
           medicoResponsavel: sessao?.nome || "Equipe Clínica FAAZ",
         }),
       );
+      evolucaoSalvaId = evolucaoCriada.id;
+    }
+
+    // Baixa automática no Pacote de Acompanhamento (Plano FAAZ) quando marcada no atendimento
+    let consultaPacoteRegistrada: {
+      id: string;
+      pacoteId: string;
+      nomePlano: string;
+      numeroConsulta: number;
+      qtdTotalConsultas: number;
+      pacoteConcluido: boolean;
+    } | null = null;
+
+    if (contabilizarNoPacote === true) {
+      const [pacoteRepo, consultaPacoteRepo] = await Promise.all([
+        getRepository(PacoteAcompanhamentoEntity),
+        getRepository(ConsultaPacoteEntity),
+      ]);
+
+      const pacoteAtivo = await pacoteRepo.findOne({
+        where: { pacienteId: id, status: "ATIVO" },
+        order: { createdAt: "DESC" },
+      });
+
+      if (pacoteAtivo) {
+        const existentes = await consultaPacoteRepo.find({
+          where: { pacoteId: pacoteAtivo.id },
+          select: { id: true, status: true },
+        });
+        const realizadasAntes = existentes.filter((c) =>
+          consultaDescontaSaldo(c.status),
+        ).length;
+        const qtdTotal = Math.max(1, Number(pacoteAtivo.qtdTotalConsultas) || 1);
+
+        if (realizadasAntes < qtdTotal) {
+          const agora = new Date();
+          const consultaCriada = await consultaPacoteRepo.save(
+            consultaPacoteRepo.create({
+              pacoteId: pacoteAtivo.id,
+              pacienteId: id,
+              dataConsulta: getDataDiaBR(agora),
+              horaConsulta: formatarHoraBR(agora),
+              tipo: "PRESENCIAL",
+              status: "REALIZADA",
+              profissionalNome: sessao?.nome || "Equipe Clínica FAAZ",
+              evolucaoId: evolucaoSalvaId,
+              observacao:
+                "Baixa automática vinculada ao registro de consulta no prontuário.",
+            }),
+          );
+
+          const realizadasDepois = realizadasAntes + 1;
+          const pacoteConcluido = realizadasDepois >= qtdTotal;
+          if (pacoteConcluido) {
+            pacoteAtivo.status = "CONCLUIDO";
+            await pacoteRepo.save(pacoteAtivo);
+          }
+
+          consultaPacoteRegistrada = {
+            id: consultaCriada.id,
+            pacoteId: pacoteAtivo.id,
+            nomePlano: pacoteAtivo.nomePlano,
+            numeroConsulta: realizadasDepois,
+            qtdTotalConsultas: qtdTotal,
+            pacoteConcluido,
+          };
+        }
+      }
     }
 
     invalidarCacheMetricaPeso();
@@ -596,6 +671,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         imc: prontuarioSalvo.imc != null ? Number(prontuarioSalvo.imc) : null,
       },
       historico: historicoAtualizado,
+      consultaPacoteRegistrada,
     });
   } catch (error: unknown) {
     console.error("[PRONTUARIO/PUT] Erro:", error);
