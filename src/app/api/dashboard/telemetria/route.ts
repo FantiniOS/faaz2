@@ -2,7 +2,10 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { IsNull, MoreThanOrEqual } from "typeorm";
-import { getDataSource, withOracleRetry } from "@/lib/db/data-source";
+import {
+  runSettledWithConcurrency,
+  withRepositoryRetry,
+} from "@/lib/db/data-source";
 import {
   AgendamentoEntity,
   BiometricMeasurementEntity,
@@ -16,6 +19,18 @@ import {
   PatientGoalEntity,
   RegistroGlicemiaEntity,
   WorkoutLogEntity,
+  type Agendamento,
+  type BiometricMeasurement,
+  type CheckinHidratacao,
+  type CheckinIntestinal,
+  type CheckinRefeicao,
+  type CheckInSono,
+  type EvolucaoClinica,
+  type Measurement,
+  type Patient,
+  type PatientGoal,
+  type RegistroGlicemia,
+  type WorkoutLog,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
@@ -63,28 +78,6 @@ function parseDateSafe(raw: unknown): Date | null {
 function toIsoSafe(raw: unknown, fallback?: Date): string | null {
   const d = parseDateSafe(raw) ?? (fallback ? parseDateSafe(fallback) : null);
   return d ? d.toISOString() : null;
-}
-
-/**
- * Executa tarefas assíncronas com concorrência limitada para não saturar o pool
- * do Oracle ADB (30 sessões globais em Always Free).
- */
-async function runWithConcurrency(
-  tasks: Array<() => Promise<void>>,
-  concurrency: number
-): Promise<void> {
-  const limit = Math.max(1, Math.min(concurrency, tasks.length || 1));
-  let cursor = 0;
-
-  const worker = async () => {
-    while (cursor < tasks.length) {
-      const idx = cursor;
-      cursor += 1;
-      await tasks[idx]();
-    }
-  };
-
-  await Promise.all(Array.from({ length: limit }, () => worker()));
 }
 
 function formatDiaLabelPt(isoDate: string): string {
@@ -286,48 +279,16 @@ export async function GET(req: NextRequest) {
       adicionarDiasDataBR(janela.hojeIso, 8)
     ).inicioUtc;
 
-    const ds = await withOracleRetry(() => getDataSource(), {
-      label: "telemetria:dataSource",
-    });
-
-    const patientRepo = ds.getRepository(PatientEntity);
-    const agendamentoRepo = ds.getRepository(AgendamentoEntity);
-    const checkinRefeicaoRepo = ds.getRepository(CheckinRefeicaoEntity);
-    const glicemiaRepo = ds.getRepository(RegistroGlicemiaEntity);
-    const intestinoRepo = ds.getRepository(CheckinIntestinalEntity);
-    const hidraRepo = ds.getRepository(CheckinHidratacaoEntity);
-    const workoutRepo = ds.getRepository(WorkoutLogEntity);
-    const sonoRepo = ds.getRepository(CheckInSonoEntity);
-    const goalRepo = ds.getRepository(PatientGoalEntity);
-    const bioRepo = ds.getRepository(BiometricMeasurementEntity);
-    const evolucaoRepo = ds.getRepository(EvolucaoClinicaEntity);
-    const measurementRepo = ds.getRepository(MeasurementEntity);
-
     const dbStart = performance.now();
     const modulosComErro: string[] = [];
 
-    const carregarModulo = async <T>(
-      modulo: string,
-      queryFn: () => Promise<T>,
-      fallback: T
-    ): Promise<T> => {
-      try {
-        return await withOracleRetry(queryFn, {
-          label: `telemetria:${modulo}`,
-        });
-      } catch (err: unknown) {
-        modulosComErro.push(modulo);
-        console.error(`[telemetria] erro no modulo ${modulo}:`, err);
-        return fallback;
-      }
-    };
-
     // Consulta base obrigatória (pacientes ativos) com retry único em erro transitório Oracle
-    let pacientesAtivos: Awaited<ReturnType<typeof patientRepo.find>>;
+    let pacientesAtivos: Patient[];
     try {
-      pacientesAtivos = await withOracleRetry(
-        () =>
-          patientRepo.find({
+      pacientesAtivos = await withRepositoryRetry(
+        PatientEntity,
+        (repo) =>
+          repo.find({
             where: { patientStatus: "ACTIVE", deletedAt: IsNull() },
             select: {
               id: true,
@@ -356,27 +317,29 @@ export async function GET(req: NextRequest) {
       throw err;
     }
 
-    let agendamentosFuturos: Awaited<ReturnType<typeof agendamentoRepo.find>> = [];
-    let checkinsRefeicoesRaw: Awaited<ReturnType<typeof checkinRefeicaoRepo.find>> = [];
-    let glicemiasRaw: Awaited<ReturnType<typeof glicemiaRepo.find>> = [];
-    let intestinosRaw: Awaited<ReturnType<typeof intestinoRepo.find>> = [];
-    let hidratacoesRaw: Awaited<ReturnType<typeof hidraRepo.find>> = [];
-    let workoutsRaw: Awaited<ReturnType<typeof workoutRepo.find>> = [];
-    let sonos7dRaw: Awaited<ReturnType<typeof sonoRepo.find>> = [];
-    let activeGoals: Awaited<ReturnType<typeof goalRepo.find>> = [];
-    let biometriasRaw: Awaited<ReturnType<typeof bioRepo.find>> = [];
-    let evolucoesRaw: Awaited<ReturnType<typeof evolucaoRepo.find>> = [];
-    let measurementsRaw: Awaited<ReturnType<typeof measurementRepo.find>> = [];
+    let agendamentosFuturos: Agendamento[] = [];
+    let checkinsRefeicoesRaw: CheckinRefeicao[] = [];
+    let glicemiasRaw: RegistroGlicemia[] = [];
+    let intestinosRaw: CheckinIntestinal[] = [];
+    let hidratacoesRaw: CheckinHidratacao[] = [];
+    let workoutsRaw: WorkoutLog[] = [];
+    let sonos7dRaw: CheckInSono[] = [];
+    let activeGoals: PatientGoal[] = [];
+    let biometriasRaw: BiometricMeasurement[] = [];
+    let evolucoesRaw: EvolucaoClinica[] = [];
+    let measurementsRaw: Measurement[] = [];
 
-    // Executa os 11 módulos secundários com concorrência controlada (=2, alinhada ao
-    // poolMax Serverless) e isolamento de falhas por módulo para nunca derrubar o Dashboard.
-    await runWithConcurrency(
-      [
-        async () => {
-          agendamentosFuturos = await carregarModulo(
-            "agendamentosFuturos",
-            () =>
-              agendamentoRepo.find({
+    const modulosSecundarios: Array<{
+      nome: string;
+      executar: () => Promise<void>;
+    }> = [
+      {
+        nome: "agendamentosFuturos",
+        executar: async () => {
+          agendamentosFuturos = await withRepositoryRetry(
+            AgendamentoEntity,
+            (repo) =>
+              repo.find({
                 where: { dataHora: MoreThanOrEqual(inicioHojeDate) },
                 select: {
                   id: true,
@@ -399,14 +362,17 @@ export async function GET(req: NextRequest) {
                 order: { dataHora: "ASC" },
                 take: 40,
               }),
-            []
+            { label: "telemetria:agendamentosFuturos" }
           );
         },
-        async () => {
-          checkinsRefeicoesRaw = await carregarModulo(
-            "checkinsRefeicoes",
-            () =>
-              checkinRefeicaoRepo.find({
+      },
+      {
+        nome: "checkinsRefeicoes",
+        executar: async () => {
+          checkinsRefeicoesRaw = await withRepositoryRetry(
+            CheckinRefeicaoEntity,
+            (repo) =>
+              repo.find({
                 where: { dataDia: MoreThanOrEqual(queryStartIso) },
                 select: {
                   id: true,
@@ -426,14 +392,17 @@ export async function GET(req: NextRequest) {
                 relations: { refeicao: true },
                 order: { dataDia: "DESC", criadoEm: "DESC" },
               }),
-            []
+            { label: "telemetria:checkinsRefeicoes" }
           );
         },
-        async () => {
-          glicemiasRaw = await carregarModulo(
-            "glicemias",
-            () =>
-              glicemiaRepo.find({
+      },
+      {
+        nome: "glicemias",
+        executar: async () => {
+          glicemiasRaw = await withRepositoryRetry(
+            RegistroGlicemiaEntity,
+            (repo) =>
+              repo.find({
                 where: { dataRegistro: MoreThanOrEqual(queryStartDate) },
                 select: {
                   id: true,
@@ -444,14 +413,17 @@ export async function GET(req: NextRequest) {
                 },
                 order: { dataRegistro: "DESC" },
               }),
-            []
+            { label: "telemetria:glicemias" }
           );
         },
-        async () => {
-          intestinosRaw = await carregarModulo(
-            "intestinos",
-            () =>
-              intestinoRepo.find({
+      },
+      {
+        nome: "intestinos",
+        executar: async () => {
+          intestinosRaw = await withRepositoryRetry(
+            CheckinIntestinalEntity,
+            (repo) =>
+              repo.find({
                 where: { data: MoreThanOrEqual(queryStartDate) },
                 select: {
                   id: true,
@@ -463,14 +435,17 @@ export async function GET(req: NextRequest) {
                 },
                 order: { data: "DESC" },
               }),
-            []
+            { label: "telemetria:intestinos" }
           );
         },
-        async () => {
-          hidratacoesRaw = await carregarModulo(
-            "hidratacoes",
-            () =>
-              hidraRepo.find({
+      },
+      {
+        nome: "hidratacoes",
+        executar: async () => {
+          hidratacoesRaw = await withRepositoryRetry(
+            CheckinHidratacaoEntity,
+            (repo) =>
+              repo.find({
                 where: { data: MoreThanOrEqual(queryStartDate) },
                 select: {
                   id: true,
@@ -480,14 +455,17 @@ export async function GET(req: NextRequest) {
                 },
                 order: { data: "DESC" },
               }),
-            []
+            { label: "telemetria:hidratacoes" }
           );
         },
-        async () => {
-          workoutsRaw = await carregarModulo(
-            "workouts",
-            () =>
-              workoutRepo.find({
+      },
+      {
+        nome: "workouts",
+        executar: async () => {
+          workoutsRaw = await withRepositoryRetry(
+            WorkoutLogEntity,
+            (repo) =>
+              repo.find({
                 where: { date: MoreThanOrEqual(queryStartDate) },
                 select: {
                   id: true,
@@ -496,14 +474,17 @@ export async function GET(req: NextRequest) {
                 },
                 order: { date: "DESC" },
               }),
-            []
+            { label: "telemetria:workouts" }
           );
         },
-        async () => {
-          sonos7dRaw = await carregarModulo(
-            "sonos7d",
-            () =>
-              sonoRepo.find({
+      },
+      {
+        nome: "sonos7d",
+        executar: async () => {
+          sonos7dRaw = await withRepositoryRetry(
+            CheckInSonoEntity,
+            (repo) =>
+              repo.find({
                 where: { data: MoreThanOrEqual(seteDiasAtrasDate) },
                 select: {
                   pacienteId: true,
@@ -511,14 +492,17 @@ export async function GET(req: NextRequest) {
                 },
                 order: { data: "DESC" },
               }),
-            []
+            { label: "telemetria:sonos7d" }
           );
         },
-        async () => {
-          activeGoals = await carregarModulo(
-            "activeGoals",
-            () =>
-              goalRepo.find({
+      },
+      {
+        nome: "activeGoals",
+        executar: async () => {
+          activeGoals = await withRepositoryRetry(
+            PatientGoalEntity,
+            (repo) =>
+              repo.find({
                 where: { status: "ACTIVE", deletedAt: IsNull() },
                 select: {
                   patientId: true,
@@ -528,14 +512,17 @@ export async function GET(req: NextRequest) {
                   targetValue: true,
                 },
               }),
-            []
+            { label: "telemetria:activeGoals" }
           );
         },
-        async () => {
-          biometriasRaw = await carregarModulo(
-            "biometrias",
-            () =>
-              bioRepo.find({
+      },
+      {
+        nome: "biometrias",
+        executar: async () => {
+          biometriasRaw = await withRepositoryRetry(
+            BiometricMeasurementEntity,
+            (repo) =>
+              repo.find({
                 select: {
                   id: true,
                   patientId: true,
@@ -547,14 +534,17 @@ export async function GET(req: NextRequest) {
                 order: { measuredAt: "DESC", createdAt: "DESC" },
                 take: 600,
               }),
-            []
+            { label: "telemetria:biometrias" }
           );
         },
-        async () => {
-          evolucoesRaw = await carregarModulo(
-            "evolucoes",
-            () =>
-              evolucaoRepo.find({
+      },
+      {
+        nome: "evolucoes",
+        executar: async () => {
+          evolucoesRaw = await withRepositoryRetry(
+            EvolucaoClinicaEntity,
+            (repo) =>
+              repo.find({
                 select: {
                   id: true,
                   pacienteId: true,
@@ -566,14 +556,17 @@ export async function GET(req: NextRequest) {
                 order: { dataAtendimento: "DESC", createdAt: "DESC" },
                 take: 600,
               }),
-            []
+            { label: "telemetria:evolucoes" }
           );
         },
-        async () => {
-          measurementsRaw = await carregarModulo(
-            "measurements",
-            () =>
-              measurementRepo.find({
+      },
+      {
+        nome: "measurements",
+        executar: async () => {
+          measurementsRaw = await withRepositoryRetry(
+            MeasurementEntity,
+            (repo) =>
+              repo.find({
                 select: {
                   id: true,
                   patientId: true,
@@ -590,12 +583,25 @@ export async function GET(req: NextRequest) {
                 order: { measuredAt: "DESC", createdAt: "DESC" },
                 take: 400,
               }),
-            []
+            { label: "telemetria:measurements" }
           );
         },
-      ],
+      },
+    ];
+
+    // Executa os 11 módulos secundários em ondas controladas de no máximo 2 queries
+    // paralelas com semântica Promise.allSettled para isolar qualquer erro por bloco.
+    const resultadosSecundarios = await runSettledWithConcurrency(
+      modulosSecundarios.map((m) => m.executar),
       2
     );
+    resultadosSecundarios.forEach((res, idx) => {
+      if (res.status === "rejected") {
+        const nome = modulosSecundarios[idx].nome;
+        modulosComErro.push(nome);
+        console.error(`[telemetria] erro no modulo ${nome}:`, res.reason);
+      }
+    });
 
     if (modulosComErro.length > 0) {
       console.warn(
@@ -985,10 +991,8 @@ export async function GET(req: NextRequest) {
           deltaCoxaCm: deltaCoxa,
           deltaCinturaCm: deltaCintura,
         });
-      } else {
-        if (perfil === "EMAGRECIMENTO") {
-          totalPacientesEmagrecimento += 1;
-        }
+      } else if (perfil === "EMAGRECIMENTO") {
+        totalPacientesEmagrecimento += 1;
 
         let reducaoAtualPaciente = 0;
         let pesoRefInicio: number | null = null;

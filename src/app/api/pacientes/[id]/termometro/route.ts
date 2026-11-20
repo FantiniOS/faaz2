@@ -2,7 +2,10 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { IsNull, MoreThanOrEqual } from "typeorm";
-import { getRepository } from "@/lib/db/data-source";
+import {
+  runWithConcurrency,
+  withRepositoryRetry,
+} from "@/lib/db/data-source";
 import {
   CheckinIntestinalEntity,
   CheckinRefeicaoEntity,
@@ -10,6 +13,12 @@ import {
   PatientEntity,
   RegistroGlicemiaEntity,
   WorkoutLogEntity,
+  type CheckinIntestinal,
+  type CheckinRefeicao,
+  type Measurement,
+  type Patient,
+  type RegistroGlicemia,
+  type WorkoutLog,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
@@ -109,114 +118,153 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       : 30;
 
     const dbStart = performance.now();
-    const [
-      patientRepo,
-      checkinRefeicaoRepo,
-      glicemiaRepo,
-      intestinoRepo,
-      workoutRepo,
-      measurementRepo,
-    ] = await Promise.all([
-      getRepository(PatientEntity),
-      getRepository(CheckinRefeicaoEntity),
-      getRepository(RegistroGlicemiaEntity),
-      getRepository(CheckinIntestinalEntity),
-      getRepository(WorkoutLogEntity),
-      getRepository(MeasurementEntity),
-    ]);
-
     const { dataInicioIso: inicioIso, inicioUtc: inicioDate } =
       getIntervaloDiasBR(dias);
 
-    // Paraleliza paciente + todas as séries em um único lote (economiza 1 round-trip Oracle)
-    // e projeta somente colunas necessárias (omite trocasJson e observacoes CLOB).
-    const [
+    const loaded = {
+      paciente: null as Patient | null,
+      checkinsRefeicoes: [] as CheckinRefeicao[],
+      registrosGlicemia: [] as RegistroGlicemia[],
+      checkinsIntestinais: [] as CheckinIntestinal[],
+      workoutLogs: [] as WorkoutLog[],
+      measurements: [] as Measurement[],
+    };
+
+    // Ondas de no máximo 2 queries paralelas (compatível com poolMax: 2 no Oracle ADB)
+    // e projeção estrita de colunas (omite trocasJson e observacoes CLOB).
+    await runWithConcurrency(
+      [
+        async () => {
+          loaded.paciente = await withRepositoryRetry(
+            PatientEntity,
+            (repo) =>
+              repo.findOne({
+                where: { id, deletedAt: IsNull() },
+                select: {
+                  id: true,
+                  fullName: true,
+                  workoutType: true,
+                  workoutFrequency: true,
+                  workoutDuration: true,
+                },
+              }),
+            { label: "termometro:paciente" }
+          );
+        },
+        async () => {
+          loaded.checkinsRefeicoes = await withRepositoryRetry(
+            CheckinRefeicaoEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  pacienteId: id,
+                  dataDia: MoreThanOrEqual(inicioIso),
+                },
+                select: {
+                  id: true,
+                  refeicaoId: true,
+                  dataDia: true,
+                  status: true,
+                  refeicao: {
+                    id: true,
+                    nome: true,
+                    horario: true,
+                    opcional: true,
+                  },
+                },
+                relations: { refeicao: true },
+                order: { dataDia: "DESC", criadoEm: "DESC" },
+              }),
+            { label: "termometro:refeicoes" }
+          );
+        },
+        async () => {
+          loaded.registrosGlicemia = await withRepositoryRetry(
+            RegistroGlicemiaEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  pacienteId: id,
+                  dataRegistro: MoreThanOrEqual(inicioDate),
+                },
+                select: {
+                  id: true,
+                  valor: true,
+                  dataRegistro: true,
+                },
+                order: { dataRegistro: "DESC" },
+              }),
+            { label: "termometro:glicemia" }
+          );
+        },
+        async () => {
+          loaded.checkinsIntestinais = await withRepositoryRetry(
+            CheckinIntestinalEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  pacienteId: id,
+                  data: MoreThanOrEqual(inicioDate),
+                },
+                select: {
+                  id: true,
+                  tipoBristol: true,
+                  categoria: true,
+                  sintomas: true,
+                  data: true,
+                },
+                order: { data: "DESC" },
+              }),
+            { label: "termometro:intestino" }
+          );
+        },
+        async () => {
+          loaded.workoutLogs = await withRepositoryRetry(
+            WorkoutLogEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  patientId: id,
+                  date: MoreThanOrEqual(inicioDate),
+                },
+                select: {
+                  id: true,
+                  date: true,
+                },
+                order: { date: "DESC" },
+              }),
+            { label: "termometro:treinos" }
+          );
+        },
+        async () => {
+          loaded.measurements = await withRepositoryRetry(
+            MeasurementEntity,
+            (repo) =>
+              repo.find({
+                where: { patientId: id },
+                select: {
+                  id: true,
+                  measuredAt: true,
+                  waist: true,
+                  abdomen: true,
+                },
+                order: { measuredAt: "DESC", createdAt: "DESC" },
+                take: 20,
+              }),
+            { label: "termometro:medidas" }
+          );
+        },
+      ],
+      2
+    );
+    const {
       paciente,
       checkinsRefeicoes,
       registrosGlicemia,
       checkinsIntestinais,
       workoutLogs,
       measurements,
-    ] = await Promise.all([
-      patientRepo.findOne({
-        where: { id, deletedAt: IsNull() },
-        select: {
-          id: true,
-          fullName: true,
-          workoutType: true,
-          workoutFrequency: true,
-          workoutDuration: true,
-        },
-      }),
-      checkinRefeicaoRepo.find({
-        where: {
-          pacienteId: id,
-          dataDia: MoreThanOrEqual(inicioIso),
-        },
-        select: {
-          id: true,
-          refeicaoId: true,
-          dataDia: true,
-          status: true,
-          refeicao: {
-            id: true,
-            nome: true,
-            horario: true,
-            opcional: true,
-          },
-        },
-        relations: { refeicao: true },
-        order: { dataDia: "DESC", criadoEm: "DESC" },
-      }),
-      glicemiaRepo.find({
-        where: {
-          pacienteId: id,
-          dataRegistro: MoreThanOrEqual(inicioDate),
-        },
-        select: {
-          id: true,
-          valor: true,
-          dataRegistro: true,
-        },
-        order: { dataRegistro: "DESC" },
-      }),
-      intestinoRepo.find({
-        where: {
-          pacienteId: id,
-          data: MoreThanOrEqual(inicioDate),
-        },
-        select: {
-          id: true,
-          tipoBristol: true,
-          categoria: true,
-          sintomas: true,
-          data: true,
-        },
-        order: { data: "DESC" },
-      }),
-      workoutRepo.find({
-        where: {
-          patientId: id,
-          date: MoreThanOrEqual(inicioDate),
-        },
-        select: {
-          id: true,
-          date: true,
-        },
-        order: { date: "DESC" },
-      }),
-      measurementRepo.find({
-        where: { patientId: id },
-        select: {
-          id: true,
-          measuredAt: true,
-          waist: true,
-          abdomen: true,
-        },
-        order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 20,
-      }),
-    ]);
+    } = loaded;
     const dbDurMs = Math.round(performance.now() - dbStart);
 
     if (!paciente) {

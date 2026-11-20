@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { In, IsNull } from "typeorm";
-import { getRepository, withTransaction } from "@/lib/db/data-source";
+import {
+  getRepository,
+  withRepositoryRetry,
+  withTransaction,
+} from "@/lib/db/data-source";
 import {
   CheckinHidratacaoEntity,
   CheckinIntestinalEntity,
@@ -34,58 +38,64 @@ export async function GET() {
     }
 
     const dbStart = performance.now();
-    const [orgRepo, patientRepo] = await Promise.all([
-      getRepository(OrganizationEntity),
-      getRepository(PatientEntity),
-    ]);
 
     let orgId = sessao?.organizationId;
     if (!orgId) {
-      const orgs = await orgRepo.find({
-        select: { id: true },
-        take: 1,
-      });
+      const orgs = await withRepositoryRetry(
+        OrganizationEntity,
+        (repo) =>
+          repo.find({
+            select: { id: true },
+            take: 1,
+          }),
+        { label: "pacientes:org" },
+      );
       orgId = orgs[0]?.id;
     }
 
     // Projeção explícita: omite CLOBs pesados não usados na listagem (workoutRestrictions, activeModules)
-    const pacientes = await patientRepo.find({
-      where: {
-        ...(orgId ? { organizationId: orgId } : {}),
-        deletedAt: IsNull(),
-      },
-      select: {
-        id: true,
-        recordCode: true,
-        fullName: true,
-        cpf: true,
-        rg: true,
-        birthDate: true,
-        biologicalSex: true,
-        estadoCivil: true,
-        profissao: true,
-        convenio: true,
-        planoFaaz: true,
-        patientStatus: true,
-        phoneWhatsapp: true,
-        telefoneSecundario: true,
-        email: true,
-        contatoEmergenciaNome: true,
-        contatoEmergenciaTelefone: true,
-        zipCode: true,
-        street: true,
-        number: true,
-        complement: true,
-        neighborhood: true,
-        city: true,
-        state: true,
-        metaDiariaMl: true,
-        avatarUrl: true,
-        photoUrl: true,
-        createdAt: true,
-      },
-      order: { fullName: "ASC" },
-    });
+    const pacientes = await withRepositoryRetry(
+      PatientEntity,
+      (repo) =>
+        repo.find({
+          where: {
+            ...(orgId ? { organizationId: orgId } : {}),
+            deletedAt: IsNull(),
+          },
+          select: {
+            id: true,
+            recordCode: true,
+            fullName: true,
+            cpf: true,
+            rg: true,
+            birthDate: true,
+            biologicalSex: true,
+            estadoCivil: true,
+            profissao: true,
+            convenio: true,
+            planoFaaz: true,
+            patientStatus: true,
+            phoneWhatsapp: true,
+            telefoneSecundario: true,
+            email: true,
+            contatoEmergenciaNome: true,
+            contatoEmergenciaTelefone: true,
+            zipCode: true,
+            street: true,
+            number: true,
+            complement: true,
+            neighborhood: true,
+            city: true,
+            state: true,
+            metaDiariaMl: true,
+            avatarUrl: true,
+            photoUrl: true,
+            createdAt: true,
+          },
+          order: { fullName: "ASC" },
+        }),
+      { label: "pacientes:list" },
+    );
     const dbDurMs = Math.round(performance.now() - dbStart);
 
     const formatados = pacientes.map((p) => ({

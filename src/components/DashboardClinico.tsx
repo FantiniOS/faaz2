@@ -327,6 +327,8 @@ export function DashboardClinico({
     useState<PacienteCadastral | null>(null);
 
   const customizerRef = useRef<HTMLDivElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const inFlightKeyRef = useRef<string | null>(null);
 
   // Hidrata saudação horária, relógio relativo e preferências do localStorage somente após montagem no cliente
   useEffect(() => {
@@ -415,6 +417,19 @@ export function DashboardClinico({
         }
       }
 
+      // Deduplicação de requests concorrentes para o mesmo período (evita rajadas no Oracle)
+      if (inFlightKeyRef.current === cacheKey && !forceBypassCache) {
+        return;
+      }
+
+      // Cancela requisição anterior em aberto ao trocar de período ou forçar refresh
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      inFlightKeyRef.current = cacheKey;
+
       try {
         if (modoRefresh || getClientCache(cacheKey)) {
           setIsRefreshing(true);
@@ -428,6 +443,7 @@ export function DashboardClinico({
           {
             cache: "no-store",
             headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+            signal: controller.signal,
           }
         );
 
@@ -440,19 +456,30 @@ export function DashboardClinico({
         }
 
         const json = (await res.json()) as TelemetriaDashboardResponse;
+        if (controller.signal.aborted) return;
         if (json?.success) {
           setClientCache(cacheKey, json);
           setDados(json);
         }
       } catch (err: unknown) {
+        if (
+          controller.signal.aborted ||
+          (err instanceof DOMException && err.name === "AbortError")
+        ) {
+          return;
+        }
         setErroCarga(
           err instanceof Error
             ? err.message
             : "Erro de comunicação com o servidor."
         );
       } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+          inFlightKeyRef.current = null;
+          setIsLoading(false);
+          setIsRefreshing(false);
+        }
       }
     },
     [periodo]
@@ -478,6 +505,11 @@ export function DashboardClinico({
     return () => {
       ativo = false;
       clearInterval(timer);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+        inFlightKeyRef.current = null;
+      }
     };
   }, [carregarTelemetria]);
 

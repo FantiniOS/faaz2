@@ -3,7 +3,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { IsNull, MoreThanOrEqual, Not } from "typeorm";
-import { getRepository, withTransaction } from "@/lib/db/data-source";
+import {
+  runWithConcurrency,
+  withRepositoryRetry,
+  withTransaction,
+} from "@/lib/db/data-source";
 import {
   CheckinHidratacaoEntity,
   CheckinRefeicaoEntity,
@@ -13,8 +17,15 @@ import {
   PatientGoalEntity,
   ProntuarioPacienteEntity,
   WorkoutLogEntity,
+  type CheckinHidratacao,
+  type CheckinRefeicao,
+  type CheckInSono,
+  type EvolucaoClinica,
   type GoalCategory,
+  type Patient,
   type PatientGoal,
+  type ProntuarioPaciente,
+  type WorkoutLog,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
@@ -125,31 +136,149 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const [
-      patientRepo,
-      prontuarioRepo,
-      goalRepo,
-      hidraRepo,
-      sonoRepo,
-      evolucaoRepo,
-      workoutRepo,
-      checkinRefeicaoRepo,
-    ] = await Promise.all([
-      getRepository(PatientEntity),
-      getRepository(ProntuarioPacienteEntity),
-      getRepository(PatientGoalEntity),
-      getRepository(CheckinHidratacaoEntity),
-      getRepository(CheckInSonoEntity),
-      getRepository(EvolucaoClinicaEntity),
-      getRepository(WorkoutLogEntity),
-      getRepository(CheckinRefeicaoEntity),
-    ]);
-
     const { dataInicioIso: inicio30dIso, inicioUtc: inicio30dUtc } =
       getIntervaloDiasBR(30);
     const hojeIso = getDataDiaBR();
 
-    const [
+    const loaded = {
+      paciente: null as Patient | null,
+      prontuario: null as ProntuarioPaciente | null,
+      patientGoals: [] as PatientGoal[],
+      checkinsHidratacao: [] as CheckinHidratacao[],
+      checkinsSono: [] as CheckInSono[],
+      evolucoesComPeso: [] as EvolucaoClinica[],
+      workoutLogs30d: [] as WorkoutLog[],
+      checkinsRefeicoes30d: [] as CheckinRefeicao[],
+    };
+
+    // Executa em ondas de no máximo 2 queries paralelas (compatível com poolMax: 2 no Oracle ADB)
+    await runWithConcurrency(
+      [
+        async () => {
+          loaded.paciente = await withRepositoryRetry(
+            PatientEntity,
+            (repo) =>
+              repo.findOne({
+                where: { id },
+                select: {
+                  id: true,
+                  deletedAt: true,
+                  heightCm: true,
+                  metaDiariaMl: true,
+                  treatmentObjective: true,
+                  clinicalFocus: true,
+                  workoutType: true,
+                  workoutFrequency: true,
+                  workoutDuration: true,
+                },
+              }),
+            { label: "metas:paciente" },
+          );
+        },
+        async () => {
+          loaded.prontuario = await withRepositoryRetry(
+            ProntuarioPacienteEntity,
+            (repo) => repo.findOne({ where: { pacienteId: id } }),
+            { label: "metas:prontuario" },
+          );
+        },
+        async () => {
+          loaded.patientGoals = await withRepositoryRetry(
+            PatientGoalEntity,
+            (repo) =>
+              repo.find({
+                where: { patientId: id, deletedAt: IsNull() },
+                order: { updatedAt: "DESC" },
+              }),
+            { label: "metas:goals" },
+          );
+        },
+        async () => {
+          loaded.checkinsHidratacao = await withRepositoryRetry(
+            CheckinHidratacaoEntity,
+            (repo) =>
+              repo.find({
+                where: { pacienteId: id },
+                order: { data: "DESC" },
+                take: 40,
+              }),
+            { label: "metas:hidratacao" },
+          );
+        },
+        async () => {
+          loaded.checkinsSono = await withRepositoryRetry(
+            CheckInSonoEntity,
+            (repo) =>
+              repo.find({
+                where: { pacienteId: id },
+                order: { data: "DESC" },
+                take: 7,
+              }),
+            { label: "metas:sono" },
+          );
+        },
+        async () => {
+          loaded.evolucoesComPeso = await withRepositoryRetry(
+            EvolucaoClinicaEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  pacienteId: id,
+                  pesoAtual: Not(IsNull()),
+                },
+                order: { dataAtendimento: "ASC" },
+                take: 20,
+              }),
+            { label: "metas:evolucoes" },
+          );
+        },
+        async () => {
+          loaded.workoutLogs30d = await withRepositoryRetry(
+            WorkoutLogEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  patientId: id,
+                  date: MoreThanOrEqual(inicio30dUtc),
+                },
+                select: { id: true, date: true },
+                order: { date: "DESC" },
+              }),
+            { label: "metas:treinos" },
+          );
+        },
+        async () => {
+          loaded.checkinsRefeicoes30d = await withRepositoryRetry(
+            CheckinRefeicaoEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  pacienteId: id,
+                  dataDia: MoreThanOrEqual(inicio30dIso),
+                },
+                select: {
+                  id: true,
+                  refeicaoId: true,
+                  dataDia: true,
+                  status: true,
+                  refeicao: {
+                    id: true,
+                    nome: true,
+                    horario: true,
+                    opcional: true,
+                  },
+                },
+                relations: { refeicao: true },
+                order: { dataDia: "DESC", criadoEm: "DESC" },
+              }),
+            { label: "metas:refeicoes" },
+          );
+        },
+      ],
+      2,
+    );
+
+    const {
       paciente,
       prontuario,
       patientGoals,
@@ -158,73 +287,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       evolucoesComPeso,
       workoutLogs30d,
       checkinsRefeicoes30d,
-    ] = await Promise.all([
-      patientRepo.findOne({
-        where: { id },
-        select: {
-          id: true,
-          deletedAt: true,
-          heightCm: true,
-          metaDiariaMl: true,
-          treatmentObjective: true,
-          clinicalFocus: true,
-          workoutType: true,
-          workoutFrequency: true,
-          workoutDuration: true,
-        },
-      }),
-      prontuarioRepo.findOne({ where: { pacienteId: id } }),
-      goalRepo.find({
-        where: { patientId: id, deletedAt: IsNull() },
-        order: { updatedAt: "DESC" },
-      }),
-      hidraRepo.find({
-        where: { pacienteId: id },
-        order: { data: "DESC" },
-        take: 40,
-      }),
-      sonoRepo.find({
-        where: { pacienteId: id },
-        order: { data: "DESC" },
-        take: 7,
-      }),
-      evolucaoRepo.find({
-        where: {
-          pacienteId: id,
-          pesoAtual: Not(IsNull()),
-        },
-        order: { dataAtendimento: "ASC" },
-        take: 20,
-      }),
-      workoutRepo.find({
-        where: {
-          patientId: id,
-          date: MoreThanOrEqual(inicio30dUtc),
-        },
-        select: { id: true, date: true },
-        order: { date: "DESC" },
-      }),
-      checkinRefeicaoRepo.find({
-        where: {
-          pacienteId: id,
-          dataDia: MoreThanOrEqual(inicio30dIso),
-        },
-        select: {
-          id: true,
-          refeicaoId: true,
-          dataDia: true,
-          status: true,
-          refeicao: {
-            id: true,
-            nome: true,
-            horario: true,
-            opcional: true,
-          },
-        },
-        relations: { refeicao: true },
-        order: { dataDia: "DESC", criadoEm: "DESC" },
-      }),
-    ]);
+    } = loaded;
 
     if (!paciente || paciente.deletedAt) {
       return NextResponse.json(

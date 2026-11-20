@@ -2,7 +2,11 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { In } from "typeorm";
-import { getRepository } from "@/lib/db/data-source";
+import {
+  getRepository,
+  runWithConcurrency,
+  withRepositoryRetry,
+} from "@/lib/db/data-source";
 import {
   BiometricMeasurementEntity,
   ConsultaPacoteEntity,
@@ -14,6 +18,12 @@ import {
   ProntuarioPacienteEntity,
   RegistroGlicemiaEntity,
   UserEntity,
+  type BiometricMeasurement,
+  type EvolucaoClinica,
+  type Measurement,
+  type Patient,
+  type ProntuarioPaciente,
+  type RegistroGlicemia,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
@@ -52,104 +62,142 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 
     const dbStart = performance.now();
-    const [
-      patientRepo,
-      prontuarioRepo,
-      evolucaoRepo,
-      glicemiaRepo,
-      bioRepo,
-      measurementRepo,
-      goalCheckinRepo,
-    ] = await Promise.all([
-      getRepository(PatientEntity),
-      getRepository(ProntuarioPacienteEntity),
-      getRepository(EvolucaoClinicaEntity),
-      getRepository(RegistroGlicemiaEntity),
-      getRepository(BiometricMeasurementEntity),
-      getRepository(MeasurementEntity),
-      getRepository(GoalCheckinEntity),
-    ]);
 
-    // Executa leitura do paciente e séries clínicas em paralelo (elimina 1 round-trip sequencial)
+    const loaded = {
+      paciente: null as Patient | null,
+      prontuario: null as ProntuarioPaciente | null,
+      evolucoesClinicas: [] as EvolucaoClinica[],
+      registrosGlicemia: [] as RegistroGlicemia[],
+      biometricMeasurements: [] as BiometricMeasurement[],
+      measurements: [] as Measurement[],
+    };
+
+    // Executa em ondas de no máximo 2 queries paralelas (compatível com poolMax: 2 no Oracle ADB)
     // e omite CLOBs pesados não exibidos no prontuário (workoutRestrictions, activeModules).
-    const [
+    await runWithConcurrency(
+      [
+        async () => {
+          loaded.paciente = await withRepositoryRetry(
+            PatientEntity,
+            (repo) =>
+              repo.findOne({
+                where: { id },
+                select: {
+                  id: true,
+                  recordCode: true,
+                  fullName: true,
+                  socialName: true,
+                  cpf: true,
+                  birthDate: true,
+                  biologicalSex: true,
+                  patientStatus: true,
+                  convenio: true,
+                  planoFaaz: true,
+                  phoneWhatsapp: true,
+                  heightCm: true,
+                  clinicalFocus: true,
+                  treatmentObjective: true,
+                  avatarUrl: true,
+                  photoUrl: true,
+                  deletedAt: true,
+                },
+              }),
+            { label: "prontuario:paciente" },
+          );
+        },
+        async () => {
+          loaded.prontuario = await withRepositoryRetry(
+            ProntuarioPacienteEntity,
+            (repo) => repo.findOne({ where: { pacienteId: id } }),
+            { label: "prontuario:prontuario" },
+          );
+        },
+        async () => {
+          loaded.evolucoesClinicas = await withRepositoryRetry(
+            EvolucaoClinicaEntity,
+            (repo) =>
+              repo.find({
+                where: { pacienteId: id },
+                order: { dataAtendimento: "DESC", createdAt: "DESC" },
+              }),
+            { label: "prontuario:evolucoes" },
+          );
+        },
+        async () => {
+          loaded.registrosGlicemia = await withRepositoryRetry(
+            RegistroGlicemiaEntity,
+            (repo) =>
+              repo.find({
+                where: { pacienteId: id },
+                select: {
+                  id: true,
+                  dataRegistro: true,
+                  valor: true,
+                  momento: true,
+                },
+                order: { dataRegistro: "DESC", createdAt: "DESC" },
+                take: 30,
+              }),
+            { label: "prontuario:glicemia" },
+          );
+        },
+        async () => {
+          loaded.biometricMeasurements = await withRepositoryRetry(
+            BiometricMeasurementEntity,
+            (repo) =>
+              repo.find({
+                where: { patientId: id },
+                select: {
+                  id: true,
+                  measuredAt: true,
+                  waistCircumferenceCm: true,
+                  bodyFatPercentage: true,
+                },
+                order: { measuredAt: "DESC", createdAt: "DESC" },
+                take: 30,
+              }),
+            { label: "prontuario:biometria" },
+          );
+        },
+        async () => {
+          loaded.measurements = await withRepositoryRetry(
+            MeasurementEntity,
+            (repo) =>
+              repo.find({
+                where: { patientId: id },
+                select: {
+                  id: true,
+                  patientId: true,
+                  measuredAt: true,
+                  bodyFatPercentage: true,
+                  waist: true,
+                  abdomen: true,
+                  hips: true,
+                  rightArm: true,
+                  leftArm: true,
+                  rightThigh: true,
+                  leftThigh: true,
+                  notes: true,
+                  createdBy: true,
+                },
+                order: { measuredAt: "DESC", createdAt: "DESC" },
+                take: 50,
+              }),
+            { label: "prontuario:medidas" },
+          );
+        },
+      ],
+      2,
+    );
+
+    const {
       paciente,
       prontuario,
       evolucoesClinicas,
       registrosGlicemia,
       biometricMeasurements,
       measurements,
-    ] = await Promise.all([
-      patientRepo.findOne({
-        where: { id },
-        select: {
-          id: true,
-          recordCode: true,
-          fullName: true,
-          socialName: true,
-          cpf: true,
-          birthDate: true,
-          biologicalSex: true,
-          patientStatus: true,
-          convenio: true,
-          planoFaaz: true,
-          phoneWhatsapp: true,
-          heightCm: true,
-          clinicalFocus: true,
-          treatmentObjective: true,
-          avatarUrl: true,
-          photoUrl: true,
-          deletedAt: true,
-        },
-      }),
-      prontuarioRepo.findOne({ where: { pacienteId: id } }),
-      evolucaoRepo.find({
-        where: { pacienteId: id },
-        order: { dataAtendimento: "DESC", createdAt: "DESC" },
-      }),
-      glicemiaRepo.find({
-        where: { pacienteId: id },
-        select: {
-          id: true,
-          dataRegistro: true,
-          valor: true,
-          momento: true,
-        },
-        order: { dataRegistro: "DESC", createdAt: "DESC" },
-        take: 30,
-      }),
-      bioRepo.find({
-        where: { patientId: id },
-        select: {
-          id: true,
-          measuredAt: true,
-          waistCircumferenceCm: true,
-          bodyFatPercentage: true,
-        },
-        order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 30,
-      }),
-      measurementRepo.find({
-        where: { patientId: id },
-        select: {
-          id: true,
-          patientId: true,
-          measuredAt: true,
-          bodyFatPercentage: true,
-          waist: true,
-          abdomen: true,
-          hips: true,
-          rightArm: true,
-          leftArm: true,
-          rightThigh: true,
-          leftThigh: true,
-          notes: true,
-          createdBy: true,
-        },
-        order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 50,
-      }),
-    ]);
+    } = loaded;
 
     if (!paciente || paciente.deletedAt) {
       return NextResponse.json(
@@ -171,33 +219,41 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       ),
     );
 
-    // Fallback legado de glicemia (GOAL_CHECKINS) e nomes dos profissionais das medidas em paralelo
+    // Fallback legado de glicemia (GOAL_CHECKINS) e nomes dos profissionais (máx. 2 em paralelo)
     const [goalCheckins, clinicianUsers] = await Promise.all([
       registrosGlicemia.length === 0
-        ? goalCheckinRepo.find({
-            where: {
-              patientId: id,
-              patientGoal: {
-                category: "CAPILLARY_GLUCOSE",
-              },
-            },
-            select: {
-              id: true,
-              referenceDate: true,
-              recordedValue: true,
-              patientGoal: { id: true, category: true },
-            },
-            relations: { patientGoal: true },
-            order: { referenceDate: "DESC", createdAt: "DESC" },
-            take: 30,
-          })
+        ? withRepositoryRetry(
+            GoalCheckinEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  patientId: id,
+                  patientGoal: {
+                    category: "CAPILLARY_GLUCOSE",
+                  },
+                },
+                select: {
+                  id: true,
+                  referenceDate: true,
+                  recordedValue: true,
+                  patientGoal: { id: true, category: true },
+                },
+                relations: { patientGoal: true },
+                order: { referenceDate: "DESC", createdAt: "DESC" },
+                take: 30,
+              }),
+            { label: "prontuario:goalCheckins" },
+          )
         : Promise.resolve([]),
       clinicianIds.length > 0
-        ? getRepository(UserEntity).then((userRepo) =>
-            userRepo.find({
-              where: { id: In(clinicianIds) },
-              select: { id: true, title: true, fullName: true },
-            }),
+        ? withRepositoryRetry(
+            UserEntity,
+            (repo) =>
+              repo.find({
+                where: { id: In(clinicianIds) },
+                select: { id: true, title: true, fullName: true },
+              }),
+            { label: "prontuario:clinicians" },
           )
         : Promise.resolve([]),
     ]);

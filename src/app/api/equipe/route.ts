@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { IsNull, Not } from "typeorm";
-import { getRepository } from "@/lib/db/data-source";
+import { getRepository, withRepositoryRetry } from "@/lib/db/data-source";
 import {
   UserEntity,
   type AccountStatus,
@@ -29,29 +29,33 @@ export async function GET() {
       );
     }
 
-    const userRepo = await getRepository(UserEntity);
-    const equipe = await userRepo.find({
-      where: {
-        organizationId: sessao.organizationId,
-        deletedAt: IsNull(),
-        role: Not("PATIENT"),
-      },
-      select: {
-        id: true,
-        fullName: true,
-        username: true,
-        email: true,
-        cargo: true,
-        role: true,
-        specialty: true,
-        councilType: true,
-        councilNumber: true,
-        accountStatus: true,
-        lastLoginAt: true,
-        createdAt: true,
-      },
-      order: { fullName: "ASC" },
-    });
+    const equipe = await withRepositoryRetry(
+      UserEntity,
+      (repo) =>
+        repo.find({
+          where: {
+            organizationId: sessao.organizationId,
+            deletedAt: IsNull(),
+            role: Not("PATIENT"),
+          },
+          select: {
+            id: true,
+            fullName: true,
+            username: true,
+            email: true,
+            cargo: true,
+            role: true,
+            specialty: true,
+            councilType: true,
+            councilNumber: true,
+            accountStatus: true,
+            lastLoginAt: true,
+            createdAt: true,
+          },
+          order: { fullName: "ASC" },
+        }),
+      { label: "equipe:list" },
+    );
 
     return NextResponse.json({ equipe });
   } catch (error: unknown) {

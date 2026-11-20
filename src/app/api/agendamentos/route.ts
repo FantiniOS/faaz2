@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Between, In, Not } from "typeorm";
-import { getRepository, withTransaction } from "@/lib/db/data-source";
+import {
+  withRepositoryRetry,
+  withTransaction,
+} from "@/lib/db/data-source";
 import {
   AgendamentoEntity,
   MedicoEntity,
@@ -96,56 +99,60 @@ export async function GET(request: NextRequest) {
     }
 
     const dbStart = performance.now();
-    const agendamentoRepo = await getRepository(AgendamentoEntity);
-    const registros = await agendamentoRepo.find({
-      where: {
-        dataHora: Between(inicioPeriodo, fimPeriodo),
-        ...(medicoIdParam && medicoIdParam !== "TODOS"
-          ? { medicoId: medicoIdParam }
-          : {}),
-        ...(especialidadeParam &&
-        especialidadeParam !== "TODAS" &&
-        (ESPECIALIDADES_VALIDAS as readonly string[]).includes(
-          especialidadeParam.toUpperCase(),
-        )
-          ? { especialidade: especialidadeParam.toUpperCase() }
-          : {}),
-      },
-      select: {
-        id: true,
-        pacienteId: true,
-        medicoId: true,
-        especialidade: true,
-        dataHora: true,
-        duracaoMinutos: true,
-        encaixe: true,
-        tipo: true,
-        status: true,
-        observacao: true,
-        paciente: {
-          id: true,
-          fullName: true,
-          recordCode: true,
-          cpf: true,
-          phoneWhatsapp: true,
-          convenio: true,
-          planoFaaz: true,
-        },
-        medico: {
-          id: true,
-          nome: true,
-          especialidade: true,
-          corHex: true,
-        },
-      },
-      relations: {
-        paciente: true,
-        medico: true,
-      },
-      order: {
-        dataHora: "ASC",
-      },
-    });
+    const registros = await withRepositoryRetry(
+      AgendamentoEntity,
+      (repo) =>
+        repo.find({
+          where: {
+            dataHora: Between(inicioPeriodo, fimPeriodo),
+            ...(medicoIdParam && medicoIdParam !== "TODOS"
+              ? { medicoId: medicoIdParam }
+              : {}),
+            ...(especialidadeParam &&
+            especialidadeParam !== "TODAS" &&
+            (ESPECIALIDADES_VALIDAS as readonly string[]).includes(
+              especialidadeParam.toUpperCase(),
+            )
+              ? { especialidade: especialidadeParam.toUpperCase() }
+              : {}),
+          },
+          select: {
+            id: true,
+            pacienteId: true,
+            medicoId: true,
+            especialidade: true,
+            dataHora: true,
+            duracaoMinutos: true,
+            encaixe: true,
+            tipo: true,
+            status: true,
+            observacao: true,
+            paciente: {
+              id: true,
+              fullName: true,
+              recordCode: true,
+              cpf: true,
+              phoneWhatsapp: true,
+              convenio: true,
+              planoFaaz: true,
+            },
+            medico: {
+              id: true,
+              nome: true,
+              especialidade: true,
+              corHex: true,
+            },
+          },
+          relations: {
+            paciente: true,
+            medico: true,
+          },
+          order: {
+            dataHora: "ASC",
+          },
+        }),
+      { label: "agendamentos:list" },
+    );
     const dbDurMs = Math.round(performance.now() - dbStart);
 
     const agendamentos = registros.map((item) => {

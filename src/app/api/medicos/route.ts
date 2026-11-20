@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRepository } from "@/lib/db/data-source";
+import { getRepository, withRepositoryRetry } from "@/lib/db/data-source";
 import { MedicoEntity } from "@/lib/db/entities";
 
 const DEFAULT_MEDICOS = [
@@ -19,13 +19,18 @@ const DEFAULT_MEDICOS = [
 
 export async function GET() {
   try {
-    const medicoRepo = await getRepository(MedicoEntity);
-    let medicos = await medicoRepo.find({
-      order: { createdAt: "ASC" },
-    });
+    let medicos = await withRepositoryRetry(
+      MedicoEntity,
+      (repo) =>
+        repo.find({
+          order: { createdAt: "ASC" },
+        }),
+      { label: "medicos:list" },
+    );
 
     // Auto-seed caso o banco esteja vazio para garantir zero atrito
     if (medicos.length === 0) {
+      const medicoRepo = await getRepository(MedicoEntity);
       for (const m of DEFAULT_MEDICOS) {
         const existing = await medicoRepo.findOne({ where: { id: m.id } });
         if (existing) {

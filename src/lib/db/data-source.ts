@@ -136,9 +136,11 @@ function createDataSource(): DataSource {
       // encerrados durante congelamento de containers Serverless (NJS-500 / NJS-521).
       poolPingInterval: 15,
       poolPingTimeout: 3_000,
-      poolTimeout: 30,
+      // Libera sessões ociosas rapidamente de volta ao Oracle ADB Free Tier (30 sessões globais).
+      poolTimeout: 10,
       maxLifetimeSession: 300,
-      queueTimeout: 15_000,
+      queueTimeout: 20_000,
+      connectTimeout: 10,
       stmtCacheSize: 40,
     },
   });
@@ -171,9 +173,11 @@ const TRANSIENT_ORACLE_CODES = [
 ] as const;
 
 const POOL_RESET_ORACLE_CODES = [
+  "NJS-503",
   "NJS-064",
   "NJS-065",
   "DPI-1010",
+  "ORA-03113",
   "ORA-03114",
 ] as const;
 
@@ -217,25 +221,42 @@ function shouldResetPoolOnError(error: unknown): boolean {
 
 const globalForDb = globalThis as unknown as {
   endocDataSource?: Promise<DataSource>;
+  endocDataSourceResetting?: Promise<void>;
 };
 
-/** Descarta o DataSource singleton caso o pool tenha sido fechado ou corrompido. */
+/** Descarta o DataSource singleton caso o pool tenha sido fechado ou corrompido (com lock anti-race). */
 export async function resetDataSource(): Promise<void> {
-  const existing = globalForDb.endocDataSource;
-  globalForDb.endocDataSource = undefined;
-  if (!existing) return;
-  try {
-    const ds = await existing;
-    if (ds.isInitialized) {
-      await ds.destroy();
-    }
-  } catch {
-    // Ignora erro ao encerrar pool já corrompido/fechado
+  if (globalForDb.endocDataSourceResetting) {
+    await globalForDb.endocDataSourceResetting;
+    return;
   }
+
+  const resetPromise = (async () => {
+    const existing = globalForDb.endocDataSource;
+    globalForDb.endocDataSource = undefined;
+    if (!existing) return;
+    try {
+      const ds = await existing;
+      if (ds.isInitialized) {
+        await ds.destroy();
+      }
+    } catch {
+      // Ignora erro ao encerrar pool já corrompido/fechado
+    }
+  })().finally(() => {
+    globalForDb.endocDataSourceResetting = undefined;
+  });
+
+  globalForDb.endocDataSourceResetting = resetPromise;
+  await resetPromise;
 }
 
-/** Retorna o DataSource inicializado (singleton por instância / HMR-safe). */
-export function getDataSource(): Promise<DataSource> {
+/** Retorna o DataSource inicializado com lock de Promise singleton em globalThis (evita pools duplicados em cold starts simultâneos). */
+export async function getDataSource(): Promise<DataSource> {
+  if (globalForDb.endocDataSourceResetting) {
+    await globalForDb.endocDataSourceResetting;
+  }
+
   if (!globalForDb.endocDataSource) {
     globalForDb.endocDataSource = createDataSource()
       .initialize()
@@ -244,12 +265,80 @@ export function getDataSource(): Promise<DataSource> {
         throw error;
       });
   }
-  return globalForDb.endocDataSource;
+
+  const ds = await globalForDb.endocDataSource;
+  if (!ds.isInitialized) {
+    await resetDataSource();
+    globalForDb.endocDataSource = createDataSource()
+      .initialize()
+      .catch((error: unknown) => {
+        globalForDb.endocDataSource = undefined;
+        throw error;
+      });
+    return globalForDb.endocDataSource;
+  }
+
+  return ds;
+}
+
+/**
+ * Executa uma lista de tarefas assíncronas com concorrência máxima limitada
+ * (padrão = 2, alinhado ao poolMax Serverless para não esgotar sessões do Oracle ADB).
+ */
+export async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number = 2,
+): Promise<T[]> {
+  if (tasks.length === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, tasks.length));
+  const results = new Array<T>(tasks.length);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < tasks.length) {
+      const idx = cursor;
+      cursor += 1;
+      results[idx] = await tasks[idx]();
+    }
+  };
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  return results;
+}
+
+/**
+ * Variante de runWithConcurrency com semântica Promise.allSettled para isolamento
+ * seguro de falhas por consulta/módulo em ondas controladas de até N queries paralelas.
+ */
+export async function runSettledWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number = 2,
+): Promise<Array<PromiseSettledResult<T>>> {
+  if (tasks.length === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, tasks.length));
+  const results = new Array<PromiseSettledResult<T>>(tasks.length);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < tasks.length) {
+      const idx = cursor;
+      cursor += 1;
+      try {
+        const value = await tasks[idx]();
+        results[idx] = { status: "fulfilled", value };
+      } catch (reason: unknown) {
+        results[idx] = { status: "rejected", reason };
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  return results;
 }
 
 /**
  * Executa uma operação contra o Oracle ADB com 1 retry seguro em erros transitórios
- * de conexão fechada, rede ou timeout de fila do pool (NJS-500/521/503/040, ORA-03113/03114).
+ * de conexão fechada, rede ou timeout de fila do pool (NJS-500/521/503/040, DPI-1010, ORA-03113/03114).
  */
 export async function withOracleRetry<T>(
   work: () => Promise<T>,
@@ -273,7 +362,8 @@ export async function withOracleRetry<T>(
     }
 
     const delayMs =
-      options?.retryDelayMs ?? (sig.includes("NJS-040") || sig.includes("ORA-00018") ? 350 : 150);
+      options?.retryDelayMs ??
+      (sig.includes("NJS-040") || sig.includes("ORA-00018") ? 350 : 150);
     await new Promise((resolve) => setTimeout(resolve, delayMs));
 
     return await work();
@@ -285,6 +375,21 @@ export async function getRepository<T extends ObjectLiteral>(
   target: EntityTarget<T>,
 ): Promise<Repository<T>> {
   return (await getDataSource()).getRepository(target);
+}
+
+/**
+ * Executa uma consulta com Repository obtido dinamicamente do DataSource ativo,
+ * garantindo que em caso de resetDataSource() durante o retry o novo pool seja usado.
+ */
+export async function withRepositoryRetry<T extends ObjectLiteral, R>(
+  target: EntityTarget<T>,
+  work: (repo: Repository<T>) => Promise<R>,
+  options?: { label?: string; retryDelayMs?: number },
+): Promise<R> {
+  return withOracleRetry(async () => {
+    const repo = (await getDataSource()).getRepository(target);
+    return work(repo);
+  }, options);
 }
 
 /** Substituto de `prisma.$transaction(async (tx) => ...)`. */
