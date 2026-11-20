@@ -135,8 +135,9 @@ export function TopMenu({
     [hasAdminPrivileges]
   );
 
-  const nomeExibicao = authUser?.nome || explicitUserProp?.nome || user.nome;
-  const inicialUsuario = (nomeExibicao || (user as any)?.username || "U")
+  const nomeExibicao =
+    authUser?.nome || explicitUserProp?.nome || "Equipe Clínica FAAZ";
+  const inicialUsuario = (nomeExibicao || "F")
     .trim()
     .charAt(0)
     .toUpperCase();

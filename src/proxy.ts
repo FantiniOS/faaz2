@@ -19,6 +19,7 @@ const ROTAS_CLINICAS_SENSIVEIS = [
   "/api/checkins/hidratacao",
   "/api/checkins/refeicoes",
   "/api/checkins/auditoria",
+  "/api/dashboard/telemetria",
   "/dashboard/prontuarios",
 ];
 
@@ -227,6 +228,7 @@ export const config = {
     "/api/checkins/hidratacao",
     "/api/checkins/refeicoes",
     "/api/checkins/auditoria",
+    "/api/dashboard/telemetria",
     "/configuracoes",
     "/configuracoes/:path*",
     "/api/usuarios/:path*",

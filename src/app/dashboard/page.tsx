@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from "react";
 import { DashboardOperacional } from "@/components/DashboardOperacional";
 import { DashboardClinico } from "@/components/DashboardClinico";
-import { mockUserSession } from "@/mocks/dashboard";
 
 export interface DashboardUserSession {
   userId?: string;
@@ -17,7 +16,6 @@ export default function DashboardPage() {
   const [user, setUser] = useState<DashboardUserSession | null>(null);
   const [isLoadingUser, setIsLoadingUser] = useState<boolean>(true);
 
-  // Isolamento estrito no ciclo de vida do cliente (Client-Side Only via useEffect)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -40,7 +38,10 @@ export default function DashboardPage() {
           }
         }
       } catch (error) {
-        console.error("[DashboardPage] Erro ao carregar usuário autenticado:", error);
+        console.error(
+          "[DashboardPage] Erro ao carregar usuário autenticado:",
+          error
+        );
       } finally {
         if (isMounted) {
           setIsLoadingUser(false);
@@ -48,14 +49,14 @@ export default function DashboardPage() {
       }
     }
 
-    loadUser();
+    void loadUser();
 
     return () => {
       isMounted = false;
     };
   }, []);
 
-  const perfilAtivo = (user?.cargo || user?.role || mockUserSession.cargo || "").toUpperCase();
+  const perfilAtivo = (user?.cargo || user?.role || "").toUpperCase();
 
   const isSecretaria =
     perfilAtivo === "SECRETARIA" ||
@@ -63,11 +64,13 @@ export default function DashboardPage() {
     perfilAtivo === "RECEPCAO" ||
     perfilAtivo === "ATENDIMENTO";
 
-  // Se for Secretária, renderiza o painel operacional da recepção (100% focado na Agenda, sem dados clínicos)
-  if (isSecretaria) {
-    return <DashboardOperacional user={user || { nome: "Patrícia Santos", cargo: "SECRETARIA" }} />;
+  if (!isLoadingUser && isSecretaria) {
+    return (
+      <DashboardOperacional
+        user={user || { nome: "Recepção FAAZ", cargo: "SECRETARIA" }}
+      />
+    );
   }
 
-  // Se for Médico, Dono da Clínica ou Administrador, renderiza o painel clínico com dados em tempo real
-  return <DashboardClinico user={user} />;
+  return <DashboardClinico user={user} isLoadingUser={isLoadingUser} />;
 }

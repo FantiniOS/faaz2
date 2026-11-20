@@ -1,0 +1,1948 @@
+export const dynamic = "force-dynamic";
+
+import { NextRequest, NextResponse } from "next/server";
+import { IsNull, MoreThanOrEqual } from "typeorm";
+import { getRepository } from "@/lib/db/data-source";
+import {
+  AgendamentoEntity,
+  BiometricMeasurementEntity,
+  CheckinHidratacaoEntity,
+  CheckinIntestinalEntity,
+  CheckinRefeicaoEntity,
+  CheckInSonoEntity,
+  EvolucaoClinicaEntity,
+  MeasurementEntity,
+  PatientEntity,
+  PatientGoalEntity,
+  RegistroGlicemiaEntity,
+  WorkoutLogEntity,
+} from "@/lib/db/entities";
+import { getSessao } from "@/lib/auth-session";
+import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
+import {
+  adicionarDiasDataBR,
+  getInicioFimDiaBR,
+  getInicioMesBR,
+  getIntervaloDiasBR,
+  getPartesDataHoraBR,
+  subtrairDiasDataBR,
+} from "@/lib/date-br";
+import type {
+  ConsultaProximaItem,
+  DetalheDietaPaciente,
+  DetalheEmagrecimentoPaciente,
+  DetalheGlicemiaPaciente,
+  DetalheHidratacaoPaciente,
+  DetalheHipertrofiaPaciente,
+  DetalheIntestinoPaciente,
+  DetalheTreinoPaciente,
+  LiveFeedItem,
+  PacienteGlicemiaCritica,
+  PeriodoTelemetria,
+  PilarIndiceItem,
+  PontoSerieAtividade,
+  RadarTriagemItem,
+  SparklineGlicemiaItem,
+  TelemetriaDashboardResponse,
+} from "@/types/dashboard-telemetria";
+
+function formatDiaLabelPt(isoDate: string): string {
+  const [, m, d] = isoDate.split("-");
+  return `${d}/${m}`;
+}
+
+function round1(val: number): number {
+  return Math.round(val * 10) / 10;
+}
+
+function normalizarTexto(val?: string | null): string {
+  return (val || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function classificarObjetivoPaciente(
+  treatmentObjective?: string | null,
+  clinicalFocus?: string | null,
+  prontuarioObjetivo?: string | null
+): "HIPERTROFIA" | "EMAGRECIMENTO" | "MANUTENCAO" {
+  const joined = normalizarTexto(
+    [treatmentObjective, clinicalFocus, prontuarioObjetivo]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  if (
+    joined.includes("hipertrofia") ||
+    joined.includes("ganho de massa") ||
+    joined.includes("massa muscular") ||
+    joined.includes("bulking") ||
+    joined.includes("anabolism")
+  ) {
+    return "HIPERTROFIA";
+  }
+
+  if (
+    joined.includes("emagrec") ||
+    joined.includes("perda de peso") ||
+    joined.includes("reducao ponderal") ||
+    joined.includes("deficit") ||
+    joined.includes("obesidade") ||
+    joined.includes("definicao") ||
+    joined.includes("sobrepeso")
+  ) {
+    return "EMAGRECIMENTO";
+  }
+
+  return "MANUTENCAO";
+}
+
+function normalizarCategoriaBristol(
+  categoria?: string | null,
+  tipoBristol?: number | null
+): "ideal" | "constipacao" | "diarreia" {
+  const norm = normalizarTexto(categoria);
+  if (norm === "constipacao" || norm.includes("constip")) return "constipacao";
+  if (norm === "diarreia" || norm.includes("diarr") || norm.includes("aceler")) {
+    return "diarreia";
+  }
+  if (norm === "ideal" || norm.includes("normal")) return "ideal";
+  const tipo = Number(tipoBristol) || 4;
+  if (tipo <= 2) return "constipacao";
+  if (tipo <= 4) return "ideal";
+  return "diarreia";
+}
+
+function formatMomentoGlicemia(momento?: string | null): string {
+  const m = (momento || "").toUpperCase().trim();
+  const mapa: Record<string, string> = {
+    JEJUM: "Jejum",
+    PRE_CAFE: "Pré-café",
+    POS_CAFE: "Pós-café",
+    PRE_ALMOCO: "Pré-almoço",
+    POS_ALMOCO: "Pós-almoço",
+    PRE_JANTAR: "Pré-jantar",
+    POS_JANTAR: "Pós-jantar",
+    ANTES_DORMIR: "Antes de dormir",
+    AO_ACORDAR: "Ao acordar",
+    ALEATORIO: "Aleatório",
+  };
+  return mapa[m] || (momento ? momento.replace(/_/g, " ") : "Glicemia");
+}
+
+function formatHorarioCurto(horario?: string | null): string | null {
+  if (!horario) return null;
+  const match = horario.match(/(\d{1,2})\s*[:hH]\s*(\d{2})/);
+  if (match) return `${match[1].padStart(2, "0")}:${match[2]}`;
+  const limpo = horario.trim();
+  return limpo.length > 0 ? limpo : null;
+}
+
+function parsePeriodo(raw?: string | null): PeriodoTelemetria {
+  const v = (raw || "30d").trim().toLowerCase();
+  if (v === "hoje" || v === "7d" || v === "30d" || v === "mes") {
+    return v;
+  }
+  return "30d";
+}
+
+function resolverJanelaPeriodo(periodo: PeriodoTelemetria, agora: Date) {
+  const hoje = getInicioFimDiaBR(agora);
+  const hojeIso = hoje.dataDia;
+
+  if (periodo === "hoje") {
+    const ontemIso = subtrairDiasDataBR(hojeIso, 1);
+    return {
+      periodoLabel: "Hoje",
+      diasJanela: 1,
+      hojeIso,
+      inicioAtualIso: hojeIso,
+      inicioAtualDate: hoje.inicioUtc,
+      inicioAnteriorIso: ontemIso,
+      inicioAnteriorDate: getInicioFimDiaBR(ontemIso).inicioUtc,
+    };
+  }
+
+  if (periodo === "7d") {
+    const intervalo = getIntervaloDiasBR(7, agora);
+    const inicioAnteriorIso = subtrairDiasDataBR(intervalo.dataInicioIso, 7);
+    return {
+      periodoLabel: "Últimos 7 dias",
+      diasJanela: 7,
+      hojeIso,
+      inicioAtualIso: intervalo.dataInicioIso,
+      inicioAtualDate: intervalo.inicioUtc,
+      inicioAnteriorIso,
+      inicioAnteriorDate: getInicioFimDiaBR(inicioAnteriorIso).inicioUtc,
+    };
+  }
+
+  if (periodo === "mes") {
+    const mes = getInicioMesBR(agora);
+    return {
+      periodoLabel: "Mês atual",
+      diasJanela: mes.diasDecorridos,
+      hojeIso,
+      inicioAtualIso: mes.dataInicioIso,
+      inicioAtualDate: mes.inicioUtc,
+      inicioAnteriorIso: mes.dataMesAnteriorIso,
+      inicioAnteriorDate: mes.inicioMesAnteriorUtc,
+    };
+  }
+
+  // Padrão: 30d
+  const intervalo = getIntervaloDiasBR(30, agora);
+  const inicioAnteriorIso = subtrairDiasDataBR(intervalo.dataInicioIso, 30);
+  return {
+    periodoLabel: "Últimos 30 dias",
+    diasJanela: 30,
+    hojeIso,
+    inicioAtualIso: intervalo.dataInicioIso,
+    inicioAtualDate: intervalo.inicioUtc,
+    inicioAnteriorIso,
+    inicioAnteriorDate: getInicioFimDiaBR(inicioAnteriorIso).inicioUtc,
+  };
+}
+
+/**
+ * GET /api/dashboard/telemetria?periodo=30d
+ * Endpoint unificado de telemetria 100% real do Oracle ADB para o Clinical Command Center.
+ */
+export async function GET(req: NextRequest) {
+  const reqStart = performance.now();
+  try {
+    const sessao = await getSessao(req);
+    if (!sessao) {
+      return NextResponse.json(
+        { error: "Não autenticado. Faça login clínico para acessar a telemetria." },
+        { status: 401 }
+      );
+    }
+
+    const sessaoRole = (sessao as { role?: string }).role;
+    if (
+      !podeAcessarDadosClinicos(sessao.cargo) ||
+      sessao.cargo === "SECRETARIA" ||
+      sessaoRole === "SECRETARIA" ||
+      sessaoRole === "RECEPTIONIST"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Acesso Negado (LGPD/RBAC).",
+          motivo:
+            "A telemetria clínica do Command Center é restrita ao corpo médico.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const { searchParams } = new URL(req.url);
+    const periodo = parsePeriodo(searchParams.get("periodo"));
+    const agora = new Date();
+    const janela = resolverJanelaPeriodo(periodo, agora);
+
+    // Garante leitura mínima de 7 dias para o Radar de Evasão (7+ dias sem check-in)
+    const seteDias = getIntervaloDiasBR(7, agora);
+    const seteDiasAtrasIso = seteDias.dataInicioIso;
+    const seteDiasAtrasDate = seteDias.inicioUtc;
+
+    const queryStartIso =
+      janela.inicioAtualIso < seteDiasAtrasIso
+        ? janela.inicioAtualIso
+        : seteDiasAtrasIso;
+    const queryStartDate =
+      janela.inicioAtualDate < seteDiasAtrasDate
+        ? janela.inicioAtualDate
+        : seteDiasAtrasDate;
+
+    const inicioHojeDate = getInicioFimDiaBR(janela.hojeIso).inicioUtc;
+    const fimHojeDate = getInicioFimDiaBR(
+      adicionarDiasDataBR(janela.hojeIso, 1)
+    ).inicioUtc;
+    const fimProximos7DiasDate = getInicioFimDiaBR(
+      adicionarDiasDataBR(janela.hojeIso, 8)
+    ).inicioUtc;
+
+    const [
+      patientRepo,
+      agendamentoRepo,
+      checkinRefeicaoRepo,
+      glicemiaRepo,
+      intestinoRepo,
+      hidraRepo,
+      workoutRepo,
+      sonoRepo,
+      goalRepo,
+      bioRepo,
+      evolucaoRepo,
+      measurementRepo,
+    ] = await Promise.all([
+      getRepository(PatientEntity),
+      getRepository(AgendamentoEntity),
+      getRepository(CheckinRefeicaoEntity),
+      getRepository(RegistroGlicemiaEntity),
+      getRepository(CheckinIntestinalEntity),
+      getRepository(CheckinHidratacaoEntity),
+      getRepository(WorkoutLogEntity),
+      getRepository(CheckInSonoEntity),
+      getRepository(PatientGoalEntity),
+      getRepository(BiometricMeasurementEntity),
+      getRepository(EvolucaoClinicaEntity),
+      getRepository(MeasurementEntity),
+    ]);
+
+    const dbStart = performance.now();
+    const [
+      pacientesAtivos,
+      agendamentosFuturos,
+      checkinsRefeicoesRaw,
+      glicemiasRaw,
+      intestinosRaw,
+      hidratacoesRaw,
+      workoutsRaw,
+      sonos7dRaw,
+      activeGoals,
+      biometriasRaw,
+      evolucoesRaw,
+      measurementsRaw,
+    ] = await Promise.all([
+      patientRepo.find({
+        where: { patientStatus: "ACTIVE", deletedAt: IsNull() },
+        select: {
+          id: true,
+          recordCode: true,
+          fullName: true,
+          cpf: true,
+          phoneWhatsapp: true,
+          treatmentObjective: true,
+          clinicalFocus: true,
+          workoutType: true,
+          workoutFrequency: true,
+          metaDiariaMl: true,
+          prontuario: {
+            id: true,
+            objetivo: true,
+            pesoAtualKg: true,
+          },
+        },
+        relations: { prontuario: true },
+        order: { fullName: "ASC" },
+      }),
+      agendamentoRepo.find({
+        where: { dataHora: MoreThanOrEqual(inicioHojeDate) },
+        select: {
+          id: true,
+          dataHora: true,
+          tipo: true,
+          status: true,
+          especialidade: true,
+          pacienteId: true,
+          paciente: {
+            id: true,
+            fullName: true,
+            recordCode: true,
+          },
+          medico: {
+            id: true,
+            nome: true,
+          },
+        },
+        relations: { paciente: true, medico: true },
+        order: { dataHora: "ASC" },
+        take: 40,
+      }),
+      checkinRefeicaoRepo.find({
+        where: { dataDia: MoreThanOrEqual(queryStartIso) },
+        select: {
+          id: true,
+          pacienteId: true,
+          refeicaoId: true,
+          dataDia: true,
+          status: true,
+          criadoEm: true,
+          atualizadoEm: true,
+          refeicao: {
+            id: true,
+            nome: true,
+            horario: true,
+            opcional: true,
+          },
+        },
+        relations: { refeicao: true },
+        order: { dataDia: "DESC", criadoEm: "DESC" },
+      }),
+      glicemiaRepo.find({
+        where: { dataRegistro: MoreThanOrEqual(queryStartDate) },
+        select: {
+          id: true,
+          pacienteId: true,
+          dataRegistro: true,
+          valor: true,
+          momento: true,
+        },
+        order: { dataRegistro: "DESC" },
+      }),
+      intestinoRepo.find({
+        where: { data: MoreThanOrEqual(queryStartDate) },
+        select: {
+          id: true,
+          pacienteId: true,
+          tipoBristol: true,
+          categoria: true,
+          sintomas: true,
+          data: true,
+        },
+        order: { data: "DESC" },
+      }),
+      hidraRepo.find({
+        where: { data: MoreThanOrEqual(queryStartDate) },
+        select: {
+          id: true,
+          pacienteId: true,
+          volumeMl: true,
+          data: true,
+        },
+        order: { data: "DESC" },
+      }),
+      workoutRepo.find({
+        where: { date: MoreThanOrEqual(queryStartDate) },
+        select: {
+          id: true,
+          patientId: true,
+          date: true,
+        },
+        order: { date: "DESC" },
+      }),
+      sonoRepo.find({
+        where: { data: MoreThanOrEqual(seteDiasAtrasDate) },
+        select: {
+          pacienteId: true,
+          data: true,
+        },
+        order: { data: "DESC" },
+      }),
+      goalRepo.find({
+        where: { status: "ACTIVE", deletedAt: IsNull() },
+        select: {
+          patientId: true,
+          category: true,
+          title: true,
+          unit: true,
+          targetValue: true,
+        },
+      }),
+      bioRepo.find({
+        select: {
+          id: true,
+          patientId: true,
+          measuredAt: true,
+          createdAt: true,
+          weightKg: true,
+          bmi: true,
+        },
+        order: { measuredAt: "DESC", createdAt: "DESC" },
+        take: 600,
+      }),
+      evolucaoRepo.find({
+        select: {
+          id: true,
+          pacienteId: true,
+          dataAtendimento: true,
+          createdAt: true,
+          pesoAtual: true,
+          medicoResponsavel: true,
+        },
+        order: { dataAtendimento: "DESC", createdAt: "DESC" },
+        take: 600,
+      }),
+      measurementRepo.find({
+        select: {
+          id: true,
+          patientId: true,
+          measuredAt: true,
+          createdAt: true,
+          waist: true,
+          abdomen: true,
+          hips: true,
+          rightArm: true,
+          leftArm: true,
+          rightThigh: true,
+          leftThigh: true,
+        },
+        order: { measuredAt: "DESC", createdAt: "DESC" },
+        take: 400,
+      }),
+    ]);
+    const dbDurMs = Math.round(performance.now() - dbStart);
+
+    // Índice rápido de pacientes ativos
+    const pacienteMap = new Map(pacientesAtivos.map((p) => [p.id, p]));
+    const activePatientIds = new Set(pacientesAtivos.map((p) => p.id));
+
+    // Metas hídricas individuais (PATIENT_GOALS HYDRATION > PATIENTS.META_DIARIA_ML)
+    const hidraGoalByPatient = new Map<string, number>();
+    for (const g of activeGoals) {
+      const t = (g.title || "").toUpperCase();
+      const u = (g.unit || "").toLowerCase().trim();
+      if (
+        g.category === "HYDRATION" ||
+        t.includes("HIDRATA") ||
+        t.includes("ÁGUA") ||
+        t.includes("AGUA") ||
+        u === "ml"
+      ) {
+        if (!hidraGoalByPatient.has(g.patientId) && Number(g.targetValue) > 0) {
+          hidraGoalByPatient.set(
+            g.patientId,
+            Math.round(Number(g.targetValue))
+          );
+        }
+      }
+    }
+
+    const getMetaAguaPaciente = (pacienteId: string) => {
+      const fromGoal = hidraGoalByPatient.get(pacienteId);
+      if (fromGoal && fromGoal > 0) return fromGoal;
+      const p = pacienteMap.get(pacienteId);
+      return Number(p?.metaDiariaMl) || 2500;
+    };
+
+    // Filtragem estrita para o período selecionado (somente pacientes ativos existentes)
+    const checkinsRefeicoes = checkinsRefeicoesRaw.filter(
+      (c) =>
+        activePatientIds.has(c.pacienteId) && c.dataDia >= janela.inicioAtualIso
+    );
+    const glicemias = glicemiasRaw.filter(
+      (g) =>
+        activePatientIds.has(g.pacienteId) &&
+        new Date(g.dataRegistro) >= janela.inicioAtualDate
+    );
+    const intestinos = intestinosRaw.filter(
+      (i) =>
+        activePatientIds.has(i.pacienteId) &&
+        new Date(i.data) >= janela.inicioAtualDate
+    );
+    const hidratacoes = hidratacoesRaw.filter(
+      (h) =>
+        activePatientIds.has(h.pacienteId) &&
+        new Date(h.data) >= janela.inicioAtualDate
+    );
+    const workouts = workoutsRaw.filter(
+      (w) =>
+        activePatientIds.has(w.patientId) &&
+        new Date(w.date) >= janela.inicioAtualDate
+    );
+    const biometriasNoPeriodo = biometriasRaw.filter(
+      (b) =>
+        activePatientIds.has(b.patientId) &&
+        new Date(b.measuredAt) >= janela.inicioAtualDate
+    );
+    const measurementsNoPeriodo = measurementsRaw.filter(
+      (m) =>
+        activePatientIds.has(m.patientId) &&
+        new Date(m.measuredAt) >= janela.inicioAtualDate
+    );
+
+    // =========================================================================
+    // 1. SINAIS DE ATIVIDADE (ENGAJAMENTO DO PERÍODO + ÚLTIMO SINAL 7D P/ EVASÃO)
+    // =========================================================================
+    const pacientesAtivosNoPeriodo = new Set<string>();
+    const ultimoSinalPorPaciente = new Map<string, Date>();
+
+    const registrarSinal = (
+      pid: string,
+      dt: Date,
+      dentroDoPeriodo: boolean
+    ) => {
+      if (!activePatientIds.has(pid) || Number.isNaN(dt.getTime())) return;
+      if (dentroDoPeriodo) pacientesAtivosNoPeriodo.add(pid);
+      const prev = ultimoSinalPorPaciente.get(pid);
+      if (!prev || dt > prev) {
+        ultimoSinalPorPaciente.set(pid, dt);
+      }
+    };
+
+    for (const c of checkinsRefeicoesRaw) {
+      const dt = new Date(c.atualizadoEm || c.criadoEm);
+      registrarSinal(c.pacienteId, dt, c.dataDia >= janela.inicioAtualIso);
+    }
+    for (const g of glicemiasRaw) {
+      const dt = new Date(g.dataRegistro);
+      registrarSinal(g.pacienteId, dt, dt >= janela.inicioAtualDate);
+    }
+    for (const i of intestinosRaw) {
+      const dt = new Date(i.data);
+      registrarSinal(i.pacienteId, dt, dt >= janela.inicioAtualDate);
+    }
+    for (const h of hidratacoesRaw) {
+      const dt = new Date(h.data);
+      registrarSinal(h.pacienteId, dt, dt >= janela.inicioAtualDate);
+    }
+    for (const w of workoutsRaw) {
+      const dt = new Date(w.date);
+      registrarSinal(w.patientId, dt, dt >= janela.inicioAtualDate);
+    }
+    for (const s of sonos7dRaw) {
+      const dt = new Date(s.data);
+      registrarSinal(s.pacienteId, dt, dt >= janela.inicioAtualDate);
+    }
+    for (const b of biometriasRaw) {
+      const dt = new Date(b.measuredAt);
+      registrarSinal(b.patientId, dt, dt >= janela.inicioAtualDate);
+    }
+    for (const m of measurementsRaw) {
+      const dt = new Date(m.measuredAt);
+      registrarSinal(m.patientId, dt, dt >= janela.inicioAtualDate);
+    }
+
+    const totalPacientesAtivos = pacientesAtivos.length;
+    const ativosNoPeriodo = pacientesAtivosNoPeriodo.size;
+    const taxaEngajamento =
+      totalPacientesAtivos > 0
+        ? Math.min(100, Math.round((ativosNoPeriodo / totalPacientesAtivos) * 100))
+        : 0;
+
+    // =========================================================================
+    // 2. CONSULTAS AGENDADAS (HOJE + PRÓXIMOS 7 DIAS)
+    // =========================================================================
+    const agendamentosValidos = agendamentosFuturos.filter((a) => {
+      const st = (a.status || "").toUpperCase();
+      return st !== "CANCELADO" && st !== "FALTOU";
+    });
+
+    const consultasHoje = agendamentosValidos.filter((a) => {
+      const dt = new Date(a.dataHora);
+      return dt >= inicioHojeDate && dt < fimHojeDate;
+    }).length;
+
+    const consultasProximos7Dias = agendamentosValidos.filter((a) => {
+      const dt = new Date(a.dataHora);
+      return dt >= inicioHojeDate && dt < fimProximos7DiasDate;
+    }).length;
+
+    const proximasConsultas: ConsultaProximaItem[] = agendamentosValidos
+      .filter((a) => new Date(a.dataHora) >= inicioHojeDate)
+      .slice(0, 4)
+      .map((a) => ({
+        id: a.id,
+        dataHora: new Date(a.dataHora).toISOString(),
+        tipo: a.tipo || "CONSULTA",
+        status: a.status || "AGENDADO",
+        especialidade: a.especialidade || "Endocrinologia",
+        pacienteId: a.pacienteId,
+        pacienteNome: a.paciente?.fullName || "Paciente",
+        pacienteRecordCode: a.paciente?.recordCode || "",
+        medicoNome: a.medico?.nome || "Equipe Clínica FAAZ",
+      }));
+
+    // =========================================================================
+    // 3. IMPACTO CORPORAL SEPARADO POR OBJETIVO (EMAGRECIMENTO vs HIPERTROFIA)
+    // =========================================================================
+    const pesoTimelineByPatient = new Map<
+      string,
+      Array<{ date: Date; peso: number }>
+    >();
+
+    const addWeightPoint = (pid: string, date: Date, peso: number) => {
+      if (!activePatientIds.has(pid) || !Number.isFinite(peso) || peso <= 0) {
+        return;
+      }
+      if (Number.isNaN(date.getTime())) return;
+      const arr = pesoTimelineByPatient.get(pid) || [];
+      arr.push({ date, peso });
+      pesoTimelineByPatient.set(pid, arr);
+    };
+
+    for (const ev of evolucoesRaw) {
+      if (ev.pesoAtual != null) {
+        addWeightPoint(
+          ev.pacienteId,
+          new Date(ev.createdAt || ev.dataAtendimento),
+          Number(ev.pesoAtual)
+        );
+      }
+    }
+    for (const bio of biometriasRaw) {
+      if (bio.weightKg != null) {
+        addWeightPoint(
+          bio.patientId,
+          new Date(bio.createdAt || bio.measuredAt),
+          Number(bio.weightKg)
+        );
+      }
+    }
+
+    // Deduplica pontos gêmeos gravados simultaneamente (ex.: pesagem app grava em BIOMETRIC + EVOLUCOES)
+    for (const [pid, list] of pesoTimelineByPatient.entries()) {
+      list.sort((a, b) => a.date.getTime() - b.date.getTime());
+      const deduped: Array<{ date: Date; peso: number }> = [];
+      for (const pt of list) {
+        const last = deduped[deduped.length - 1];
+        if (
+          last &&
+          Math.abs(pt.date.getTime() - last.date.getTime()) <= 120_000 &&
+          Math.abs(pt.peso - last.peso) < 0.05
+        ) {
+          continue;
+        }
+        deduped.push(pt);
+      }
+      pesoTimelineByPatient.set(pid, deduped);
+    }
+
+    // Agrupa MEASUREMENTS por paciente (ordenado DESC -> mais recente no índice 0)
+    const measurementsByPatient = new Map<string, typeof measurementsRaw>();
+    for (const m of measurementsRaw) {
+      if (!activePatientIds.has(m.patientId)) continue;
+      const arr = measurementsByPatient.get(m.patientId) || [];
+      arr.push(m);
+      measurementsByPatient.set(m.patientId, arr);
+    }
+
+    let totalEliminadoAtual = 0;
+    let totalEliminadoAnterior = 0;
+    let maiorReducaoKg = 0;
+    let maiorReducaoPacienteNome: string | null = null;
+    let totalPacientesEmagrecimento = 0;
+    const detalhesEmagrecimento: DetalheEmagrecimentoPaciente[] = [];
+
+    let totalPacientesHipertrofia = 0;
+    const deltasPesoHipertrofia: number[] = [];
+    let pacientesComGanhoHipertrofia = 0;
+    const deltasCinturaHip: number[] = [];
+    const deltasBracoHip: number[] = [];
+    const deltasCoxaHip: number[] = [];
+    const detalhesHipertrofia: DetalheHipertrofiaPaciente[] = [];
+
+    for (const p of pacientesAtivos) {
+      const perfil = classificarObjetivoPaciente(
+        p.treatmentObjective,
+        p.clinicalFocus,
+        p.prontuario?.objetivo
+      );
+      const timeline = pesoTimelineByPatient.get(p.id) || [];
+
+      if (perfil === "HIPERTROFIA") {
+        totalPacientesHipertrofia += 1;
+
+        const ptsNoPeriodo = timeline.filter(
+          (pt) => pt.date >= janela.inicioAtualDate
+        );
+        const ptsAntesPeriodo = timeline.filter(
+          (pt) => pt.date < janela.inicioAtualDate
+        );
+
+        let deltaPeso: number | null = null;
+        let pesoAtual: number | null =
+          timeline.length > 0 ? timeline[timeline.length - 1].peso : null;
+        if (pesoAtual === null && p.prontuario?.pesoAtualKg != null) {
+          pesoAtual = Number(p.prontuario.pesoAtualKg);
+        }
+
+        if (ptsNoPeriodo.length > 0) {
+          const ultimoNoPeriodo = ptsNoPeriodo[ptsNoPeriodo.length - 1];
+          const referencia =
+            ptsAntesPeriodo.length > 0
+              ? ptsAntesPeriodo[ptsAntesPeriodo.length - 1]
+              : ptsNoPeriodo.length >= 2
+                ? ptsNoPeriodo[0]
+                : null;
+          if (referencia) {
+            deltaPeso = round1(ultimoNoPeriodo.peso - referencia.peso);
+            deltasPesoHipertrofia.push(deltaPeso);
+            if (deltaPeso > 0) pacientesComGanhoHipertrofia += 1;
+          }
+        }
+
+        const pMeasures = measurementsByPatient.get(p.id) || [];
+        const extractDelta = (
+          picker: (m: (typeof measurementsRaw)[number]) => number | null
+        ): number | null => {
+          const vals = pMeasures
+            .map((m) => picker(m))
+            .filter((v): v is number => v !== null && Number.isFinite(v));
+          if (vals.length < 2) return null;
+          return round1(vals[0] - vals[1]);
+        };
+
+        const deltaCintura = extractDelta((m) =>
+          m.waist != null ? Number(m.waist) : null
+        );
+        const deltaBraco = extractDelta((m) => {
+          if (m.rightArm != null && m.leftArm != null) {
+            return (Number(m.rightArm) + Number(m.leftArm)) / 2;
+          }
+          if (m.rightArm != null) return Number(m.rightArm);
+          if (m.leftArm != null) return Number(m.leftArm);
+          return null;
+        });
+        const deltaCoxa = extractDelta((m) => {
+          if (m.rightThigh != null && m.leftThigh != null) {
+            return (Number(m.rightThigh) + Number(m.leftThigh)) / 2;
+          }
+          if (m.rightThigh != null) return Number(m.rightThigh);
+          if (m.leftThigh != null) return Number(m.leftThigh);
+          return null;
+        });
+
+        if (deltaCintura !== null) deltasCinturaHip.push(deltaCintura);
+        if (deltaBraco !== null) deltasBracoHip.push(deltaBraco);
+        if (deltaCoxa !== null) deltasCoxaHip.push(deltaCoxa);
+
+        detalhesHipertrofia.push({
+          pacienteId: p.id,
+          nome: p.fullName,
+          recordCode: p.recordCode,
+          deltaPesoKg: deltaPeso,
+          pesoAtualKg: pesoAtual !== null ? round1(pesoAtual) : null,
+          deltaBracoCm: deltaBraco,
+          deltaCoxaCm: deltaCoxa,
+          deltaCinturaCm: deltaCintura,
+        });
+      } else {
+        if (perfil === "EMAGRECIMENTO") {
+          totalPacientesEmagrecimento += 1;
+        }
+
+        let reducaoAtualPaciente = 0;
+        let pesoRefInicio: number | null = null;
+        let pesoFimAtual: number | null = null;
+
+        for (let i = 1; i < timeline.length; i++) {
+          const prev = timeline[i - 1];
+          const curr = timeline[i];
+          const delta = round1(prev.peso - curr.peso);
+
+          if (delta > 0) {
+            if (curr.date >= janela.inicioAtualDate) {
+              reducaoAtualPaciente = round1(reducaoAtualPaciente + delta);
+              if (pesoRefInicio === null) pesoRefInicio = prev.peso;
+              pesoFimAtual = curr.peso;
+            } else if (
+              curr.date >= janela.inicioAnteriorDate &&
+              curr.date < janela.inicioAtualDate
+            ) {
+              totalEliminadoAnterior = round1(totalEliminadoAnterior + delta);
+            }
+          }
+        }
+
+        if (reducaoAtualPaciente > 0) {
+          totalEliminadoAtual = round1(
+            totalEliminadoAtual + reducaoAtualPaciente
+          );
+          if (reducaoAtualPaciente > maiorReducaoKg) {
+            maiorReducaoKg = reducaoAtualPaciente;
+            maiorReducaoPacienteNome = p.fullName;
+          }
+          detalhesEmagrecimento.push({
+            pacienteId: p.id,
+            nome: p.fullName,
+            recordCode: p.recordCode,
+            reducaoKg: reducaoAtualPaciente,
+            pesoAtualKg: round1(pesoFimAtual ?? 0),
+            pesoAnteriorKg: round1(pesoRefInicio ?? 0),
+          });
+        }
+      }
+    }
+
+    detalhesEmagrecimento.sort((a, b) => b.reducaoKg - a.reducaoKg);
+    detalhesHipertrofia.sort(
+      (a, b) => (b.deltaPesoKg ?? -999) - (a.deltaPesoKg ?? -999)
+    );
+
+    const mediaPorPacienteKg =
+      detalhesEmagrecimento.length > 0
+        ? round1(totalEliminadoAtual / detalhesEmagrecimento.length)
+        : 0;
+    const temBaseAnterior = totalEliminadoAnterior > 0;
+    const deltaAnteriorPct = temBaseAnterior
+      ? Math.round(
+          ((totalEliminadoAtual - totalEliminadoAnterior) /
+            totalEliminadoAnterior) *
+            100
+        )
+      : null;
+
+    const avgOrNull = (arr: number[]): number | null =>
+      arr.length > 0
+        ? round1(arr.reduce((acc, v) => acc + v, 0) / arr.length)
+        : null;
+
+    // =========================================================================
+    // 4. SÉRIE TEMPORAL DE ATIVIDADE DO ECOSSISTEMA (AREA CHART)
+    // =========================================================================
+    const serieBuckets = new Map<string, PontoSerieAtividade>();
+    if (periodo === "hoje") {
+      // 12 blocos de 2h hoje (00h..22h) para curva real mesmo em "Hoje"
+      for (let h = 0; h < 24; h += 2) {
+        const key = `${janela.hojeIso}T${String(h).padStart(2, "0")}`;
+        serieBuckets.set(key, {
+          data: key,
+          dataLabel: `${String(h).padStart(2, "0")}h`,
+          totalInteracoes: 0,
+          dieta: 0,
+          glicemia: 0,
+          intestino: 0,
+          treinos: 0,
+          pesagens: 0,
+        });
+      }
+    } else {
+      for (let i = 0; i < janela.diasJanela; i++) {
+        const iso = adicionarDiasDataBR(janela.inicioAtualIso, i);
+        if (iso > janela.hojeIso) break;
+        serieBuckets.set(iso, {
+          data: iso,
+          dataLabel: formatDiaLabelPt(iso),
+          totalInteracoes: 0,
+          dieta: 0,
+          glicemia: 0,
+          intestino: 0,
+          treinos: 0,
+          pesagens: 0,
+        });
+      }
+    }
+
+    const bucketKeyFromDate = (dt: Date): string => {
+      const sp = getPartesDataHoraBR(dt);
+      if (periodo === "hoje") {
+        const slot = Math.floor(sp.hour / 2) * 2;
+        return `${sp.isoDate}T${String(slot).padStart(2, "0")}`;
+      }
+      return sp.isoDate;
+    };
+
+    const incBucket = (
+      key: string,
+      campo: "dieta" | "glicemia" | "intestino" | "treinos" | "pesagens"
+    ) => {
+      const b = serieBuckets.get(key);
+      if (!b) return;
+      b[campo] += 1;
+      b.totalInteracoes += 1;
+    };
+
+    for (const c of checkinsRefeicoes) {
+      const key =
+        periodo === "hoje"
+          ? bucketKeyFromDate(new Date(c.atualizadoEm || c.criadoEm))
+          : c.dataDia;
+      incBucket(key, "dieta");
+    }
+    for (const g of glicemias) {
+      incBucket(bucketKeyFromDate(new Date(g.dataRegistro)), "glicemia");
+    }
+    for (const i of intestinos) {
+      incBucket(bucketKeyFromDate(new Date(i.data)), "intestino");
+    }
+    for (const w of workouts) {
+      incBucket(bucketKeyFromDate(new Date(w.date)), "treinos");
+    }
+    for (const b of biometriasNoPeriodo) {
+      incBucket(bucketKeyFromDate(new Date(b.measuredAt)), "pesagens");
+    }
+
+    const serieAtividade = Array.from(serieBuckets.values());
+
+    // =========================================================================
+    // 5. TELEMETRIA GLICÊMICA (REGISTROS_GLICEMIA)
+    // =========================================================================
+    let somaGlic = 0;
+    let hipoCount = 0;
+    let hiperCount = 0;
+
+    const glicemiaPorPaciente = new Map<
+      string,
+      {
+        medicoes: number;
+        soma: number;
+        ultimoValor: number;
+        ultimaData: Date;
+        alertasCriticos: number;
+        ultimoCritico: {
+          valor: number;
+          momento: string;
+          data: Date;
+          tipo: "HIPO" | "HIPER";
+        } | null;
+      }
+    >();
+
+    for (const g of glicemias) {
+      const val = Number(g.valor) || 0;
+      const dt = new Date(g.dataRegistro);
+      somaGlic += val;
+      const isHipo = val < 70;
+      const isHiper = val > 180;
+      if (isHipo) hipoCount += 1;
+      else if (isHiper) hiperCount += 1;
+
+      const cur = glicemiaPorPaciente.get(g.pacienteId);
+      if (!cur) {
+        glicemiaPorPaciente.set(g.pacienteId, {
+          medicoes: 1,
+          soma: val,
+          ultimoValor: val,
+          ultimaData: dt,
+          alertasCriticos: isHipo || isHiper ? 1 : 0,
+          ultimoCritico:
+            isHipo || isHiper
+              ? {
+                  valor: val,
+                  momento: formatMomentoGlicemia(g.momento),
+                  data: dt,
+                  tipo: isHipo ? "HIPO" : "HIPER",
+                }
+              : null,
+        });
+      } else {
+        cur.medicoes += 1;
+        cur.soma += val;
+        if (dt > cur.ultimaData) {
+          cur.ultimaData = dt;
+          cur.ultimoValor = val;
+        }
+        if (isHipo || isHiper) {
+          cur.alertasCriticos += 1;
+          if (!cur.ultimoCritico || dt > cur.ultimoCritico.data) {
+            cur.ultimoCritico = {
+              valor: val,
+              momento: formatMomentoGlicemia(g.momento),
+              data: dt,
+              tipo: isHipo ? "HIPO" : "HIPER",
+            };
+          }
+        }
+      }
+    }
+
+    const totalMedicoesGlic = glicemias.length;
+    const mediaGlicMgDl =
+      totalMedicoesGlic > 0 ? Math.round(somaGlic / totalMedicoesGlic) : null;
+    const hipoPct =
+      totalMedicoesGlic > 0
+        ? Math.round((hipoCount / totalMedicoesGlic) * 100)
+        : 0;
+    const hiperPct =
+      totalMedicoesGlic > 0
+        ? Math.round((hiperCount / totalMedicoesGlic) * 100)
+        : 0;
+    const metaGlicPct =
+      totalMedicoesGlic > 0 ? Math.max(0, 100 - hipoPct - hiperPct) : 0;
+
+    const sparklineGlicemia: SparklineGlicemiaItem[] = [...glicemias]
+      .slice(0, 24)
+      .reverse()
+      .map((g) => {
+        const dt = new Date(g.dataRegistro);
+        const sp = getPartesDataHoraBR(dt);
+        return {
+          id: g.id,
+          valor: Number(g.valor) || 0,
+          momento: formatMomentoGlicemia(g.momento),
+          dataRegistro: dt.toISOString(),
+          horaLabel: `${formatDiaLabelPt(sp.isoDate)} ${String(sp.hour).padStart(
+            2,
+            "0"
+          )}h`,
+          pacienteNome: pacienteMap.get(g.pacienteId)?.fullName || "Paciente",
+        };
+      });
+
+    const pacientesCriticosGlicemia: PacienteGlicemiaCritica[] = [];
+    const detalhesGlicemia: DetalheGlicemiaPaciente[] = [];
+
+    for (const [pid, st] of glicemiaPorPaciente.entries()) {
+      const p = pacienteMap.get(pid);
+      if (!p) continue;
+      detalhesGlicemia.push({
+        pacienteId: pid,
+        nome: p.fullName,
+        recordCode: p.recordCode,
+        medicoes: st.medicoes,
+        mediaMgDl: Math.round(st.soma / st.medicoes),
+        ultimoValor: st.ultimoValor,
+        alertasCriticos: st.alertasCriticos,
+        ultimaData: st.ultimaData.toISOString(),
+      });
+      if (st.ultimoCritico) {
+        pacientesCriticosGlicemia.push({
+          pacienteId: pid,
+          nome: p.fullName,
+          recordCode: p.recordCode,
+          cpf: p.cpf || "",
+          telefone: p.phoneWhatsapp || "",
+          ultimoValor: st.ultimoCritico.valor,
+          momento: st.ultimoCritico.momento,
+          dataRegistro: st.ultimoCritico.data.toISOString(),
+          tipo: st.ultimoCritico.tipo,
+          totalAlertas: st.alertasCriticos,
+        });
+      }
+    }
+    pacientesCriticosGlicemia.sort(
+      (a, b) =>
+        new Date(b.dataRegistro).getTime() - new Date(a.dataRegistro).getTime()
+    );
+    detalhesGlicemia.sort(
+      (a, b) =>
+        b.alertasCriticos - a.alertasCriticos || b.medicoes - a.medicoes
+    );
+
+    // =========================================================================
+    // 6. ADESÃO ALIMENTAR (CHECKINS_REFEICOES + REFEICOES)
+    // =========================================================================
+    let obrigatoriosTotalDieta = 0;
+    let obrigatoriosAderentesDieta = 0;
+    let opcionaisBonusDieta = 0;
+    let seguiuCount = 0;
+    let trocaCount = 0;
+    let naoFezCount = 0;
+
+    const gargaloMap = new Map<
+      string,
+      {
+        refeicaoId: string;
+        nome: string;
+        horario: string | null;
+        total: number;
+        naoFez: number;
+        aderentes: number;
+      }
+    >();
+
+    const dietaPorPaciente = new Map<
+      string,
+      {
+        total: number;
+        obrigTotal: number;
+        obrigAderentes: number;
+        opBonus: number;
+        seguiu: number;
+        trocas: number;
+        naoFez: number;
+        ultimoDia: string;
+      }
+    >();
+
+    for (const c of checkinsRefeicoes) {
+      const isOpcional = Boolean(c.refeicao?.opcional);
+      const isAderente = c.status === "SEGUI" || c.status === "FIZ_TROCA";
+
+      if (c.status === "SEGUI") seguiuCount += 1;
+      else if (c.status === "FIZ_TROCA") trocaCount += 1;
+      else if (c.status === "NAO_FIZ") naoFezCount += 1;
+
+      if (isOpcional) {
+        if (isAderente) opcionaisBonusDieta += 1;
+      } else {
+        obrigatoriosTotalDieta += 1;
+        if (isAderente) obrigatoriosAderentesDieta += 1;
+
+        const gKey = c.refeicaoId;
+        const gItem = gargaloMap.get(gKey) || {
+          refeicaoId: c.refeicaoId,
+          nome: c.refeicao?.nome || "Refeição",
+          horario: formatHorarioCurto(c.refeicao?.horario),
+          total: 0,
+          naoFez: 0,
+          aderentes: 0,
+        };
+        gItem.total += 1;
+        if (c.status === "NAO_FIZ") gItem.naoFez += 1;
+        if (isAderente) gItem.aderentes += 1;
+        gargaloMap.set(gKey, gItem);
+      }
+
+      const dp = dietaPorPaciente.get(c.pacienteId) || {
+        total: 0,
+        obrigTotal: 0,
+        obrigAderentes: 0,
+        opBonus: 0,
+        seguiu: 0,
+        trocas: 0,
+        naoFez: 0,
+        ultimoDia: c.dataDia,
+      };
+      dp.total += 1;
+      if (c.dataDia > dp.ultimoDia) dp.ultimoDia = c.dataDia;
+      if (c.status === "SEGUI") dp.seguiu += 1;
+      else if (c.status === "FIZ_TROCA") dp.trocas += 1;
+      else if (c.status === "NAO_FIZ") dp.naoFez += 1;
+
+      if (isOpcional) {
+        if (isAderente) dp.opBonus += 1;
+      } else {
+        dp.obrigTotal += 1;
+        if (isAderente) dp.obrigAderentes += 1;
+      }
+      dietaPorPaciente.set(c.pacienteId, dp);
+    }
+
+    const totalCheckinsDieta = checkinsRefeicoes.length;
+    let percentualAdesaoDieta: number | null = null;
+    if (obrigatoriosTotalDieta > 0) {
+      percentualAdesaoDieta = Math.min(
+        100,
+        Math.round(
+          ((obrigatoriosAderentesDieta + opcionaisBonusDieta) /
+            obrigatoriosTotalDieta) *
+            100
+        )
+      );
+    } else if (opcionaisBonusDieta > 0) {
+      percentualAdesaoDieta = 100;
+    }
+
+    const seguiuPct =
+      totalCheckinsDieta > 0
+        ? Math.round((seguiuCount / totalCheckinsDieta) * 100)
+        : 0;
+    const trocaInteligentePct =
+      totalCheckinsDieta > 0
+        ? Math.round((trocaCount / totalCheckinsDieta) * 100)
+        : 0;
+    const naoFezPct =
+      totalCheckinsDieta > 0
+        ? Math.max(0, 100 - seguiuPct - trocaInteligentePct)
+        : 0;
+
+    let gargaloPrincipal: TelemetriaDashboardResponse["dieta"]["gargaloPrincipal"] =
+      null;
+    for (const stats of gargaloMap.values()) {
+      if (stats.naoFez <= 0) continue;
+      const prop: number = stats.naoFez / stats.total;
+      const bestProp: number = gargaloPrincipal
+        ? gargaloPrincipal.naoFez / gargaloPrincipal.totalRegistros
+        : -1;
+      if (
+        !gargaloPrincipal ||
+        prop > bestProp ||
+        (prop === bestProp && stats.naoFez > gargaloPrincipal.naoFez)
+      ) {
+        gargaloPrincipal = {
+          refeicaoId: stats.refeicaoId,
+          nome: stats.nome,
+          horario: stats.horario,
+          label: stats.horario ? `${stats.nome} ${stats.horario}` : stats.nome,
+          totalRegistros: stats.total,
+          naoFez: stats.naoFez,
+          percentualAdesao: Math.round((stats.aderentes / stats.total) * 100),
+        };
+      }
+    }
+
+    const detalhesDieta: DetalheDietaPaciente[] = [];
+    for (const [pid, dp] of dietaPorPaciente.entries()) {
+      const p = pacienteMap.get(pid);
+      if (!p) continue;
+      const perc =
+        dp.obrigTotal > 0
+          ? Math.min(
+              100,
+              Math.round(((dp.obrigAderentes + dp.opBonus) / dp.obrigTotal) * 100)
+            )
+          : dp.opBonus > 0
+            ? 100
+            : null;
+      detalhesDieta.push({
+        pacienteId: pid,
+        nome: p.fullName,
+        recordCode: p.recordCode,
+        totalCheckins: dp.total,
+        percentualAdesao: perc,
+        seguiu: dp.seguiu,
+        trocas: dp.trocas,
+        naoFez: dp.naoFez,
+        ultimoDia: dp.ultimoDia,
+      });
+    }
+    detalhesDieta.sort(
+      (a, b) => (a.percentualAdesao ?? 101) - (b.percentualAdesao ?? 101)
+    );
+
+    // =========================================================================
+    // 7. SAÚDE INTESTINAL (CHECKINS_INTESTINAIS — HISTOGRAMA BRISTOL 1..7)
+    // =========================================================================
+    const histograma = {
+      tipo1: 0,
+      tipo2: 0,
+      tipo3: 0,
+      tipo4: 0,
+      tipo5: 0,
+      tipo6: 0,
+      tipo7: 0,
+    };
+    let idealIntCount = 0;
+    let constipIntCount = 0;
+    let diarreiaIntCount = 0;
+
+    const intestinoPorPaciente = new Map<
+      string,
+      {
+        total: number;
+        ultimoTipo: number;
+        ultimaData: Date;
+        ideal: number;
+        constipacao: number;
+        diarreia: number;
+        sintomas: Set<string>;
+      }
+    >();
+
+    for (const item of intestinos) {
+      const tipo = Math.min(7, Math.max(1, Math.round(Number(item.tipoBristol) || 4)));
+      const key = `tipo${tipo}` as keyof typeof histograma;
+      histograma[key] += 1;
+
+      const cat = normalizarCategoriaBristol(item.categoria, tipo);
+      if (cat === "ideal") idealIntCount += 1;
+      else if (cat === "constipacao") constipIntCount += 1;
+      else diarreiaIntCount += 1;
+
+      const dt = new Date(item.data);
+      const cur = intestinoPorPaciente.get(item.pacienteId) || {
+        total: 0,
+        ultimoTipo: tipo,
+        ultimaData: dt,
+        ideal: 0,
+        constipacao: 0,
+        diarreia: 0,
+        sintomas: new Set<string>(),
+      };
+      cur.total += 1;
+      if (dt >= cur.ultimaData) {
+        cur.ultimaData = dt;
+        cur.ultimoTipo = tipo;
+      }
+      cur[cat] += 1;
+      if (Array.isArray(item.sintomas)) {
+        for (const s of item.sintomas) {
+          const clean = String(s || "").trim();
+          const low = clean.toLowerCase();
+          if (clean && low !== "nenhum" && low !== "sem sintomas") {
+            cur.sintomas.add(clean);
+          }
+        }
+      }
+      intestinoPorPaciente.set(item.pacienteId, cur);
+    }
+
+    const totalIntestino = intestinos.length;
+    const idealIntPct =
+      totalIntestino > 0 ? Math.round((idealIntCount / totalIntestino) * 100) : 0;
+    const constipIntPct =
+      totalIntestino > 0
+        ? Math.round((constipIntCount / totalIntestino) * 100)
+        : 0;
+    const diarreiaIntPct =
+      totalIntestino > 0
+        ? Math.max(0, 100 - idealIntPct - constipIntPct)
+        : 0;
+
+    const detalhesIntestino: DetalheIntestinoPaciente[] = [];
+    for (const [pid, st] of intestinoPorPaciente.entries()) {
+      const p = pacienteMap.get(pid);
+      if (!p) continue;
+      const padrao: "ideal" | "constipacao" | "diarreia" =
+        st.constipacao >= st.ideal && st.constipacao >= st.diarreia
+          ? "constipacao"
+          : st.diarreia >= st.ideal && st.diarreia >= st.constipacao
+            ? "diarreia"
+            : "ideal";
+      detalhesIntestino.push({
+        pacienteId: pid,
+        nome: p.fullName,
+        recordCode: p.recordCode,
+        totalRegistros: st.total,
+        ultimoTipo: st.ultimoTipo,
+        padraoPredominante: padrao,
+        sintomasRecentes: Array.from(st.sintomas).slice(0, 3),
+        ultimaData: st.ultimaData.toISOString(),
+      });
+    }
+    detalhesIntestino.sort(
+      (a, b) =>
+        new Date(b.ultimaData).getTime() - new Date(a.ultimaData).getTime()
+    );
+
+    // =========================================================================
+    // 8. HIDRATAÇÃO & TREINOS
+    // =========================================================================
+    const hidraPorPaciente = new Map<
+      string,
+      { totalMl: number; dias: Set<string> }
+    >();
+    let totalConsumidoMl = 0;
+    for (const h of hidratacoes) {
+      const vol = Math.max(0, Number(h.volumeMl) || 0);
+      totalConsumidoMl += vol;
+      const diaIso = getPartesDataHoraBR(new Date(h.data)).isoDate;
+      const cur = hidraPorPaciente.get(h.pacienteId) || {
+        totalMl: 0,
+        dias: new Set<string>(),
+      };
+      cur.totalMl += vol;
+      cur.dias.add(diaIso);
+      hidraPorPaciente.set(h.pacienteId, cur);
+    }
+
+    const detalhesHidratacao: DetalheHidratacaoPaciente[] = [];
+    let metaTotalHidratacaoMl = 0;
+
+    if (periodo === "hoje") {
+      // Hoje: soma da meta diária real de todos os pacientes ativos
+      for (const p of pacientesAtivos) {
+        metaTotalHidratacaoMl += getMetaAguaPaciente(p.id);
+      }
+    } else {
+      // Períodos multi-dia: compara volume registrado contra meta real dos dias registrados pelos pacientes
+      for (const [pid, st] of hidraPorPaciente.entries()) {
+        metaTotalHidratacaoMl +=
+          getMetaAguaPaciente(pid) * Math.max(1, st.dias.size);
+      }
+    }
+
+    for (const [pid, st] of hidraPorPaciente.entries()) {
+      const p = pacienteMap.get(pid);
+      if (!p) continue;
+      const metaDiaria = getMetaAguaPaciente(pid);
+      const diasReg = Math.max(1, st.dias.size);
+      const mediaDiaria = Math.round(st.totalMl / diasReg);
+      const perc =
+        metaDiaria > 0
+          ? Math.min(100, Math.round((mediaDiaria / metaDiaria) * 100))
+          : 0;
+      detalhesHidratacao.push({
+        pacienteId: pid,
+        nome: p.fullName,
+        recordCode: p.recordCode,
+        volumeTotalL: round1(st.totalMl / 1000),
+        volumeMedioDiarioMl: mediaDiaria,
+        metaDiariaMl: metaDiaria,
+        percentual: perc,
+        diasRegistrados: diasReg,
+      });
+    }
+    detalhesHidratacao.sort((a, b) => b.percentual - a.percentual);
+
+    const percentualHidratacao =
+      hidratacoes.length > 0 && metaTotalHidratacaoMl > 0
+        ? Math.min(
+            100,
+            Math.round((totalConsumidoMl / metaTotalHidratacaoMl) * 100)
+          )
+        : null;
+
+    // Treinos
+    const treinosPorPaciente = new Map<string, Set<string>>();
+    for (const w of workouts) {
+      const diaIso = getPartesDataHoraBR(new Date(w.date)).isoDate;
+      const set = treinosPorPaciente.get(w.patientId) || new Set<string>();
+      set.add(diaIso);
+      treinosPorPaciente.set(w.patientId, set);
+    }
+
+    let diasAtivosTreinosTotal = 0;
+    let metaEsperadaTreinosTotal = 0;
+    const detalhesTreinos: DetalheTreinoPaciente[] = [];
+
+    for (const p of pacientesAtivos) {
+      const freqSemanal = p.workoutFrequency ?? 3;
+      const metaPaciente = Math.max(
+        1,
+        Math.round((freqSemanal / 7) * janela.diasJanela)
+      );
+      const diasSet = treinosPorPaciente.get(p.id);
+      const diasAtivosP = diasSet ? diasSet.size : 0;
+
+      if (diasAtivosP > 0) {
+        diasAtivosTreinosTotal += diasAtivosP;
+        metaEsperadaTreinosTotal += metaPaciente;
+        detalhesTreinos.push({
+          pacienteId: p.id,
+          nome: p.fullName,
+          recordCode: p.recordCode,
+          diasAtivos: diasAtivosP,
+          metaEsperada: metaPaciente,
+          percentualAdesao: Math.min(
+            100,
+            Math.round((diasAtivosP / metaPaciente) * 100)
+          ),
+          modalidade: p.workoutType || "Atividade Física",
+        });
+      }
+    }
+    detalhesTreinos.sort((a, b) => b.percentualAdesao - a.percentualAdesao);
+
+    const percentualTreinos =
+      workouts.length > 0 && metaEsperadaTreinosTotal > 0
+        ? Math.min(
+            100,
+            Math.round((diasAtivosTreinosTotal / metaEsperadaTreinosTotal) * 100)
+          )
+        : null;
+
+    // =========================================================================
+    // 9. ÍNDICE CLÍNICO GLOBAL (MÉDIA PONDERADA APENAS DOS PILARES COM DADOS)
+    // =========================================================================
+    const subCheckins: number[] = [];
+    if (totalMedicoesGlic > 0) subCheckins.push(metaGlicPct);
+    if (totalIntestino > 0) subCheckins.push(idealIntPct);
+    if (ativosNoPeriodo > 0) subCheckins.push(taxaEngajamento);
+    const scoreCheckinsClinicos =
+      subCheckins.length > 0
+        ? Math.round(
+            subCheckins.reduce((acc, v) => acc + v, 0) / subCheckins.length
+          )
+        : null;
+
+    const pilaresIndice: PilarIndiceItem[] = [
+      {
+        chave: "dieta",
+        rotulo: "Adesão Alimentar",
+        score: percentualAdesaoDieta,
+        peso: 35,
+        ativo: percentualAdesaoDieta !== null,
+      },
+      {
+        chave: "hidratacao",
+        rotulo: "Hidratação",
+        score: percentualHidratacao,
+        peso: 20,
+        ativo: percentualHidratacao !== null,
+      },
+      {
+        chave: "treinos",
+        rotulo: "Treinos",
+        score: percentualTreinos,
+        peso: 20,
+        ativo: percentualTreinos !== null,
+      },
+      {
+        chave: "checkins",
+        rotulo: "Check-ins Clínicos",
+        score: scoreCheckinsClinicos,
+        peso: 25,
+        ativo: scoreCheckinsClinicos !== null,
+      },
+    ];
+
+    const pilaresAtivos = pilaresIndice.filter(
+      (pl) => pl.ativo && pl.score !== null
+    );
+    const somaPesos = pilaresAtivos.reduce((acc, pl) => acc + pl.peso, 0);
+    const indiceClinicoGlobal =
+      somaPesos > 0
+        ? Math.round(
+            pilaresAtivos.reduce(
+              (acc, pl) => acc + (pl.score as number) * pl.peso,
+              0
+            ) / somaPesos
+          )
+        : null;
+
+    // =========================================================================
+    // 10. RADAR DE TRIAGEM CLÍNICA (CRITICO -> ATENCAO -> EVASAO)
+    // =========================================================================
+    const radarTriagem: RadarTriagemItem[] = [];
+    const pacientesJaNoRadar = new Set<string>();
+
+    // 10a. CRÍTICO — Alertas Glicêmicos (< 70 ou > 180)
+    for (const crit of pacientesCriticosGlicemia) {
+      pacientesJaNoRadar.add(crit.pacienteId);
+      radarTriagem.push({
+        id: `glic-${crit.pacienteId}`,
+        pacienteId: crit.pacienteId,
+        nome: crit.nome,
+        recordCode: crit.recordCode,
+        cpf: crit.cpf,
+        telefone: crit.telefone,
+        severidade: "CRITICO",
+        categoria: "GLICEMIA",
+        motivo: `${crit.tipo === "HIPO" ? "Hipoglicemia" : "Hiperglicemia"}: ${
+          crit.ultimoValor
+        } mg/dL (${crit.momento})`,
+        detalhe: `${crit.totalAlertas} episódio(s) fora da meta no período`,
+        ultimoSinalEm: crit.dataRegistro,
+      });
+    }
+
+    // 10b. ATENÇÃO — Padrão Intestinal Alterado (Constipação ou Diarreia predominante)
+    for (const det of detalhesIntestino) {
+      if (det.padraoPredominante === "ideal") continue;
+      if (pacientesJaNoRadar.has(det.pacienteId)) continue;
+      const p = pacienteMap.get(det.pacienteId);
+      if (!p) continue;
+      pacientesJaNoRadar.add(det.pacienteId);
+      radarTriagem.push({
+        id: `bristol-${det.pacienteId}`,
+        pacienteId: det.pacienteId,
+        nome: det.nome,
+        recordCode: det.recordCode,
+        cpf: p.cpf || "",
+        telefone: p.phoneWhatsapp || "",
+        severidade: "ATENCAO",
+        categoria: "INTESTINO",
+        motivo:
+          det.padraoPredominante === "constipacao"
+            ? `Constipação predominante (Bristol Tipo ${det.ultimoTipo})`
+            : `Trânsito acelerado / diarreia (Bristol Tipo ${det.ultimoTipo})`,
+        detalhe:
+          det.sintomasRecentes.length > 0
+            ? `Sintomas: ${det.sintomasRecentes.join(", ")}`
+            : `${det.totalRegistros} registro(s) intestinais no período`,
+        ultimoSinalEm: det.ultimaData,
+      });
+    }
+
+    // 10c. ATENÇÃO — Baixa adesão alimentar (< 50% com pelo menos 3 check-ins)
+    for (const det of detalhesDieta) {
+      if (det.totalCheckins < 3 || (det.percentualAdesao ?? 100) >= 50) continue;
+      if (pacientesJaNoRadar.has(det.pacienteId)) continue;
+      const p = pacienteMap.get(det.pacienteId);
+      if (!p) continue;
+      pacientesJaNoRadar.add(det.pacienteId);
+      radarTriagem.push({
+        id: `dieta-${det.pacienteId}`,
+        pacienteId: det.pacienteId,
+        nome: det.nome,
+        recordCode: det.recordCode,
+        cpf: p.cpf || "",
+        telefone: p.phoneWhatsapp || "",
+        severidade: "ATENCAO",
+        categoria: "DIETA",
+        motivo: `Adesão alimentar baixa (${det.percentualAdesao}%)`,
+        detalhe: `${det.naoFez} de ${det.totalCheckins} refeições não concluídas`,
+        ultimoSinalEm: `${det.ultimoDia}T12:00:00-03:00`,
+      });
+    }
+
+    // 10d. EVASÃO — 7+ dias sem nenhum check-in / interação no app
+    for (const p of pacientesAtivos) {
+      if (pacientesJaNoRadar.has(p.id)) continue;
+      const ultimo = ultimoSinalPorPaciente.get(p.id);
+      if (!ultimo || ultimo < seteDiasAtrasDate) {
+        const diasSemSinal = ultimo
+          ? Math.max(
+              7,
+              Math.floor(
+                (agora.getTime() - ultimo.getTime()) / (24 * 60 * 60 * 1000)
+              )
+            )
+          : null;
+        radarTriagem.push({
+          id: `evasao-${p.id}`,
+          pacienteId: p.id,
+          nome: p.fullName,
+          recordCode: p.recordCode,
+          cpf: p.cpf || "",
+          telefone: p.phoneWhatsapp || "",
+          severidade: "EVASAO",
+          categoria: "EVASAO",
+          motivo:
+            diasSemSinal !== null
+              ? `${diasSemSinal} dias sem check-in no app`
+              : "Sem check-ins registrados nos últimos 7+ dias",
+          detalhe: p.treatmentObjective || p.clinicalFocus || "Acompanhamento ativo",
+          ultimoSinalEm: ultimo ? ultimo.toISOString() : null,
+        });
+      }
+    }
+
+    const ordemSev = { CRITICO: 0, ATENCAO: 1, EVASAO: 2 };
+    radarTriagem.sort((a, b) => ordemSev[a.severidade] - ordemSev[b.severidade]);
+
+    // =========================================================================
+    // 11. LIVE TELEMETRY FEED (ÚLTIMOS 10 SINAIS REAIS DO APP)
+    // =========================================================================
+    const feedCandidatos: LiveFeedItem[] = [];
+
+    for (const g of glicemias.slice(0, 15)) {
+      const p = pacienteMap.get(g.pacienteId);
+      if (!p) continue;
+      const val = Number(g.valor) || 0;
+      const isCrit = val < 70 || val > 180;
+      feedCandidatos.push({
+        id: `feed-glic-${g.id}`,
+        pacienteId: p.id,
+        pacienteNome: p.fullName,
+        pacienteRecordCode: p.recordCode,
+        tipo: "GLICEMIA",
+        titulo: "Glicemia Capilar",
+        resumo: `Registrou Glicemia: ${val} mg/dL (${formatMomentoGlicemia(
+          g.momento
+        )})`,
+        severidade: isCrit ? "critico" : "positivo",
+        timestamp: new Date(g.dataRegistro).toISOString(),
+      });
+    }
+
+    for (const c of checkinsRefeicoes.slice(0, 15)) {
+      const p = pacienteMap.get(c.pacienteId);
+      if (!p) continue;
+      const nomeRef = c.refeicao?.nome || "Refeição";
+      const statusTexto =
+        c.status === "SEGUI"
+          ? "Segui o plano"
+          : c.status === "FIZ_TROCA"
+            ? "Fiz troca inteligente"
+            : "Não consegui fazer";
+      feedCandidatos.push({
+        id: `feed-dieta-${c.id}`,
+        pacienteId: p.id,
+        pacienteNome: p.fullName,
+        pacienteRecordCode: p.recordCode,
+        tipo: "DIETA",
+        titulo: "Check-in de Dieta",
+        resumo: `${nomeRef}: ${statusTexto}`,
+        severidade:
+          c.status === "NAO_FIZ"
+            ? "atencao"
+            : "positivo",
+        timestamp: new Date(c.atualizadoEm || c.criadoEm).toISOString(),
+      });
+    }
+
+    for (const i of intestinos.slice(0, 15)) {
+      const p = pacienteMap.get(i.pacienteId);
+      if (!p) continue;
+      const cat = normalizarCategoriaBristol(i.categoria, i.tipoBristol);
+      const labelCat =
+        cat === "ideal"
+          ? "Padrão ideal"
+          : cat === "constipacao"
+            ? "Constipação"
+            : "Trânsito acelerado";
+      feedCandidatos.push({
+        id: `feed-int-${i.id}`,
+        pacienteId: p.id,
+        pacienteNome: p.fullName,
+        pacienteRecordCode: p.recordCode,
+        tipo: "INTESTINO",
+        titulo: "Escala de Bristol",
+        resumo: `Intestino: Tipo ${i.tipoBristol} (${labelCat})`,
+        severidade: cat === "ideal" ? "positivo" : "atencao",
+        timestamp: new Date(i.data).toISOString(),
+      });
+    }
+
+    for (const b of biometriasNoPeriodo.slice(0, 15)) {
+      const p = pacienteMap.get(b.patientId);
+      if (!p) continue;
+      feedCandidatos.push({
+        id: `feed-peso-${b.id}`,
+        pacienteId: p.id,
+        pacienteNome: p.fullName,
+        pacienteRecordCode: p.recordCode,
+        tipo: "PESAGEM",
+        titulo: "Pesagem Registrada",
+        resumo: `Registrou Peso: ${Number(b.weightKg)
+          .toFixed(1)
+          .replace(".", ",")} kg (IMC ${Number(b.bmi)
+          .toFixed(1)
+          .replace(".", ",")})`,
+        severidade: "normal",
+        timestamp: new Date(b.measuredAt).toISOString(),
+      });
+    }
+
+    for (const m of measurementsNoPeriodo.slice(0, 15)) {
+      const p = pacienteMap.get(m.patientId);
+      if (!p) continue;
+      const partes: string[] = [];
+      if (m.waist != null) {
+        partes.push(
+          `Cintura ${Number(m.waist).toFixed(1).replace(".", ",")} cm`
+        );
+      }
+      if (m.abdomen != null) {
+        partes.push(
+          `Abdômen ${Number(m.abdomen).toFixed(1).replace(".", ",")} cm`
+        );
+      }
+      if (m.hips != null && partes.length < 2) {
+        partes.push(`Quadril ${Number(m.hips).toFixed(1).replace(".", ",")} cm`);
+      }
+      feedCandidatos.push({
+        id: `feed-med-${m.id}`,
+        pacienteId: p.id,
+        pacienteNome: p.fullName,
+        pacienteRecordCode: p.recordCode,
+        tipo: "MEDIDAS",
+        titulo: "Medidas Corporais",
+        resumo:
+          partes.length > 0
+            ? `Atualizou medidas: ${partes.join(" · ")}`
+            : "Registrou atualização de circunferências",
+        severidade: "normal",
+        timestamp: new Date(m.measuredAt).toISOString(),
+      });
+    }
+
+    for (const w of workouts.slice(0, 15)) {
+      const p = pacienteMap.get(w.patientId);
+      if (!p) continue;
+      feedCandidatos.push({
+        id: `feed-treino-${w.id}`,
+        pacienteId: p.id,
+        pacienteNome: p.fullName,
+        pacienteRecordCode: p.recordCode,
+        tipo: "TREINO",
+        titulo: "Treino Concluído",
+        resumo: `Concluiu treino (${p.workoutType || "Atividade física"})`,
+        severidade: "positivo",
+        timestamp: new Date(w.date).toISOString(),
+      });
+    }
+
+    for (const h of hidratacoes.slice(0, 10)) {
+      const p = pacienteMap.get(h.pacienteId);
+      if (!p) continue;
+      feedCandidatos.push({
+        id: `feed-hidra-${h.id}`,
+        pacienteId: p.id,
+        pacienteNome: p.fullName,
+        pacienteRecordCode: p.recordCode,
+        tipo: "HIDRATACAO",
+        titulo: "Hidratação",
+        resumo: `Registrou +${Number(h.volumeMl) || 0} ml de água`,
+        severidade: "normal",
+        timestamp: new Date(h.data).toISOString(),
+      });
+    }
+
+    feedCandidatos.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    const liveFeed = feedCandidatos.slice(0, 10);
+
+    const payload: TelemetriaDashboardResponse = {
+      success: true,
+      periodo,
+      periodoLabel: janela.periodoLabel,
+      diasJanela: janela.diasJanela,
+      geradoEm: agora.toISOString(),
+      resumo: {
+        totalPacientesAtivos,
+        ativosNoPeriodo,
+        taxaEngajamento,
+        indiceClinicoGlobal,
+        pilaresIndice,
+        consultasAgendadas: {
+          hoje: consultasHoje,
+          proximos7Dias: consultasProximos7Dias,
+          proximas: proximasConsultas,
+        },
+      },
+      impactoCorporal: {
+        emagrecimento: {
+          totalEliminadoKg: totalEliminadoAtual,
+          mediaPorPacienteKg,
+          maiorReducaoKg,
+          maiorReducaoPacienteNome,
+          pacientesComReducao: detalhesEmagrecimento.length,
+          totalPacientesPerfil: totalPacientesEmagrecimento,
+          periodoAnteriorKg: temBaseAnterior ? totalEliminadoAnterior : null,
+          deltaAnteriorPct,
+          temBaseAnterior,
+          detalhes: detalhesEmagrecimento,
+        },
+        hipertrofia: {
+          totalPacientesAtivos: totalPacientesHipertrofia,
+          evolucaoPonderalMediaKg: avgOrNull(deltasPesoHipertrofia),
+          pacientesComGanho: pacientesComGanhoHipertrofia,
+          variacaoMediaCinturaCm: avgOrNull(deltasCinturaHip),
+          variacaoMediaBracoCm: avgOrNull(deltasBracoHip),
+          variacaoMediaCoxaCm: avgOrNull(deltasCoxaHip),
+          detalhes: detalhesHipertrofia,
+        },
+      },
+      serieAtividade,
+      glicemia: {
+        totalMedicoes: totalMedicoesGlic,
+        mediaMgDl: mediaGlicMgDl,
+        alertasCriticos: hipoCount + hiperCount,
+        episodiosHipo: hipoCount,
+        episodiosHiper: hiperCount,
+        timeInRange: {
+          hipoPct,
+          metaPct: metaGlicPct,
+          hiperPct,
+        },
+        sparkline: sparklineGlicemia,
+        pacientesCriticos: pacientesCriticosGlicemia,
+        detalhesPorPaciente: detalhesGlicemia,
+      },
+      dieta: {
+        totalCheckins: totalCheckinsDieta,
+        percentualAdesao: percentualAdesaoDieta,
+        seguiuPct,
+        trocaInteligentePct,
+        naoFezPct,
+        seguiuCount,
+        trocaInteligenteCount: trocaCount,
+        naoFezCount,
+        opcionaisBonus: opcionaisBonusDieta,
+        gargaloPrincipal,
+        detalhesPorPaciente: detalhesDieta,
+      },
+      intestino: {
+        totalRegistros: totalIntestino,
+        distribuicao: {
+          ideal: idealIntCount,
+          constipacao: constipIntCount,
+          diarreia: diarreiaIntCount,
+          idealPct: idealIntPct,
+          constipacaoPct: constipIntPct,
+          diarreiaPct: diarreiaIntPct,
+        },
+        histograma,
+        detalhesPorPaciente: detalhesIntestino,
+      },
+      hidratacaoETreinos: {
+        hidratacao: {
+          totalRegistros: hidratacoes.length,
+          totalConsumidoL: round1(totalConsumidoMl / 1000),
+          metaTotalL: round1(metaTotalHidratacaoMl / 1000),
+          percentualAderencia: percentualHidratacao,
+          pacientesRegistraram: hidraPorPaciente.size,
+          detalhesPorPaciente: detalhesHidratacao,
+        },
+        treinos: {
+          totalLogs: workouts.length,
+          diasAtivosTotal: diasAtivosTreinosTotal,
+          metaTotalEsperada: metaEsperadaTreinosTotal,
+          percentualAdesao: percentualTreinos,
+          pacientesAtivosTreino: detalhesTreinos.length,
+          detalhesPorPaciente: detalhesTreinos,
+        },
+      },
+      radarTriagem,
+      liveFeed,
+    };
+
+    const totalDurMs = Math.round(performance.now() - reqStart);
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "no-store, max-age=0",
+        "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${totalDurMs}`,
+      },
+    });
+  } catch (error: unknown) {
+    console.error("[API_DASHBOARD_TELEMETRIA_GET_ERROR]", error);
+    const details = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      {
+        error: "Erro interno ao consolidar telemetria do Clinical Command Center.",
+        details,
+      },
+      { status: 500 }
+    );
+  }
+}
