@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Between, In, Not } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import { AgendamentoEntity } from "@/lib/db/entities";
-import { criarDataBR } from "@/lib/date-br";
+import { criarDataBR, formatarHoraBR, getDataDiaBR, getInicioFimDiaBR } from "@/lib/date-br";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
 const STATUS_VALIDOS = [
@@ -103,6 +104,70 @@ export async function PATCH(
       dataUpdate.observacao = body.observacao
         ? String(body.observacao).trim()
         : null;
+    }
+
+    // Validação de conflito ao reagendar ou restaurar um cancelado:
+    // agendamentos com status CANCELADO ou FALTOU NUNCA bloqueiam o horário.
+    const statusFinal = (dataUpdate.status ?? existente.status).toUpperCase();
+    const encaixeFinal =
+      dataUpdate.encaixe !== undefined
+        ? Boolean(dataUpdate.encaixe)
+        : Boolean(existente.encaixe);
+    const medicoFinal = dataUpdate.medicoId ?? existente.medicoId;
+    const dataHoraFinal = dataUpdate.dataHora ?? new Date(existente.dataHora);
+    const duracaoFinal =
+      dataUpdate.duracaoMinutos ?? (Number(existente.duracaoMinutos) || 30);
+
+    const estavaInativo =
+      existente.status === "CANCELADO" || existente.status === "FALTOU";
+    const mudouHorarioOuMedico =
+      dataUpdate.dataHora !== undefined ||
+      dataUpdate.medicoId !== undefined ||
+      dataUpdate.duracaoMinutos !== undefined;
+    const ficouAtivo =
+      statusFinal === "AGENDADO" || statusFinal === "CONFIRMADO";
+
+    if (!encaixeFinal && ficouAtivo && (estavaInativo || mudouHorarioOuMedico)) {
+      const faixaDia = getInicioFimDiaBR(dataHoraFinal);
+      const outrosDoDia = await agendamentoRepo.find({
+        where: {
+          id: Not(id),
+          medicoId: medicoFinal,
+          dataHora: Between(faixaDia.inicioUtc, faixaDia.fimUtc),
+          status: Not(In(["CANCELADO", "FALTOU"])),
+        },
+        select: {
+          id: true,
+          dataHora: true,
+          duracaoMinutos: true,
+        },
+      });
+
+      const inicioMs = dataHoraFinal.getTime();
+      const fimMs = inicioMs + duracaoFinal * 60_000;
+
+      const conflito = outrosDoDia.find((ag) => {
+        const agInicioMs = new Date(ag.dataHora).getTime();
+        const agFimMs = agInicioMs + (Number(ag.duracaoMinutos) || 30) * 60_000;
+        return agInicioMs < fimMs && agFimMs > inicioMs;
+      });
+
+      if (conflito) {
+        const horaConflito = formatarHoraBR(new Date(conflito.dataHora));
+        const diaConflito = getDataDiaBR(new Date(conflito.dataHora))
+          .split("-")
+          .reverse()
+          .join("/");
+        return NextResponse.json(
+          {
+            success: false,
+            error: estavaInativo
+              ? `O horário ${horaConflito} (${diaConflito}) já foi ocupado por outro paciente. Use "Reagendar" para escolher um novo horário.`
+              : `Já existe uma consulta ativa para este médico às ${horaConflito}. Marque "Encaixe" para sobrepor.`,
+          },
+          { status: 409 },
+        );
+      }
     }
 
     await agendamentoRepo.update({ id }, dataUpdate);

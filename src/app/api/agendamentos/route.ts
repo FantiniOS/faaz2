@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Between } from "typeorm";
+import { Between, In, Not } from "typeorm";
 import { getRepository, withTransaction } from "@/lib/db/data-source";
 import {
   AgendamentoEntity,
@@ -392,6 +392,43 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Validação de conflito: CANCELADO e FALTOU nunca bloqueiam novo agendamento no mesmo horário
+      const statusEhAtivo =
+        statusFinal === "AGENDADO" || statusFinal === "CONFIRMADO";
+      if (!Boolean(encaixe) && statusEhAtivo) {
+        const faixaDia = getInicioFimDiaBR(dataHoraDate);
+        const agendamentosDoDia = await agendamentoRepo.find({
+          where: {
+            medicoId: targetMedicoId,
+            dataHora: Between(faixaDia.inicioUtc, faixaDia.fimUtc),
+            status: Not(In(["CANCELADO", "FALTOU"])),
+          },
+          select: {
+            id: true,
+            dataHora: true,
+            duracaoMinutos: true,
+            status: true,
+          },
+        });
+
+        const novoInicioMs = dataHoraDate.getTime();
+        const novoFimMs = novoInicioMs + duracaoValida * 60_000;
+
+        const conflito = agendamentosDoDia.find((ag) => {
+          const agInicioMs = new Date(ag.dataHora).getTime();
+          const agFimMs = agInicioMs + (Number(ag.duracaoMinutos) || 30) * 60_000;
+          return agInicioMs < novoFimMs && agFimMs > novoInicioMs;
+        });
+
+        if (conflito) {
+          return {
+            conflitoHorario: formatarHoraBR(new Date(conflito.dataHora)),
+            agendamentoCriado: null,
+            pacienteRecemCriado: null,
+          };
+        }
+      }
+
       const salvo = await agendamentoRepo.save(
         agendamentoRepo.create({
           pacienteId: targetPacienteId,
@@ -414,8 +451,18 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      return { agendamentoCriado, pacienteRecemCriado };
+      return { conflitoHorario: null, agendamentoCriado, pacienteRecemCriado };
     });
+
+    if (resultado.conflitoHorario || !resultado.agendamentoCriado) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Já existe uma consulta ativa para este médico às ${resultado.conflitoHorario}. Marque "Encaixe" caso deseje sobrepor este horário.`,
+        },
+        { status: 409 },
+      );
+    }
 
     const criado = resultado.agendamentoCriado;
     const d = new Date(criado.dataHora);

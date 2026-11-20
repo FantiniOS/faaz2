@@ -19,10 +19,20 @@ import {
   ChevronDown,
   AlertCircle,
   Sparkles,
+  Smartphone,
+  RotateCcw,
+  CalendarPlus,
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
 import { mockUserSession } from "@/mocks/dashboard";
-import { getDataDiaBR, TIMEZONE_BR } from "@/lib/date-br";
+import {
+  adicionarDiasDataBR,
+  formatarHoraBR,
+  getDataDiaBR,
+  getPartesDataHoraBR,
+  subtrairDiasDataBR,
+  TIMEZONE_BR,
+} from "@/lib/date-br";
 
 export type TipoAgendamento = "PRIMEIRA_CONSULTA" | "RETORNO" | "EXAME";
 export type EspecialidadeAgendamento = "ENDOCRINOLOGIA" | "CIRURGIA_PLASTICA";
@@ -91,16 +101,9 @@ interface PositionedAgendamento {
   horarioFim: string;
 }
 
-// Janela diária do calendário: das 08:00 às 19:00 (11 blocos de 1 hora = 660 minutos)
-const GRID_START_HOUR = 8;
-const GRID_END_HOUR = 19;
-const TOTAL_HOURS = GRID_END_HOUR - GRID_START_HOUR; // 11 blocos
-const TOTAL_GRID_MINUTES = TOTAL_HOURS * 60; // 660 minutos
-
-const HOUR_BLOCKS: number[] = Array.from(
-  { length: TOTAL_HOURS },
-  (_, idx) => GRID_START_HOUR + idx
-);
+// Janela padrão do calendário: das 08:00 às 19:00 (expande dinamicamente se houver consulta fora)
+const DEFAULT_GRID_START_HOUR = 8;
+const DEFAULT_GRID_END_HOUR = 19;
 
 const DURACAO_OPCOES = [
   { value: 15, label: "15 min" },
@@ -119,6 +122,40 @@ function parseLocalIsoDate(isoDate: string): Date {
   return new Date(`${clean}T12:00:00-03:00`);
 }
 
+function getAgendamentoHorarioBR(item: AgendamentoItem): string {
+  if (item.dataHora) {
+    const dt = new Date(item.dataHora);
+    if (!Number.isNaN(dt.getTime())) {
+      return formatarHoraBR(dt);
+    }
+  }
+  return item.horario || "09:00";
+}
+
+function getAgendamentoDataBR(item: AgendamentoItem): string {
+  if (item.dataHora) {
+    const dt = new Date(item.dataHora);
+    if (!Number.isNaN(dt.getTime())) {
+      return getDataDiaBR(dt);
+    }
+  }
+  return item.data;
+}
+
+function isConfirmadoViaApp(item: AgendamentoItem): boolean {
+  if (item.status !== "CONFIRMADO") return false;
+  return (item.observacao || "")
+    .toLowerCase()
+    .includes("confirmado pelo paciente via app");
+}
+
+function isCanceladoViaApp(item: AgendamentoItem): boolean {
+  if (item.status !== "CANCELADO") return false;
+  return (item.observacao || "")
+    .toLowerCase()
+    .includes("cancelado pelo paciente via app");
+}
+
 function parseTimeToMinutes(horario: string): number {
   if (!horario || !horario.includes(":")) return 9 * 60;
   const [hh, mm] = horario.split(":").map(Number);
@@ -127,22 +164,14 @@ function parseTimeToMinutes(horario: string): number {
 
 function formatMinutesToTime(totalMin: number): string {
   const pad = (n: number) => String(n).padStart(2, "0");
-  const hh = Math.floor(totalMin / 60);
-  const mm = totalMin % 60;
+  const clamped = Math.max(0, Math.min(24 * 60, totalMin));
+  const hh = Math.floor(clamped / 60);
+  const mm = clamped % 60;
   return `${pad(hh)}:${pad(mm)}`;
 }
 
-function formatShortDoctorName(nome?: string): string {
-  if (!nome) return "Dr. Carlos";
-  const parts = nome.trim().split(/\s+/);
-  if (parts.length >= 2 && /^dr(a)?\.?$/i.test(parts[0])) {
-    return `${parts[0]} ${parts[1]}`;
-  }
-  return parts[0] || nome;
-}
-
 /**
- * Gera a query string da API puramente a partir de strings primitivas ('YYYY-MM-DD', 'dia' | 'semana', médico e especialidade)
+ * Gera a query string da API puramente a partir de strings primitivas em America/Sao_Paulo
  */
 function buildAgendamentosQuery(
   selectedDateIso: string,
@@ -162,37 +191,38 @@ function buildAgendamentosQuery(
   if (mode === "dia") {
     return `data=${selectedDateIso}${medicoSuffix}${especialidadeSuffix}`;
   }
-  const baseDate = parseLocalIsoDate(selectedDateIso);
-  const dayOfWeek = baseDate.getDay();
-  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const monday = new Date(baseDate);
-  monday.setDate(baseDate.getDate() + diffToMonday);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  return `inicio=${getLocalIsoDate(monday)}&fim=${getLocalIsoDate(sunday)}${medicoSuffix}${especialidadeSuffix}`;
+  const dayOfWeek = getPartesDataHoraBR(selectedDateIso).weekdayIndex;
+  const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const mondayIso = subtrairDiasDataBR(selectedDateIso, diffToMonday);
+  const sundayIso = adicionarDiasDataBR(mondayIso, 6);
+  return `inicio=${mondayIso}&fim=${sundayIso}${medicoSuffix}${especialidadeSuffix}`;
 }
 
 /**
- * Motor de Cálculo de Colisões (Overlap Algorithm - Side-by-Side):
- * Detecta agendamentos conflitantes no mesmo período de tempo e divide a largura
- * igualmente (width = 100% / N, left = colIndex * width), garantindo visão total
- * sem sobreposição em Z.
+ * Motor de Cálculo de Colisões (Overlap Algorithm - Side-by-Side) com régua horária dinâmica
  */
-function computeDayLayout(items: AgendamentoItem[]): PositionedAgendamento[] {
+function computeDayLayout(
+  items: AgendamentoItem[],
+  gridStartHour: number,
+  totalGridMinutes: number
+): PositionedAgendamento[] {
   if (!items || items.length === 0) return [];
 
-  const startDayMin = GRID_START_HOUR * 60; // 480
+  const startDayMin = gridStartHour * 60;
 
   const parsed = items
     .map((item) => {
-      const startMin = parseTimeToMinutes(item.horario);
+      const horarioBr = getAgendamentoHorarioBR(item);
+      const startMin = parseTimeToMinutes(horarioBr);
       const duracao = Math.max(Number(item.duracaoMinutos) || 30, 15);
       const endMin = startMin + duracao;
-      return { item, startMin, endMin, duracao };
+      return { item: { ...item, horario: horarioBr }, startMin, endMin, duracao };
     })
     .sort(
       (a, b) =>
         a.startMin - b.startMin ||
+        Number(a.item.status === "CANCELADO") -
+          Number(b.item.status === "CANCELADO") ||
         Number(Boolean(a.item.encaixe)) - Number(Boolean(b.item.encaixe)) ||
         b.duracao - a.duracao
     );
@@ -244,12 +274,12 @@ function computeDayLayout(items: AgendamentoItem[]): PositionedAgendamento[] {
       const leftPercent = entry.colIndex * widthPercent;
 
       const rawTop =
-        ((entry.startMin - startDayMin) / TOTAL_GRID_MINUTES) * 100;
-      const topPercent = Math.max(0, Math.min(96.5, rawTop));
+        ((entry.startMin - startDayMin) / totalGridMinutes) * 100;
+      const topPercent = Math.max(0, Math.min(97, rawTop));
 
-      const rawHeight = (entry.duracao / TOTAL_GRID_MINUTES) * 100;
+      const rawHeight = (entry.duracao / totalGridMinutes) * 100;
       const heightPercent = Math.max(
-        3.5,
+        3.2,
         Math.min(100 - topPercent, rawHeight)
       );
 
@@ -290,6 +320,12 @@ export default function AgendaPage() {
   const [selectedCard, setSelectedCard] = useState<AgendamentoItem | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
 
+  // Controle de horários cancelados (ocultos na grade por padrão para liberar o slot)
+  const [mostrarCanceladosNaGrade, setMostrarCanceladosNaGrade] =
+    useState<boolean>(false);
+  const [canceladosPopoverOpen, setCanceladosPopoverOpen] =
+    useState<boolean>(false);
+
   // Controle do Modal de Agendamento Rápido (Novo / Editar)
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingAgendamento, setEditingAgendamento] =
@@ -329,6 +365,7 @@ export default function AgendaPage() {
   }
 
   const comboboxRef = useRef<HTMLDivElement>(null);
+  const canceladosPopoverRef = useRef<HTMLDivElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function showToast(msg: string) {
@@ -342,7 +379,7 @@ export default function AgendaPage() {
     }, 3000);
   }
 
-  // Fecha o combobox de pacientes ao clicar fora e trava rolagem global no html/body
+  // Fecha o combobox de pacientes / popover de cancelados ao clicar fora e trava rolagem global no html/body
   useEffect(() => {
     const prevHtmlOverflow = document.documentElement.style.overflow;
     const prevBodyOverflow = document.body.style.overflow;
@@ -356,12 +393,25 @@ export default function AgendaPage() {
       ) {
         setComboboxOpen(false);
       }
+      if (
+        canceladosPopoverRef.current &&
+        !canceladosPopoverRef.current.contains(e.target as Node)
+      ) {
+        setCanceladosPopoverOpen(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setCanceladosPopoverOpen(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.documentElement.style.overflow = prevHtmlOverflow;
       document.body.style.overflow = prevBodyOverflow;
       document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
       if (toastTimerRef.current) {
         clearTimeout(toastTimerRef.current);
       }
@@ -420,17 +470,15 @@ export default function AgendaPage() {
       ];
     }
 
-    // Modo Semana: Segunda a Domingo da semana selecionada
-    const dayOfWeek = baseDate.getDay();
-    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const monday = new Date(baseDate);
-    monday.setDate(baseDate.getDate() + diffToMonday);
+    // Modo Semana: Segunda a Domingo da semana selecionada (100% America/Sao_Paulo)
+    const dayOfWeek = getPartesDataHoraBR(selectedDate).weekdayIndex;
+    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const mondayIso = subtrairDiasDataBR(selectedDate, diffToMonday);
 
     const cols = [];
     for (let i = 0; i < 7; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      const dStr = getLocalIsoDate(d);
+      const dStr = adicionarDiasDataBR(mondayIso, i);
+      const d = parseLocalIsoDate(dStr);
       const diaSemanaCurto = d
         .toLocaleDateString("pt-BR", {
           timeZone: TIMEZONE_BR,
@@ -647,17 +695,71 @@ export default function AgendaPage() {
     reloadTrigger,
   ]);
 
-  // Agendamentos posicionados matematicamente por coluna de data (puro via useMemo, sem disparar efeitos)
+  // Agendamentos filtrados por especialidade com data/horário normalizados em America/Sao_Paulo
+  const agendamentosNormalizados = useMemo(() => {
+    return agendamentos
+      .filter((item) => {
+        const espItem =
+          item.especialidade === "CIRURGIA_PLASTICA"
+            ? "CIRURGIA_PLASTICA"
+            : "ENDOCRINOLOGIA";
+        return filtroEspecialidade === "TODAS" || espItem === filtroEspecialidade;
+      })
+      .map((item) => ({
+        ...item,
+        data: getAgendamentoDataBR(item),
+        horario: getAgendamentoHorarioBR(item),
+      }));
+  }, [agendamentos, filtroEspecialidade]);
+
+  // Lista ordenada de agendamentos cancelados no período visível (para o popover Cancelados: N)
+  const canceladosPeriodo = useMemo(() => {
+    return agendamentosNormalizados
+      .filter((a) => a.status === "CANCELADO")
+      .sort(
+        (a, b) =>
+          a.data.localeCompare(b.data) || a.horario.localeCompare(b.horario)
+      );
+  }, [agendamentosNormalizados]);
+
+  // Itens efetivamente exibidos na grade (por padrão oculta CANCELADO para liberar o slot)
+  const itensVisiveisNaGrade = useMemo(() => {
+    if (mostrarCanceladosNaGrade) return agendamentosNormalizados;
+    return agendamentosNormalizados.filter((a) => a.status !== "CANCELADO");
+  }, [agendamentosNormalizados, mostrarCanceladosNaGrade]);
+
+  // Régua horária dinâmica: padrão 08:00–19:00, expandindo automaticamente se existir consulta antes das 08:00 ou após as 18:30
+  const gridRange = useMemo(() => {
+    let startHour = DEFAULT_GRID_START_HOUR;
+    let endHour = DEFAULT_GRID_END_HOUR;
+
+    for (const item of itensVisiveisNaGrade) {
+      const startMin = parseTimeToMinutes(item.horario);
+      const duracao = Math.max(Number(item.duracaoMinutos) || 30, 15);
+      const endMin = startMin + duracao;
+
+      if (startMin < startHour * 60) {
+        startHour = Math.max(0, Math.floor(startMin / 60));
+      }
+      if (endMin > endHour * 60) {
+        endHour = Math.min(24, Math.ceil(endMin / 60));
+      }
+    }
+
+    const totalHours = Math.max(1, endHour - startHour);
+    const totalMinutes = totalHours * 60;
+    const hourBlocks = Array.from(
+      { length: totalHours },
+      (_, idx) => startHour + idx
+    );
+
+    return { startHour, endHour, totalHours, totalMinutes, hourBlocks };
+  }, [itensVisiveisNaGrade]);
+
+  // Agendamentos posicionados matematicamente por coluna de data (puro via useMemo)
   const positionedByDate = useMemo(() => {
     const grouped: Record<string, AgendamentoItem[]> = {};
-    for (const item of agendamentos) {
-      const espItem =
-        item.especialidade === "CIRURGIA_PLASTICA"
-          ? "CIRURGIA_PLASTICA"
-          : "ENDOCRINOLOGIA";
-      if (filtroEspecialidade !== "TODAS" && espItem !== filtroEspecialidade) {
-        continue;
-      }
+    for (const item of itensVisiveisNaGrade) {
       if (!grouped[item.data]) {
         grouped[item.data] = [];
       }
@@ -666,41 +768,69 @@ export default function AgendaPage() {
 
     const result: Record<string, PositionedAgendamento[]> = {};
     for (const col of visibleColumns) {
-      result[col.isoDate] = computeDayLayout(grouped[col.isoDate] || []);
+      result[col.isoDate] = computeDayLayout(
+        grouped[col.isoDate] || [],
+        gridRange.startHour,
+        gridRange.totalMinutes
+      );
     }
     return result;
-  }, [agendamentos, visibleColumns, filtroEspecialidade]);
+  }, [itensVisiveisNaGrade, visibleColumns, gridRange]);
 
   // Indicadores rápidos do período visível
   const resumoPeriodo = useMemo(() => {
-    const filtrados =
-      filtroEspecialidade === "TODAS"
-        ? agendamentos
-        : agendamentos.filter(
-            (a) =>
-              (a.especialidade === "CIRURGIA_PLASTICA"
-                ? "CIRURGIA_PLASTICA"
-                : "ENDOCRINOLOGIA") === filtroEspecialidade
-          );
     return {
-      total: filtrados.length,
-      confirmados: filtrados.filter((a) => a.status === "CONFIRMADO").length,
-      agendados: filtrados.filter((a) => a.status === "AGENDADO").length,
-      encaixes: filtrados.filter((a) => Boolean(a.encaixe)).length,
-      cancelados: filtrados.filter((a) => a.status === "CANCELADO").length,
+      total: agendamentosNormalizados.length,
+      confirmados: agendamentosNormalizados.filter(
+        (a) => a.status === "CONFIRMADO"
+      ).length,
+      agendados: agendamentosNormalizados.filter((a) => a.status === "AGENDADO")
+        .length,
+      encaixes: agendamentosNormalizados.filter(
+        (a) => Boolean(a.encaixe) && a.status !== "CANCELADO"
+      ).length,
+      cancelados: canceladosPeriodo.length,
     };
-  }, [agendamentos, filtroEspecialidade]);
+  }, [agendamentosNormalizados, canceladosPeriodo]);
 
   function handleStepPeriod(direction: -1 | 1) {
     if (!selectedDate) return;
-    const current = parseLocalIsoDate(selectedDate);
-    const delta = viewMode === "semana" ? direction * 7 : direction;
-    current.setDate(current.getDate() + delta);
-    setSelectedDate(getLocalIsoDate(current));
+    const delta = viewMode === "semana" ? 7 : 1;
+    setSelectedDate(
+      direction > 0
+        ? adicionarDiasDataBR(selectedDate, delta)
+        : subtrairDiasDataBR(selectedDate, delta)
+    );
   }
 
   function handleGoToday() {
     setSelectedDate(getLocalIsoDate(new Date()));
+  }
+
+  // Reagendar paciente a partir de um agendamento cancelado (abre modal pré-preenchido como novo agendamento)
+  function handleReagendarCancelado(item: AgendamentoItem) {
+    setCanceladosPopoverOpen(false);
+    setSelectedCard(null);
+    setEditingAgendamento(null);
+    setFormError(null);
+    setEspecialidadeForm(
+      item.especialidade === "CIRURGIA_PLASTICA"
+        ? "CIRURGIA_PLASTICA"
+        : "ENDOCRINOLOGIA"
+    );
+    setMedicoIdForm(item.medicoId || medicos[0]?.id || "");
+    setPacienteIdForm(item.pacienteId);
+    setPacienteBusca(item.pacienteNome);
+    setComboboxOpen(false);
+    setIsQuickCreateMode(false);
+    setNovoPacienteTelefone("");
+    setDataForm(item.data || selectedDate || getDataDiaBR());
+    setHorarioForm(item.horario || "09:00");
+    setDuracaoForm(item.duracaoMinutos || 30);
+    setEncaixeForm(false);
+    setTipoForm(item.tipo || "RETORNO");
+    setObservacaoForm("");
+    setIsModalOpen(true);
   }
 
   // INTERAÇÃO ZERO ATRITO: Clicar na grade pré-preenche Data, Horário exato, Especialidade e Médico
@@ -763,14 +893,14 @@ export default function AgendaPage() {
   function handleQuickMinuteSelect(minStr: string) {
     const [hh] = (horarioForm || "09:00").split(":");
     const cleanHh = String(
-      Math.min(Math.max(parseInt(hh, 10) || 9, 8), 18)
+      Math.min(Math.max(parseInt(hh, 10) || 9, 0), 23)
     ).padStart(2, "0");
     setHorarioForm(`${cleanHh}:${minStr}`);
   }
 
   async function handleUpdateStatus(
     item: AgendamentoItem,
-    novoStatus: "CONFIRMADO" | "CANCELADO"
+    novoStatus: "AGENDADO" | "CONFIRMADO" | "CANCELADO"
   ) {
     setUpdatingStatusId(item.id);
     try {
@@ -791,7 +921,9 @@ export default function AgendaPage() {
       showToast(
         novoStatus === "CONFIRMADO"
           ? `Consulta de ${item.pacienteNome} confirmada!`
-          : `Agendamento de ${item.pacienteNome} cancelado.`
+          : novoStatus === "AGENDADO"
+            ? `Consulta de ${item.pacienteNome} restaurada na agenda!`
+            : `Agendamento de ${item.pacienteNome} cancelado — horário liberado!`
       );
     } catch (err) {
       console.error("[AgendaPage] Erro ao atualizar status:", err);
@@ -1098,23 +1230,211 @@ export default function AgendaPage() {
             </div>
           </div>
 
-          {/* DIREITA: Legenda de Status + Alternador Dia/Semana + Botão Novo Agendamento */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="hidden xl:flex items-center gap-2 text-xs font-bold">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/70">
+          {/* DIREITA: Legenda de Status + Pílula Interativa Cancelados + Alternador Dia/Semana + Botão Novo Agendamento */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <span className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/70">
                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
                 Confirmados: {resumoPeriodo.confirmados}
               </span>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
+              <span className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
                 <span className="w-2 h-2 rounded-full bg-slate-400" />
                 Agendados: {resumoPeriodo.agendados}
               </span>
               {resumoPeriodo.encaixes > 0 && (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-300">
+                <span className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-300">
                   <span className="w-2 h-2 rounded-full bg-amber-500" />
                   Encaixes: {resumoPeriodo.encaixes}
                 </span>
               )}
+
+              {/* PÍLULA INTERATIVA CANCELADOS: N + POPOVER DE GESTÃO */}
+              <div className="relative" ref={canceladosPopoverRef}>
+                <button
+                  type="button"
+                  onClick={() => setCanceladosPopoverOpen((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                    canceladosPopoverOpen
+                      ? "bg-rose-100 text-rose-800 border-rose-300 shadow-2xs"
+                      : resumoPeriodo.cancelados > 0
+                        ? "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100/80"
+                        : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"
+                  }`}
+                  title="Ver horários cancelados, reagendar, restaurar ou exibir na grade"
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      resumoPeriodo.cancelados > 0
+                        ? "bg-rose-500"
+                        : "bg-slate-300"
+                    }`}
+                  />
+                  <span>Cancelados: {resumoPeriodo.cancelados}</span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      canceladosPopoverOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+
+                {canceladosPopoverOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-[360px] sm:w-[410px] max-w-[92vw] cl-card shadow-2xl border border-slate-200/90 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    {/* Cabeçalho Clinical Light do Popover */}
+                    <div className="cl-modal-header px-4 py-3 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                          <XCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                          <span>
+                            Cancelados ({canceladosPeriodo.length})
+                          </span>
+                        </h3>
+                        <p className="text-[10px] text-slate-500 font-medium">
+                          Horários cancelados ficam livres na grade para novos agendamentos.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCanceladosPopoverOpen(false)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Toggle Mostrar cancelados na grade (DESLIGADO por padrão) */}
+                    <div className="px-4 py-2.5 bg-slate-50/90 border-b border-slate-200/80 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="text-[11px] font-bold text-slate-700 block">
+                          Mostrar cancelados na grade
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-medium block">
+                          Exibe faixa compacta sem bloquear novo agendamento
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={mostrarCanceladosNaGrade}
+                        onClick={() =>
+                          setMostrarCanceladosNaGrade((prev) => !prev)
+                        }
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                          mostrarCanceladosNaGrade
+                            ? "bg-emerald-600"
+                            : "bg-slate-300"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform ${
+                            mostrarCanceladosNaGrade
+                              ? "translate-x-4.5"
+                              : "translate-x-0.5"
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    {/* Lista de Cancelados do Período */}
+                    <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                      {canceladosPeriodo.length === 0 ? (
+                        <div className="px-4 py-8 text-center space-y-1">
+                          <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto" />
+                          <p className="text-xs font-bold text-slate-700">
+                            Nenhum cancelamento neste período
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            Todos os agendamentos visíveis estão ativos.
+                          </p>
+                        </div>
+                      ) : (
+                        canceladosPeriodo.map((item) => {
+                          const viaApp = isCanceladoViaApp(item);
+                          const isPlastica =
+                            item.especialidade === "CIRURGIA_PLASTICA";
+                          const dataDdMm = item.data
+                            ? `${item.data.slice(8, 10)}/${item.data.slice(5, 7)}`
+                            : "";
+
+                          return (
+                            <div
+                              key={item.id}
+                              className="px-4 py-3 hover:bg-slate-50/70 transition-colors space-y-2"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 space-y-0.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[11px] font-black font-mono tabular-nums text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded">
+                                      {viewMode === "semana" && dataDdMm
+                                        ? `${dataDdMm} • `
+                                        : ""}
+                                      {item.horario}
+                                    </span>
+                                    {viaApp && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+                                        <Smartphone className="w-2.5 h-2.5" />
+                                        <span>via App</span>
+                                      </span>
+                                    )}
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500">
+                                      <span
+                                        className={`w-1.5 h-1.5 rounded-full ${
+                                          isPlastica
+                                            ? "bg-blue-500"
+                                            : "bg-emerald-500"
+                                        }`}
+                                      />
+                                      <span>
+                                        {isPlastica
+                                          ? "Cir. Plástica"
+                                          : "Endocrinologia"}
+                                      </span>
+                                    </span>
+                                  </div>
+                                  <p className="text-xs font-extrabold text-slate-800 truncate">
+                                    {item.pacienteNome}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500 truncate">
+                                    {item.medicoNome || "Equipe Clínica FAAZ"}
+                                    {item.observacao
+                                      ? ` • ${item.observacao}`
+                                      : ""}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={updatingStatusId === item.id}
+                                  onClick={() =>
+                                    void handleUpdateStatus(item, "AGENDADO")
+                                  }
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  {updatingStatusId === item.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3 h-3 text-slate-500" />
+                                  )}
+                                  <span>Restaurar</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReagendarCancelado(item)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer"
+                                >
+                                  <CalendarPlus className="w-3 h-3" />
+                                  <span>Reagendar</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="inline-flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/70">
@@ -1214,22 +1534,24 @@ export default function AgendaPage() {
           </div>
         )}
 
-        {/* COLUNA ESQUERDA: RÓTULOS DAS 11 HORAS (08:00 ÀS 18:00) */}
+        {/* COLUNA ESQUERDA: RÓTULOS DINÂMICOS DAS HORAS (EXPANDE AUTOMATICAMENTE FORA DE 08:00–19:00) */}
         <div
           className="w-20 shrink-0 border-r border-slate-100 grid h-full select-none divide-y divide-slate-100 bg-slate-50/30"
-          style={{ gridTemplateRows: `repeat(${TOTAL_HOURS}, minmax(0, 1fr))` }}
+          style={{
+            gridTemplateRows: `repeat(${gridRange.totalHours}, minmax(0, 1fr))`,
+          }}
         >
-          {HOUR_BLOCKS.map((hour) => {
+          {gridRange.hourBlocks.map((hour) => {
             const hh = String(hour).padStart(2, "0");
             return (
               <div
                 key={hour}
                 className="px-2.5 pt-1 flex flex-col justify-between items-end min-h-0"
               >
-                <span className="text-xs font-extrabold text-slate-600 tracking-tight leading-none">
+                <span className="text-xs font-extrabold text-slate-600 font-mono tabular-nums tracking-tight leading-none">
                   {hh}:00
                 </span>
-                <span className="text-[9px] font-semibold text-slate-300 leading-none pb-1">
+                <span className="text-[9px] font-semibold text-slate-300 font-mono tabular-nums leading-none pb-1">
                   {hh}:30
                 </span>
               </div>
@@ -1256,10 +1578,10 @@ export default function AgendaPage() {
                 <div
                   className="grid h-full w-full divide-y divide-slate-100"
                   style={{
-                    gridTemplateRows: `repeat(${TOTAL_HOURS}, minmax(0, 1fr))`,
+                    gridTemplateRows: `repeat(${gridRange.totalHours}, minmax(0, 1fr))`,
                   }}
                 >
-                  {HOUR_BLOCKS.map((hour, idx) => {
+                  {gridRange.hourBlocks.map((hour, idx) => {
                     const hh = String(hour).padStart(2, "0");
                     const isEven = idx % 2 === 0;
 
@@ -1297,7 +1619,7 @@ export default function AgendaPage() {
                   })}
                 </div>
 
-                {/* CAMADA 2: CARDS EM COLUNAS DIVIDIDAS LADO A LADO (SIDE-BY-SIDE / ZERO SOBREPOSIÇÃO) */}
+                {/* CAMADA 2: CARDS EM COLUNAS DIVIDIDAS LADO A LADO (ZERO OVERFLOW HORIZONTAL) */}
                 {positionedItems.map(
                   ({
                     item,
@@ -1325,9 +1647,72 @@ export default function AgendaPage() {
                       : "Endocrino";
                     const style = getCardStyles(item.status, espItem);
                     const isCancelado = item.status === "CANCELADO";
+                    const confirmadoApp = isConfirmadoViaApp(item);
+                    const canceladoApp = isCanceladoViaApp(item);
                     const isSplitOrWeek = totalCols > 1 || viewMode === "semana";
                     const canStackVertically =
                       isSplitOrWeek && (item.duracaoMinutos || 30) >= 30;
+
+                    const statusBadgeLabel = confirmadoApp
+                      ? "Confirmado · App"
+                      : item.statusLegivel;
+
+                    // Quando "Mostrar cancelados na grade" estiver ligado: faixa compacta com botão "+ Agendar neste horário"
+                    if (isCancelado) {
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedCard(item);
+                          }}
+                          style={{
+                            width: `calc(${widthPercent}% - 4px)`,
+                            left: `calc(${leftPercent}% + 2px)`,
+                            top: `${topPercent}%`,
+                            height: `${heightPercent}%`,
+                          }}
+                          className="absolute z-10 hover:z-20 box-border rounded-xl border border-dashed border-rose-300 bg-rose-50/75 hover:bg-rose-50 px-2 py-0.5 cursor-pointer transition-all overflow-hidden flex items-center justify-between gap-1.5 text-rose-900"
+                        >
+                          <div className="min-w-0 flex items-center gap-1.5 flex-1 overflow-hidden">
+                            <span className="text-[10px] font-black font-mono tabular-nums shrink-0 text-rose-700">
+                              {item.horario}
+                            </span>
+                            <span className="text-[11px] font-bold truncate line-through opacity-80 min-w-0">
+                              {item.pacienteNome}
+                            </span>
+                            {canceladoApp && (
+                              <span className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-[9px] font-bold shrink-0">
+                                <Smartphone className="w-2.5 h-2.5" />
+                                <span>via App</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSlotClick(item.data, item.horario);
+                              }}
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-extrabold shrink-0 whitespace-nowrap shadow-2xs cursor-pointer"
+                              title={`Agendar outro paciente às ${item.horario}`}
+                            >
+                              <Plus className="w-2.5 h-2.5 stroke-[2.6]" />
+                              <span>
+                                {viewMode === "semana"
+                                  ? "Agendar"
+                                  : "Agendar neste horário"}
+                              </span>
+                            </button>
+                            <span className="hidden md:inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-extrabold shrink-0 whitespace-nowrap bg-rose-100 text-rose-700 border border-rose-200">
+                              Cancelado
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
 
                     return (
                       <div
@@ -1337,23 +1722,23 @@ export default function AgendaPage() {
                           setSelectedCard(item);
                         }}
                         style={{
-                          width: `${widthPercent}%`,
-                          left: `${leftPercent}%`,
+                          width: `calc(${widthPercent}% - 4px)`,
+                          left: `calc(${leftPercent}% + 2px)`,
                           top: `${topPercent}%`,
                           height: `${heightPercent}%`,
                         }}
-                        className={`absolute z-10 hover:z-20 rounded-xl border px-2 py-0.5 cursor-pointer transition-all overflow-hidden ${
+                        className={`absolute z-10 hover:z-20 box-border rounded-xl border px-2 py-0.5 cursor-pointer transition-all overflow-hidden ${
                           canStackVertically
                             ? "flex flex-col justify-center gap-0.5"
-                            : "flex flex-row items-center justify-between gap-2"
+                            : "flex flex-row items-center justify-between gap-1.5"
                         } ${style.container}`}
                       >
                         {canStackVertically ? (
                           <>
-                            {/* Linha 1 (Topo): Horário + Badges Compactas (ENCAIXE / PRIMEIRA CONSULTA) */}
-                            <div className="w-full min-w-0 flex items-center justify-between gap-1 overflow-hidden whitespace-nowrap leading-none">
-                              <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                                <span className="text-[10px] font-black tracking-tight shrink-0 whitespace-nowrap leading-none">
+                            {/* Linha 1 (Topo): Horário + Badges Compactas + Status sem corte */}
+                            <div className="w-full min-w-0 flex items-center justify-between gap-1 leading-none">
+                              <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
+                                <span className="text-[10px] font-black font-mono tabular-nums tracking-tight shrink-0 whitespace-nowrap leading-none">
                                   {item.horario}
                                   {viewMode === "dia" && totalCols <= 2
                                     ? `–${horarioFim}`
@@ -1366,49 +1751,41 @@ export default function AgendaPage() {
                                 )}
                                 {item.tipo === "PRIMEIRA_CONSULTA" && (
                                   <span className="inline-flex items-center px-1 py-0.2 rounded bg-teal-700 text-white text-[8px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap leading-none">
-                                    PRIMEIRA CONSULTA
+                                    1ª
                                   </span>
                                 )}
                               </div>
-                              {viewMode === "dia" && totalCols <= 2 && (
-                                <span
-                                  className={`hidden md:inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-extrabold shrink-0 whitespace-nowrap leading-none ${style.badge}`}
-                                >
-                                  {item.statusLegivel}
+                              <span
+                                className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-extrabold shrink-0 whitespace-nowrap leading-none ${style.badge}`}
+                              >
+                                {confirmadoApp && (
+                                  <Smartphone className="w-2.5 h-2.5 shrink-0" />
+                                )}
+                                <span>
+                                  {viewMode === "semana" && confirmadoApp
+                                    ? "App"
+                                    : statusBadgeLabel}
                                 </span>
-                              )}
+                              </span>
                             </div>
 
-                            {/* Linha 2 (Base): Nome do Paciente Truncado + Selo FAAZ ✨ + Tag Sutil da Especialidade */}
-                            <div className="w-full min-w-0 flex items-center justify-between gap-1.5 overflow-hidden whitespace-nowrap leading-tight">
-                              <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
-                                <span
-                                  className={`text-[11px] font-extrabold truncate whitespace-nowrap min-w-0 ${
-                                    isCancelado ? "line-through" : ""
-                                  }`}
-                                >
+                            {/* Linha 2 (Base): Nome do Paciente Truncado + Selo FAAZ + Especialidade */}
+                            <div className="w-full min-w-0 flex items-center justify-between gap-1 leading-tight">
+                              <div className="min-w-0 flex-1 flex items-center gap-1 overflow-hidden">
+                                <span className="text-[11px] font-extrabold truncate whitespace-nowrap min-w-0">
                                   {item.pacienteNome}
                                 </span>
                                 {isPlanoFaaz && (
-                                  <span className="inline-flex items-center px-1.5 py-0.2 rounded bg-amber-50/95 border border-amber-300 text-amber-600 text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap leading-none shadow-2xs">
+                                  <span className="inline-flex items-center px-1 py-0.2 rounded bg-amber-50/95 border border-amber-300 text-amber-600 text-[8px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap leading-none">
                                     FAAZ ✨
                                   </span>
                                 )}
-                                {item.tipo !== "PRIMEIRA_CONSULTA" &&
-                                  viewMode === "dia" &&
-                                  totalCols <= 2 && (
-                                    <span className="hidden lg:inline-block text-[9px] font-bold opacity-75 shrink-0 whitespace-nowrap">
-                                      • {item.tipoLegivel}
-                                    </span>
-                                  )}
                               </div>
 
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-white/85 border border-black/5 text-[9px] font-extrabold text-slate-700 shrink-0 whitespace-nowrap leading-none">
+                              <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-white/85 border border-black/5 text-[9px] font-extrabold text-slate-700 shrink-0 whitespace-nowrap leading-none">
                                 <span
                                   className="w-1.5 h-1.5 rounded-full shrink-0"
-                                  style={{
-                                    backgroundColor: espDotHex,
-                                  }}
+                                  style={{ backgroundColor: espDotHex }}
                                 />
                                 <span>{espCurta}</span>
                               </span>
@@ -1416,12 +1793,12 @@ export default function AgendaPage() {
                           </>
                         ) : (
                           <>
-                            {/* Modo Linha Única (100% de largura ou card de 15 min) */}
-                            <div className="min-w-0 flex items-center gap-1.5 flex-1 overflow-hidden whitespace-nowrap">
-                              <span className="text-[11px] font-black tracking-tight shrink-0 whitespace-nowrap">
+                            {/* Modo Linha Única (sempre preserva badge de status à direita sem corte) */}
+                            <div className="min-w-0 flex items-center gap-1.5 flex-1 overflow-hidden">
+                              <span className="text-[11px] font-black font-mono tabular-nums tracking-tight shrink-0 whitespace-nowrap">
                                 {item.horario}
                                 {item.duracaoMinutos >= 30 && viewMode === "dia"
-                                  ? ` – ${horarioFim}`
+                                  ? `–${horarioFim}`
                                   : ""}
                               </span>
 
@@ -1431,62 +1808,55 @@ export default function AgendaPage() {
                                 </span>
                               )}
 
-                              <span
-                                className={`text-xs font-extrabold truncate whitespace-nowrap min-w-0 ${
-                                  isCancelado ? "line-through" : ""
-                                }`}
-                              >
+                              <span className="text-xs font-extrabold truncate whitespace-nowrap min-w-0">
                                 {item.pacienteNome}
                               </span>
 
                               {isPlanoFaaz && (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50/95 border border-amber-300 text-amber-600 text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs">
+                                <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50/95 border border-amber-300 text-amber-600 text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs">
                                   FAAZ ✨
                                 </span>
                               )}
 
                               {item.tipo === "PRIMEIRA_CONSULTA" ? (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-teal-700 text-white text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs">
-                                  PRIMEIRA CONSULTA
+                                <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded bg-teal-700 text-white text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs">
+                                  1ª CONSULTA
                                 </span>
                               ) : (
-                                <span className="hidden sm:inline-block text-[10px] font-bold px-1.5 py-0.2 rounded bg-white/80 border border-black/5 text-slate-700 shrink-0 whitespace-nowrap">
+                                <span className="hidden lg:inline-block text-[10px] font-bold px-1.5 py-0.2 rounded bg-white/80 border border-black/5 text-slate-700 shrink-0 whitespace-nowrap">
                                   {item.tipoLegivel}
                                 </span>
                               )}
 
-                              <span className="hidden md:inline-block text-[10px] font-semibold opacity-75 shrink-0 whitespace-nowrap">
+                              <span className="hidden xl:inline-block text-[10px] font-semibold opacity-75 shrink-0 whitespace-nowrap">
                                 ({item.duracaoMinutos}m)
                               </span>
 
                               {item.observacao &&
                                 viewMode === "dia" &&
                                 totalCols === 1 && (
-                                  <span className="hidden lg:inline-block text-[11px] opacity-75 truncate whitespace-nowrap min-w-0">
+                                  <span className="hidden 2xl:inline-block text-[11px] opacity-75 truncate whitespace-nowrap min-w-0">
                                     • {item.observacao}
                                   </span>
                                 )}
                             </div>
 
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.2 rounded-full bg-white/90 border border-black/5 text-[10px] font-extrabold text-slate-700 shrink-0 whitespace-nowrap shadow-2xs">
+                            <div className="flex items-center gap-1 shrink-0">
+                              <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.2 rounded-full bg-white/90 border border-black/5 text-[10px] font-extrabold text-slate-700 shrink-0 whitespace-nowrap shadow-2xs">
                                 <span
                                   className="w-2 h-2 rounded-full shrink-0"
-                                  style={{
-                                    backgroundColor: espDotHex,
-                                  }}
+                                  style={{ backgroundColor: espDotHex }}
                                 />
-                                <span>
-                                  {isCirurgiaPlastica
-                                    ? "Cirurgia Plástica"
-                                    : "Endocrinologia"}
-                                </span>
+                                <span>{espCurta}</span>
                               </span>
 
                               <span
-                                className={`hidden sm:inline-flex items-center px-2 py-0.2 rounded-full text-[10px] font-extrabold shrink-0 whitespace-nowrap ${style.badge}`}
+                                className={`inline-flex items-center gap-1 px-2 py-0.2 rounded-full text-[10px] font-extrabold shrink-0 whitespace-nowrap ${style.badge}`}
                               >
-                                {item.statusLegivel}
+                                {confirmadoApp && (
+                                  <Smartphone className="w-2.5 h-2.5 shrink-0" />
+                                )}
+                                <span>{statusBadgeLabel}</span>
                               </span>
                             </div>
                           </>
@@ -1588,10 +1958,22 @@ export default function AgendaPage() {
 
               <div className="flex items-center justify-between bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs">
                 <span className="font-bold text-slate-500">Status Atual:</span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
                   {selectedCard.encaixe && (
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider">
                       ENCAIXE
+                    </span>
+                  )}
+                  {isConfirmadoViaApp(selectedCard) && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-bold">
+                      <Smartphone className="w-3 h-3" />
+                      <span>Confirmado · App</span>
+                    </span>
+                  )}
+                  {isCanceladoViaApp(selectedCard) && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-bold">
+                      <Smartphone className="w-3 h-3" />
+                      <span>Cancelado · App</span>
                     </span>
                   )}
                   <span
@@ -1617,32 +1999,59 @@ export default function AgendaPage() {
                 </div>
               )}
 
-              {/* AÇÕES RESTRITAS DE GESTÃO (Confirmar, Cancelar, Editar, Ver Prontuário) */}
-              <div className="grid grid-cols-2 gap-2.5 pt-1">
-                <button
-                  type="button"
-                  disabled={updatingStatusId === selectedCard.id}
-                  onClick={() => handleUpdateStatus(selectedCard, "CONFIRMADO")}
-                  className="py-2.5 px-3 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 flex items-center justify-center gap-1.5 transition-all shadow-2xs cursor-pointer"
-                >
-                  {updatingStatusId === selectedCard.id ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="w-4 h-4" />
-                  )}
-                  <span>Confirmar</span>
-                </button>
+              {/* AÇÕES RESTRITAS DE GESTÃO (Confirmar, Cancelar, Restaurar/Reagendar, Editar, Ver Prontuário) */}
+              {selectedCard.status === "CANCELADO" ? (
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    disabled={updatingStatusId === selectedCard.id}
+                    onClick={() => handleUpdateStatus(selectedCard, "AGENDADO")}
+                    className="py-2.5 px-3 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    {updatingStatusId === selectedCard.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <RotateCcw className="w-4 h-4" />
+                    )}
+                    <span>Restaurar</span>
+                  </button>
 
-                <button
-                  type="button"
-                  disabled={updatingStatusId === selectedCard.id}
-                  onClick={() => handleUpdateStatus(selectedCard, "CANCELADO")}
-                  className="py-2.5 px-3 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 disabled:opacity-60 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                >
-                  <XCircle className="w-4 h-4" />
-                  <span>Cancelar</span>
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => handleReagendarCancelado(selectedCard)}
+                    className="py-2.5 px-3 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center justify-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                  >
+                    <CalendarPlus className="w-4 h-4" />
+                    <span>Reagendar</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    disabled={updatingStatusId === selectedCard.id}
+                    onClick={() => handleUpdateStatus(selectedCard, "CONFIRMADO")}
+                    className="py-2.5 px-3 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 flex items-center justify-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                  >
+                    {updatingStatusId === selectedCard.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4" />
+                    )}
+                    <span>Confirmar</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updatingStatusId === selectedCard.id}
+                    onClick={() => handleUpdateStatus(selectedCard, "CANCELADO")}
+                    className="py-2.5 px-3 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 disabled:opacity-60 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>Cancelar</span>
+                  </button>
+                </div>
+              )}
 
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                 <button
