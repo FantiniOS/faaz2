@@ -24,6 +24,11 @@ import {
 import { TopMenu } from "@/components/TopMenu";
 import { mockUserSession } from "@/mocks/dashboard";
 import { ProntuarioModal } from "@/components/ProntuarioModal";
+import {
+  getClientCache,
+  invalidateClientCache,
+  setClientCache,
+} from "@/lib/client-swr-cache";
 
 export interface PacienteCadastral {
   id: string;
@@ -56,8 +61,12 @@ export interface PacienteCadastral {
 }
 
 export default function PacientesPage() {
-  const [pacientes, setPacientes] = useState<PacienteCadastral[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [pacientes, setPacientes] = useState<PacienteCadastral[]>(
+    () => getClientCache<PacienteCadastral[]>("pacientes:list")?.data ?? []
+  );
+  const [isLoading, setIsLoading] = useState(
+    () => !getClientCache<PacienteCadastral[]>("pacientes:list")
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [apenasMembrosFaaz, setApenasMembrosFaaz] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -116,10 +125,23 @@ export default function PacientesPage() {
     setTimeout(() => setToastMessage(null), 3000);
   }
 
-  // Carrega pacientes da API
-  async function loadPacientes(isInitial = false) {
+  // Carrega pacientes da API com cache SWR em memória (~30s) para navegação instantânea
+  async function loadPacientes(isInitial = false, forceBypassCache = false) {
+    const cacheKey = "pacientes:list";
+
+    if (!forceBypassCache) {
+      const cached = getClientCache<PacienteCadastral[]>(cacheKey);
+      if (cached) {
+        setPacientes(cached.data);
+        setIsLoading(false);
+        if (cached.isFresh) {
+          return;
+        }
+      }
+    }
+
     try {
-      if (isInitial) setIsLoading(true);
+      if (isInitial && !getClientCache(cacheKey)) setIsLoading(true);
       const res = await fetch("/api/pacientes", {
         cache: "no-store",
         headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
@@ -127,6 +149,7 @@ export default function PacientesPage() {
       if (!res.ok) return;
       const json = await res.json();
       if (json.pacientes) {
+        setClientCache(cacheKey, json.pacientes as PacienteCadastral[]);
         setPacientes(json.pacientes);
       }
     } catch (err) {
@@ -138,16 +161,40 @@ export default function PacientesPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    loadPacientes(true);
-    fetch("/api/auth/me")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.autenticado && data.usuario) {
-          if (data.usuario.cargo) setCurrentUserCargo(data.usuario.cargo);
-          if (data.usuario.role) setCurrentUserRole(data.usuario.role);
-        }
-      })
-      .catch(() => {});
+    let ativo = true;
+
+    async function inicializar() {
+      await Promise.resolve();
+      if (!ativo) return;
+      void loadPacientes(true, false);
+
+      const cachedAuth = getClientCache<{ cargo?: string; role?: string }>("auth:me", 60_000);
+      if (cachedAuth?.isFresh) {
+        if (cachedAuth.data.cargo) setCurrentUserCargo(cachedAuth.data.cargo);
+        if (cachedAuth.data.role) setCurrentUserRole(cachedAuth.data.role);
+        return;
+      }
+
+      fetch("/api/auth/me")
+        .then((r) => r.json())
+        .then((data) => {
+          if (!ativo) return;
+          if (data.autenticado && data.usuario) {
+            setClientCache("auth:me", {
+              cargo: data.usuario.cargo,
+              role: data.usuario.role,
+            });
+            if (data.usuario.cargo) setCurrentUserCargo(data.usuario.cargo);
+            if (data.usuario.role) setCurrentUserRole(data.usuario.role);
+          }
+        })
+        .catch(() => {});
+    }
+
+    void inicializar();
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   // Regras de RBAC e LGPD
@@ -185,32 +232,42 @@ export default function PacientesPage() {
     hasCheckedUrlParamRef.current = true;
     const params = new URLSearchParams(window.location.search);
 
-    // Se solicitado abertura de novo cadastro via Command Palette (?novo=true)
-    if (params.get("novo") === "true") {
-      handleOpenNewModal();
-      window.history.replaceState({}, "", window.location.pathname);
-      return;
-    }
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (!ativo) return;
 
-    const searchParam = params.get("q") || params.get("search");
-    if (searchParam) {
-      setSearchQuery(searchParam);
-    }
-
-    // Se for secretária, NÃO abre o prontuário por compliance da LGPD
-    if (isSecretaria || !canAccessProntuario) {
-      return;
-    }
-
-    const prontuarioId = params.get("prontuarioId") || params.get("pacienteId");
-    if (prontuarioId) {
-      const target = pacientes.find((p) => p.id === prontuarioId);
-      if (target) {
-        setSelectedPatientForProntuario(target);
-        setIsProntuarioOpen(true);
+      // Se solicitado abertura de novo cadastro via Command Palette (?novo=true)
+      if (params.get("novo") === "true") {
+        handleOpenNewModal();
         window.history.replaceState({}, "", window.location.pathname);
+        return;
       }
-    }
+
+      const searchParam = params.get("q") || params.get("search");
+      if (searchParam) {
+        setSearchQuery(searchParam);
+      }
+
+      // Se for secretária, NÃO abre o prontuário por compliance da LGPD
+      if (isSecretaria || !canAccessProntuario) {
+        return;
+      }
+
+      const prontuarioId =
+        params.get("prontuarioId") || params.get("pacienteId");
+      if (prontuarioId) {
+        const target = pacientes.find((p) => p.id === prontuarioId);
+        if (target) {
+          setSelectedPatientForProntuario(target);
+          setIsProntuarioOpen(true);
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+      }
+    });
+
+    return () => {
+      ativo = false;
+    };
   }, [pacientes, currentUserCargo, currentUserRole, isSecretaria, canAccessProntuario]);
 
   async function handleConfirmDelete() {
@@ -230,7 +287,9 @@ export default function PacientesPage() {
 
       showToast(`Paciente '${patientToDelete.nome}' excluído com sucesso!`);
       setPatientToDelete(null);
-      loadPacientes();
+      invalidateClientCache("pacientes:list");
+      invalidateClientCache("telemetria:");
+      void loadPacientes(false, true);
     } catch (err) {
       console.error("Erro ao excluir paciente:", err);
       alert("Erro ao excluir paciente.");
@@ -421,7 +480,9 @@ export default function PacientesPage() {
 
       setIsModalOpen(false);
       showToast(editingId ? "Paciente atualizado com sucesso!" : "Paciente cadastrado com sucesso!");
-      loadPacientes();
+      invalidateClientCache("pacientes:list");
+      invalidateClientCache("telemetria:");
+      void loadPacientes(false, true);
     } catch (err) {
       console.error("Erro ao salvar:", err);
       alert("Erro de comunicação ao salvar paciente.");
@@ -524,7 +585,10 @@ export default function PacientesPage() {
 
             <button
               type="button"
-              onClick={() => loadPacientes(false)}
+              onClick={() => {
+                invalidateClientCache("pacientes:list");
+                void loadPacientes(false, true);
+              }}
               className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg border border-slate-200 transition-colors"
               title="Recarregar pacientes"
             >

@@ -23,6 +23,7 @@ function isUniqueConstraintError(err: unknown): boolean {
  * GET /api/pacientes — Lista pacientes cadastrados na clínica
  */
 export async function GET() {
+  const reqStart = performance.now();
   try {
     const sessao = await getSessao();
     if (sessao && !podeCadastrarPacientes(sessao.cargo)) {
@@ -32,22 +33,60 @@ export async function GET() {
       );
     }
 
-    const orgRepo = await getRepository(OrganizationEntity);
-    const patientRepo = await getRepository(PatientEntity);
+    const dbStart = performance.now();
+    const [orgRepo, patientRepo] = await Promise.all([
+      getRepository(OrganizationEntity),
+      getRepository(PatientEntity),
+    ]);
 
     let orgId = sessao?.organizationId;
     if (!orgId) {
-      const orgs = await orgRepo.find({ take: 1 });
+      const orgs = await orgRepo.find({
+        select: { id: true },
+        take: 1,
+      });
       orgId = orgs[0]?.id;
     }
 
+    // Projeção explícita: omite CLOBs pesados não usados na listagem (workoutRestrictions, activeModules)
     const pacientes = await patientRepo.find({
       where: {
         ...(orgId ? { organizationId: orgId } : {}),
         deletedAt: IsNull(),
       },
+      select: {
+        id: true,
+        recordCode: true,
+        fullName: true,
+        cpf: true,
+        rg: true,
+        birthDate: true,
+        biologicalSex: true,
+        estadoCivil: true,
+        profissao: true,
+        convenio: true,
+        planoFaaz: true,
+        patientStatus: true,
+        phoneWhatsapp: true,
+        telefoneSecundario: true,
+        email: true,
+        contatoEmergenciaNome: true,
+        contatoEmergenciaTelefone: true,
+        zipCode: true,
+        street: true,
+        number: true,
+        complement: true,
+        neighborhood: true,
+        city: true,
+        state: true,
+        metaDiariaMl: true,
+        avatarUrl: true,
+        photoUrl: true,
+        createdAt: true,
+      },
       order: { fullName: "ASC" },
     });
+    const dbDurMs = Math.round(performance.now() - dbStart);
 
     const formatados = pacientes.map((p) => ({
       id: p.id,
@@ -79,7 +118,15 @@ export async function GET() {
       criadoEm: p.createdAt,
     }));
 
-    return NextResponse.json({ pacientes: formatados });
+    const totalDurMs = Math.round(performance.now() - reqStart);
+    return NextResponse.json(
+      { pacientes: formatados },
+      {
+        headers: {
+          "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${totalDurMs}`,
+        },
+      },
+    );
   } catch (error: unknown) {
     console.error("[PACIENTES/GET] Erro:", error);
     const details = error instanceof Error ? error.message : String(error);

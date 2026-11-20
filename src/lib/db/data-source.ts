@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import oracledb from "oracledb";
 import {
   DataSource,
   type EntityManager,
@@ -7,6 +8,14 @@ import {
   type Repository,
 } from "typeorm";
 import { entities } from "./entities";
+
+// ============================================================================
+// TUNING DO DRIVER node-oracledb (Modo Thin — Serverless Vercel + Oracle ADB)
+// ============================================================================
+// fetchAsString = [CLOB]: evita round-trips extras por linha ao ler LOB locators.
+// fetchArraySize = 100: reduz round-trips de busca em listagens/séries temporais.
+oracledb.fetchAsString = [oracledb.CLOB];
+oracledb.fetchArraySize = 100;
 
 // ============================================================================
 // CONEXÃO — Oracle Autonomous Database via TypeORM + node-oracledb (Modo Thin)
@@ -109,6 +118,7 @@ function createDataSource(): DataSource {
       poolIncrement: 1,
       poolTimeout: 60,
       queueTimeout: 10_000,
+      stmtCacheSize: 40,
     },
   });
 }

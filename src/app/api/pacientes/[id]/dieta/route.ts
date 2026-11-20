@@ -91,6 +91,7 @@ async function carregarPlanoCompleto(pacienteId: string) {
  * Itens (unidade/medidaCaseira) e Substituições prescritas 1:N com thumbnailUrl.
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
+  const reqStart = performance.now();
   try {
     const { id } = await params;
     const sessao = await getSessao();
@@ -105,11 +106,25 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const dbStart = performance.now();
     const patientRepo = await getRepository(PatientEntity);
-    const paciente = await patientRepo.findOne({
-      where: { id },
-      relations: { primaryDoctor: true },
-    });
+    // Paraleliza leitura leve do paciente (sem CLOBs) e carregamento do plano alimentar
+    const [paciente, planoInicial] = await Promise.all([
+      patientRepo.findOne({
+        where: { id },
+        select: {
+          id: true,
+          fullName: true,
+          primaryDoctor: {
+            id: true,
+            fullName: true,
+            specialty: true,
+          },
+        },
+        relations: { primaryDoctor: true },
+      }),
+      carregarPlanoCompleto(id),
+    ]);
 
     if (!paciente) {
       return NextResponse.json(
@@ -118,7 +133,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    let plano = await carregarPlanoCompleto(id);
+    let plano = planoInicial;
 
     if (!plano) {
       await withTransaction(async (manager) => {
@@ -408,6 +423,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
           Pragma: "no-cache",
+          "Server-Timing": `db;dur=${Math.round(
+            performance.now() - dbStart
+          )};desc="Oracle ADB", total;dur=${Math.round(
+            performance.now() - reqStart
+          )}`,
         },
       },
     );
