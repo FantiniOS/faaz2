@@ -8,6 +8,11 @@ import {
   StyleSheet,
   RefreshControl,
   Platform,
+  Modal,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
 } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,6 +30,10 @@ import {
   Clock,
   Target,
   Plus,
+  Syringe,
+  X,
+  AlertTriangle,
+  Check,
 } from "lucide-react-native";
 import { usePatientAuth } from "../contexts/PatientAuthContext";
 import { useDiarioAlimentar } from "../contexts/DiarioAlimentarContext";
@@ -33,12 +42,18 @@ import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
 import { RegistrarPesoModal } from "../components/RegistrarPesoModal";
 import {
   api,
+  CelulaMapaGlicemicoItem,
   CheckinRefeicaoStatus,
+  LinhaMapaGlicemicoItem,
   MeasurementItem,
+  MomentoClinicoGlicemia,
   PacienteTreinosResponse,
+  ProtocoloGlicemicoItem,
   GlicemiaHistoricoItem,
   IntestinoCheckinItem,
   resolveAssetUrl,
+  SlotMapaGlicemico,
+  StatusCelulaGlicemia,
 } from "../services/api";
 import {
   getConfigObjetivoClinico,
@@ -186,6 +201,71 @@ function formatMedidaResumo(m: MeasurementItem | null): {
   return { valor: "Registrado", subtitulo: `Em ${dataCurta}` };
 }
 
+const SLOT_LABELS: Record<MomentoClinicoGlicemia, string> = {
+  JEJUM: "Jejum",
+  POS_CAFE: "Pós-Café",
+  PRE_ALMOCO: "Pré-Almoço",
+  POS_ALMOCO: "Pós-Almoço",
+  PRE_JANTAR: "Pré-Jantar",
+  POS_JANTAR: "Pós-Jantar",
+  AO_DEITAR: "Ao Deitar",
+  AVULSO: "Avulsa",
+};
+
+const ALL_SLOTS_ORDER: SlotMapaGlicemico[] = [
+  "JEJUM",
+  "POS_CAFE",
+  "PRE_ALMOCO",
+  "POS_ALMOCO",
+  "PRE_JANTAR",
+  "POS_JANTAR",
+  "AO_DEITAR",
+];
+
+const CONTEXTO_CHIPS = [
+  { id: "COMI_FORA", label: "Comi fora" },
+  { id: "EXERCICIO", label: "Exercício" },
+  { id: "SINTOMA_HIPO", label: "Sintoma de hipo" },
+] as const;
+
+function getStatusPillColors(status: StatusCelulaGlicemia) {
+  switch (status) {
+    case "HIPO":
+      return { bg: "#ffe4e6", border: "#fda4af", text: "#9f1239", sub: "#be123c" };
+    case "ALVO":
+      return { bg: "#ecfdf5", border: "#a7f3d0", text: "#065f46", sub: "#047857" };
+    case "ATENCAO":
+      return { bg: "#fffbeb", border: "#fde68a", text: "#92400e", sub: "#b45309" };
+    case "HIPER":
+      return { bg: "#e11d48", border: "#be123c", text: "#ffffff", sub: "#ffe4e6" };
+  }
+}
+
+function formatUILabel(val: number): string {
+  const r = Math.round(val * 10) / 10;
+  return Number.isInteger(r)
+    ? `${r} UI`
+    : `${r.toFixed(1).replace(".", ",")} UI`;
+}
+
+function sugerirMomentoPorHoraAtual(slotsAtivos: SlotMapaGlicemico[]): MomentoClinicoGlicemia {
+  const h = new Date().getHours();
+  let candidato: SlotMapaGlicemico = "JEJUM";
+  if (h < 9) candidato = "JEJUM";
+  else if (h < 11) candidato = "POS_CAFE";
+  else if (h < 13) candidato = "PRE_ALMOCO";
+  else if (h < 16) candidato = "POS_ALMOCO";
+  else if (h < 19) candidato = "PRE_JANTAR";
+  else if (h < 22) candidato = "POS_JANTAR";
+  else candidato = "AO_DEITAR";
+
+  if (slotsAtivos.length > 0) {
+    if (slotsAtivos.includes(candidato)) return candidato;
+    return slotsAtivos[0];
+  }
+  return candidato;
+}
+
 export function HomeScreen({
   completedCheckins = [],
   refreshKey = 0,
@@ -241,6 +321,25 @@ export function HomeScreen({
 
   const [ultimaGlicemiaHoje, setUltimaGlicemiaHoje] =
     useState<GlicemiaHistoricoItem | null>(null);
+  const [protocoloGlicemico, setProtocoloGlicemico] =
+    useState<ProtocoloGlicemicoItem | null>(null);
+  const [linhaMapaHoje, setLinhaMapaHoje] =
+    useState<LinhaMapaGlicemicoItem | null>(null);
+
+  // Gaveta de Registro em 3 Segundos (Glicemia + Insulina Rápida + Contexto)
+  const [isGlicemiaDrawerOpen, setIsGlicemiaDrawerOpen] = useState(false);
+  const [momentoDrawer, setMomentoDrawer] =
+    useState<MomentoClinicoGlicemia>("JEJUM");
+  const [valorGlicemiaInput, setValorGlicemiaInput] = useState("");
+  const [insulinaRapidaInput, setInsulinaRapidaInput] = useState("");
+  const [tagsDrawer, setTagsDrawer] = useState<string[]>([]);
+  const [salvandoGlicemiaDrawer, setSalvandoGlicemiaDrawer] = useState(false);
+
+  // Modal de 1 Toque de Insulina Basal
+  const [isBasalModalOpen, setIsBasalModalOpen] = useState(false);
+  const [basalUnidadesInput, setBasalUnidadesInput] = useState("");
+  const [salvandoBasal, setSalvandoBasal] = useState(false);
+
   const [ultimoBristolHoje, setUltimoBristolHoje] =
     useState<IntestinoCheckinItem | null>(null);
   const [ultimaMedida, setUltimaMedida] = useState<MeasurementItem | null>(null);
@@ -267,7 +366,7 @@ export function HomeScreen({
       hidraRes,
       treinoHojeRes,
       treinosRes,
-      glicemiaRes,
+      mapaGlicRes,
       intestinoRes,
       medidasRes,
       perfilRes,
@@ -276,7 +375,7 @@ export function HomeScreen({
       api.checkins.getHidratacaoHoje(pacienteId),
       api.checkins.getTreinoHoje(pacienteId),
       api.pacientes.getTreinos(pacienteId),
-      api.checkins.getHistoricoGlicemia(pacienteId, 7),
+      api.pacientes.getMapaGlicemico(pacienteId, 7),
       api.checkins.getHistoricoIntestino(pacienteId, 10),
       api.pacientes.getMedidas(pacienteId),
       api.get(`/pacientes/${encodeURIComponent(pacienteId)}`),
@@ -331,11 +430,52 @@ export function HomeScreen({
       setTreinosInfo(treinosRes.value);
     }
 
-    if (glicemiaRes.status === "fulfilled" && glicemiaRes.value) {
-      const regsHoje = glicemiaRes.value.registrosHoje;
-      if (Array.isArray(regsHoje) && regsHoje.length > 0) {
-        setUltimaGlicemiaHoje(regsHoje[0]);
+    if (mapaGlicRes.status === "fulfilled" && mapaGlicRes.value?.success) {
+      const prot = mapaGlicRes.value.protocolo || null;
+      setProtocoloGlicemico(prot);
+
+      if (prot?.ativo) {
+        const hojeIso = mapaGlicRes.value.hojeDataDia;
+        const linhaHoje =
+          (mapaGlicRes.value.linhas || []).find((l) => l.dataDia === hojeIso) ||
+          null;
+        setLinhaMapaHoje(linhaHoje);
+
+        if (linhaHoje) {
+          const todasCelulasHoje: CelulaMapaGlicemicoItem[] = [
+            ...(Object.values(linhaHoje.celulas).filter(
+              Boolean
+            ) as CelulaMapaGlicemicoItem[]),
+            ...(linhaHoje.avulsos || []),
+          ].sort(
+            (a, b) =>
+              new Date(b.dataRegistro).getTime() -
+              new Date(a.dataRegistro).getTime()
+          );
+
+          const maisRecente = todasCelulasHoje[0];
+          if (maisRecente) {
+            setUltimaGlicemiaHoje({
+              id: maisRecente.id,
+              valor: maisRecente.valor,
+              momento: maisRecente.momentoClinico,
+              momentoClinico: maisRecente.momentoClinico,
+              momentoLegivel:
+                SLOT_LABELS[maisRecente.momentoClinico] ||
+                maisRecente.momentoClinico,
+              dataRegistro: maisRecente.dataRegistro,
+              isCritico:
+                maisRecente.status === "HIPO" ||
+                maisRecente.status === "HIPER",
+            });
+          } else {
+            setUltimaGlicemiaHoje(null);
+          }
+        } else {
+          setUltimaGlicemiaHoje(null);
+        }
       } else {
+        setLinhaMapaHoje(null);
         setUltimaGlicemiaHoje(null);
       }
     }
@@ -420,6 +560,135 @@ export function HomeScreen({
       setSalvandoTreino(false);
     }
   }
+
+  const abrirGavetaGlicemia = useCallback(
+    (momentoPreSelecionado?: MomentoClinicoGlicemia) => {
+      const slots = protocoloGlicemico?.slotsAtivos || [];
+      const momentoInicial =
+        momentoPreSelecionado || sugerirMomentoPorHoraAtual(slots);
+      setMomentoDrawer(momentoInicial);
+
+      // Se já houver medição naquele slot hoje, pré-preenche para rápida atualização
+      const existente =
+        momentoInicial !== "AVULSO"
+          ? linhaMapaHoje?.celulas?.[momentoInicial]
+          : null;
+      setValorGlicemiaInput(existente ? String(existente.valor) : "");
+      setInsulinaRapidaInput(
+        existente?.insulinaUI ? String(existente.insulinaUI) : ""
+      );
+      setTagsDrawer(existente?.contextoTags || []);
+      setIsGlicemiaDrawerOpen(true);
+    },
+    [protocoloGlicemico?.slotsAtivos, linhaMapaHoje?.celulas]
+  );
+
+  const handleToggleTagDrawer = useCallback((tagId: string) => {
+    setTagsDrawer((prev) =>
+      prev.includes(tagId) ? prev.filter((t) => t !== tagId) : [...prev, tagId]
+    );
+  }, []);
+
+  const handleSalvarGlicemiaDrawer = useCallback(async () => {
+    if (!pacienteId || salvandoGlicemiaDrawer) return;
+    const valorNum = parseInt(valorGlicemiaInput.replace(/\D/g, ""), 10);
+    if (Number.isNaN(valorNum) || valorNum < 20 || valorNum > 600) {
+      Alert.alert(
+        "Valor inválido",
+        "Informe um valor de glicemia entre 20 e 600 mg/dL."
+      );
+      return;
+    }
+
+    const rapidaNum = parseFloat(insulinaRapidaInput.replace(",", "."));
+    const temRapida =
+      Boolean(protocoloGlicemico?.usaInsulina) &&
+      !Number.isNaN(rapidaNum) &&
+      rapidaNum > 0;
+
+    setSalvandoGlicemiaDrawer(true);
+    try {
+      await api.checkins.registrarGlicemia({
+        pacienteId,
+        valor: valorNum,
+        momentoClinico: momentoDrawer,
+        contextoTags: tagsDrawer,
+        insulina: temRapida
+          ? {
+              tipo: "RAPIDA",
+              unidades: Math.round(rapidaNum * 10) / 10,
+              nome: protocoloGlicemico?.insulinaRapidaNome || null,
+            }
+          : null,
+      });
+
+      setIsGlicemiaDrawerOpen(false);
+      await carregarCockpit();
+    } catch (err: any) {
+      Alert.alert(
+        "Não foi possível salvar",
+        err?.message || "Verifique sua conexão e tente novamente."
+      );
+    } finally {
+      setSalvandoGlicemiaDrawer(false);
+    }
+  }, [
+    pacienteId,
+    salvandoGlicemiaDrawer,
+    valorGlicemiaInput,
+    insulinaRapidaInput,
+    protocoloGlicemico,
+    momentoDrawer,
+    tagsDrawer,
+    carregarCockpit,
+  ]);
+
+  const abrirModalBasal = useCallback(() => {
+    const doseRef = protocoloGlicemico?.insulinaBasalDoseRef;
+    setBasalUnidadesInput(
+      doseRef !== null && doseRef !== undefined && doseRef > 0
+        ? String(doseRef)
+        : ""
+    );
+    setIsBasalModalOpen(true);
+  }, [protocoloGlicemico?.insulinaBasalDoseRef]);
+
+  const handleSalvarBasal = useCallback(async () => {
+    if (!pacienteId || salvandoBasal) return;
+    const unidadesNum = parseFloat(basalUnidadesInput.replace(",", "."));
+    if (Number.isNaN(unidadesNum) || unidadesNum <= 0 || unidadesNum > 300) {
+      Alert.alert(
+        "Dose inválida",
+        "Informe a dose aplicada em unidades (UI)."
+      );
+      return;
+    }
+
+    setSalvandoBasal(true);
+    try {
+      await api.checkins.registrarInsulina({
+        pacienteId,
+        tipo: "BASAL",
+        unidades: Math.round(unidadesNum * 10) / 10,
+        nome: protocoloGlicemico?.insulinaBasalNome || "Insulina Basal",
+      });
+      setIsBasalModalOpen(false);
+      await carregarCockpit();
+    } catch (err: any) {
+      Alert.alert(
+        "Não foi possível registrar",
+        err?.message || "Tente novamente em instantes."
+      );
+    } finally {
+      setSalvandoBasal(false);
+    }
+  }, [
+    pacienteId,
+    salvandoBasal,
+    basalUnidadesInput,
+    protocoloGlicemico?.insulinaBasalNome,
+    carregarCockpit,
+  ]);
 
   const objetivoConfig = useMemo(
     () => getConfigObjetivoClinico(objetivoClinico),
@@ -743,7 +1012,142 @@ export function HomeScreen({
           </View>
         </View>
 
-        {/* CARD 2: GRADE 2x2 DE CHECK-INS CLÍNICOS (SEMPRE VISÍVEL) */}
+        {/* TRILHA DO MAPA GLICÊMICO DE HOJE (QUANDO PROTOCOLO ATIVO COM SLOTS PRESCRITOS) */}
+        {protocoloGlicemico?.ativo &&
+        protocoloGlicemico.modo !== "LIVRE" &&
+        protocoloGlicemico.slotsAtivos.length > 0 ? (
+          <View style={styles.glycemicTrailCard}>
+            <View style={styles.trailHeaderRow}>
+              <View style={styles.trailTitleGroup}>
+                <View style={styles.trailIconBox}>
+                  <HeartPulse size={15} color="#e11d48" />
+                </View>
+                <View>
+                  <Text style={styles.trailTitle}>Mapa Glicêmico de Hoje</Text>
+                  <Text style={styles.trailSubtitle}>
+                    {
+                      protocoloGlicemico.slotsAtivos.filter((s) =>
+                        Boolean(linhaMapaHoje?.celulas?.[s])
+                      ).length
+                    }{" "}
+                    de {protocoloGlicemico.slotsAtivos.length} horários medidos
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.78}
+                onPress={() => abrirGavetaGlicemia("AVULSO")}
+                style={styles.avulsaBtn}
+              >
+                <Plus size={12} color="#0f766e" />
+                <Text style={styles.avulsaBtnText}>Avulsa</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Pílulas dos momentos escolhidos pela médica */}
+            <View style={styles.trailPillsWrap}>
+              {protocoloGlicemico.slotsAtivos.map((slot) => {
+                const cel = linhaMapaHoje?.celulas?.[slot];
+                const label = SLOT_LABELS[slot] || slot;
+
+                if (cel) {
+                  const pal = getStatusPillColors(cel.status);
+                  return (
+                    <TouchableOpacity
+                      key={slot}
+                      activeOpacity={0.8}
+                      onPress={() => abrirGavetaGlicemia(slot)}
+                      style={[
+                        styles.trailSlotPillDone,
+                        {
+                          backgroundColor: pal.bg,
+                          borderColor: pal.border,
+                        },
+                      ]}
+                    >
+                      <CheckCircle2 size={13} color={pal.text} />
+                      <Text
+                        style={[styles.trailSlotDoneText, { color: pal.text }]}
+                      >
+                        {label} · {cel.valor}
+                      </Text>
+                      {cel.insulinaUI && cel.insulinaUI > 0 ? (
+                        <View
+                          style={[
+                            styles.trailRapidBadge,
+                            cel.status === "HIPER" && {
+                              backgroundColor: "rgba(255,255,255,0.22)",
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.trailRapidBadgeText,
+                              cel.status === "HIPER" && { color: "#ffffff" },
+                            ]}
+                          >
+                            {formatUILabel(cel.insulinaUI)}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                }
+
+                return (
+                  <TouchableOpacity
+                    key={slot}
+                    activeOpacity={0.78}
+                    onPress={() => abrirGavetaGlicemia(slot)}
+                    style={styles.trailSlotPillPending}
+                  >
+                    <View style={styles.dashedCircleDot} />
+                    <Text style={styles.trailSlotPendingText}>
+                      {label} · Medir
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Pílula de Insulina Basal (SOMENTE se usaInsulina === true) */}
+            {protocoloGlicemico.usaInsulina ? (
+              linhaMapaHoje?.basalDoses && linhaMapaHoje.basalDoses.length > 0 ? (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={abrirModalBasal}
+                  style={styles.basalPillDone}
+                >
+                  <CheckCircle2 size={14} color="#047857" />
+                  <Text style={styles.basalPillDoneText} numberOfLines={1}>
+                    ✓ Basal aplicada hoje:{" "}
+                    {formatUILabel(linhaMapaHoje.basalDoses[0].unidades)} às{" "}
+                    {linhaMapaHoje.basalDoses[0].hora}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={abrirModalBasal}
+                  style={styles.basalPillPending}
+                >
+                  <Syringe size={14} color="#4338ca" />
+                  <Text style={styles.basalPillPendingText} numberOfLines={1}>
+                    Marcar Basal de hoje (
+                    {protocoloGlicemico.insulinaBasalNome || "Insulina Basal"}
+                    {protocoloGlicemico.insulinaBasalDoseRef
+                      ? ` · ${formatUILabel(protocoloGlicemico.insulinaBasalDoseRef)}`
+                      : ""}
+                    )
+                  </Text>
+                </TouchableOpacity>
+              )
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* CARD 2: GRADE DE CHECK-INS CLÍNICOS */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>Check-ins Clínicos</Text>
           <Text style={styles.sectionHint}>Toque para registrar</Text>
@@ -793,52 +1197,54 @@ export function HomeScreen({
             </Text>
           </TouchableOpacity>
 
-          {/* 2. GLICEMIA */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => onNavigateToCheckin?.("glicemia")}
-            style={styles.checkinTile}
-          >
-            <View style={styles.tileTopRow}>
-              <View style={[styles.tileIconBox, { backgroundColor: "#fff1f2" }]}>
-                <HeartPulse size={16} color="#e11d48" />
-              </View>
-              {ultimaGlicemiaHoje ? (
-                <View
-                  style={[
-                    styles.miniBadge,
-                    ultimaGlicemiaHoje.isCritico
-                      ? { backgroundColor: "#fff1f2", borderColor: "#fecdd3" }
-                      : { backgroundColor: "#ecfdf5", borderColor: "#a7f3d0" },
-                  ]}
-                >
-                  <Text
+          {/* 2. GLICEMIA (EXIBIDO SOMENTE QUANDO protocoloGlicemico.ativo === true) */}
+          {protocoloGlicemico?.ativo ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => abrirGavetaGlicemia()}
+              style={styles.checkinTile}
+            >
+              <View style={styles.tileTopRow}>
+                <View style={[styles.tileIconBox, { backgroundColor: "#fff1f2" }]}>
+                  <HeartPulse size={16} color="#e11d48" />
+                </View>
+                {ultimaGlicemiaHoje ? (
+                  <View
                     style={[
-                      styles.miniBadgeText,
-                      {
-                        color: ultimaGlicemiaHoje.isCritico
-                          ? "#be123c"
-                          : "#047857",
-                      },
+                      styles.miniBadge,
+                      ultimaGlicemiaHoje.isCritico
+                        ? { backgroundColor: "#fff1f2", borderColor: "#fecdd3" }
+                        : { backgroundColor: "#ecfdf5", borderColor: "#a7f3d0" },
                     ]}
                   >
-                    {ultimaGlicemiaHoje.isCritico ? "Alerta" : "Na meta"}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-            <Text style={styles.tileLabel}>Glicemia</Text>
-            <Text style={styles.tileValue} numberOfLines={1}>
-              {ultimaGlicemiaHoje
-                ? `${ultimaGlicemiaHoje.valor} mg/dL`
-                : "Registrar"}
-            </Text>
-            <Text style={styles.tileSub} numberOfLines={1}>
-              {ultimaGlicemiaHoje
-                ? `${ultimaGlicemiaHoje.momentoLegivel || ultimaGlicemiaHoje.momento} • ${formatHoraLocal(ultimaGlicemiaHoje.dataRegistro)}`
-                : "Registrar agora"}
-            </Text>
-          </TouchableOpacity>
+                    <Text
+                      style={[
+                        styles.miniBadgeText,
+                        {
+                          color: ultimaGlicemiaHoje.isCritico
+                            ? "#be123c"
+                            : "#047857",
+                        },
+                      ]}
+                    >
+                      {ultimaGlicemiaHoje.isCritico ? "Alerta" : "Na meta"}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={styles.tileLabel}>Glicemia</Text>
+              <Text style={styles.tileValue} numberOfLines={1}>
+                {ultimaGlicemiaHoje
+                  ? `${ultimaGlicemiaHoje.valor} mg/dL`
+                  : "Registrar"}
+              </Text>
+              <Text style={styles.tileSub} numberOfLines={1}>
+                {ultimaGlicemiaHoje
+                  ? `${ultimaGlicemiaHoje.momentoLegivel || ultimaGlicemiaHoje.momento} • ${formatHoraLocal(ultimaGlicemiaHoje.dataRegistro)}`
+                  : "Registrar agora"}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* 3. INTESTINO (BRISTOL) */}
           <TouchableOpacity
@@ -879,7 +1285,10 @@ export function HomeScreen({
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => onNavigateToCheckin?.("medidas")}
-            style={styles.checkinTile}
+            style={[
+              styles.checkinTile,
+              !protocoloGlicemico?.ativo && { width: "100%" },
+            ]}
           >
             <View style={styles.tileTopRow}>
               <View style={[styles.tileIconBox, { backgroundColor: "#f0f9ff" }]}>
@@ -907,6 +1316,43 @@ export function HomeScreen({
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* PÍLULA DE INSULINA BASAL NO MODO LIVRE (QUANDO ATIVO + USA_INSULINA + SEM TRILHA) */}
+        {protocoloGlicemico?.ativo &&
+        protocoloGlicemico.usaInsulina &&
+        (protocoloGlicemico.modo === "LIVRE" ||
+          protocoloGlicemico.slotsAtivos.length === 0) ? (
+          linhaMapaHoje?.basalDoses && linhaMapaHoje.basalDoses.length > 0 ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={abrirModalBasal}
+              style={styles.basalPillDone}
+            >
+              <CheckCircle2 size={14} color="#047857" />
+              <Text style={styles.basalPillDoneText} numberOfLines={1}>
+                ✓ Basal aplicada hoje:{" "}
+                {formatUILabel(linhaMapaHoje.basalDoses[0].unidades)} às{" "}
+                {linhaMapaHoje.basalDoses[0].hora}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={abrirModalBasal}
+              style={styles.basalPillPending}
+            >
+              <Syringe size={14} color="#4338ca" />
+              <Text style={styles.basalPillPendingText} numberOfLines={1}>
+                Marcar Basal de hoje (
+                {protocoloGlicemico.insulinaBasalNome || "Insulina Basal"}
+                {protocoloGlicemico.insulinaBasalDoseRef
+                  ? ` · ${formatUILabel(protocoloGlicemico.insulinaBasalDoseRef)}`
+                  : ""}
+                )
+              </Text>
+            </TouchableOpacity>
+          )
+        ) : null}
 
         {/* CARD 3: ATALHO DA PRÓXIMA REFEIÇÃO */}
         <TouchableOpacity
@@ -1029,6 +1475,330 @@ export function HomeScreen({
           carregarCockpit();
         }}
       />
+
+      {/* GAVETA DE REGISTRO DE GLICEMIA EM 3 SEGUNDOS */}
+      <Modal
+        visible={isGlicemiaDrawerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setIsGlicemiaDrawerOpen(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.drawerOverlay}
+        >
+          <View style={styles.drawerSheet}>
+            <View style={styles.drawerHandle} />
+
+            <View style={styles.drawerHeaderRow}>
+              <View style={styles.drawerTitleGroup}>
+                <View style={styles.trailIconBox}>
+                  <HeartPulse size={16} color="#e11d48" />
+                </View>
+                <View>
+                  <Text style={styles.drawerTitle}>Registrar Glicemia</Text>
+                  <Text style={styles.drawerSubtitle}>
+                    {SLOT_LABELS[momentoDrawer] || "Medição capilar"} •{" "}
+                    Alvo{" "}
+                    {momentoDrawer === "POS_CAFE" ||
+                    momentoDrawer === "POS_ALMOCO" ||
+                    momentoDrawer === "POS_JANTAR"
+                      ? `≤${protocoloGlicemico?.alvoPosMax || 180}`
+                      : `${protocoloGlicemico?.alvoJejumMin || 70}–${
+                          protocoloGlicemico?.alvoJejumMax || 130
+                        }`}{" "}
+                    mg/dL
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => setIsGlicemiaDrawerOpen(false)}
+                style={styles.drawerCloseBtn}
+              >
+                <X size={18} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Seletor rápido de momento clínico */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.drawerMomentsRow}
+            >
+              {(
+                [
+                  ...(protocoloGlicemico?.slotsAtivos &&
+                  protocoloGlicemico.slotsAtivos.length > 0
+                    ? protocoloGlicemico.slotsAtivos
+                    : ALL_SLOTS_ORDER),
+                  "AVULSO" as MomentoClinicoGlicemia,
+                ] as MomentoClinicoGlicemia[]
+              ).map((m) => {
+                const isSelected = momentoDrawer === m;
+                return (
+                  <TouchableOpacity
+                    key={m}
+                    activeOpacity={0.8}
+                    onPress={() => setMomentoDrawer(m)}
+                    style={[
+                      styles.drawerMomentChip,
+                      isSelected && styles.drawerMomentChipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.drawerMomentChipText,
+                        isSelected && styles.drawerMomentChipTextActive,
+                      ]}
+                    >
+                      {SLOT_LABELS[m]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Input numérico grande mg/dL */}
+            <View style={styles.drawerNumericBox}>
+              <TextInput
+                value={valorGlicemiaInput}
+                onChangeText={(txt) =>
+                  setValorGlicemiaInput(txt.replace(/\D/g, "").slice(0, 3))
+                }
+                placeholder="108"
+                placeholderTextColor="#cbd5e1"
+                keyboardType="number-pad"
+                maxLength={3}
+                autoFocus
+                style={[
+                  styles.drawerNumericInput,
+                  Platform.OS === "web" && ({ outlineStyle: "none" } as any),
+                ]}
+              />
+              <Text style={styles.drawerUnitLabel}>mg/dL</Text>
+            </View>
+
+            {/* Alerta informativo calmo quando <alvoMin ou >250 */}
+            {(() => {
+              const v = parseInt(valorGlicemiaInput, 10);
+              const minAlvo = protocoloGlicemico?.alvoJejumMin || 70;
+              if (Number.isNaN(v) || v < 20) return null;
+              if (v < minAlvo) {
+                return (
+                  <View style={styles.calmAlertBoxRose}>
+                    <AlertTriangle size={15} color="#be123c" />
+                    <Text style={styles.calmAlertTextRose}>
+                      {protocoloGlicemico?.orientacaoHipo ||
+                        `Glicemia abaixo de ${minAlvo} mg/dL. Siga a orientação de correção da sua médica e repita a medição em 15 minutos.`}
+                    </Text>
+                  </View>
+                );
+              }
+              if (v > 250) {
+                return (
+                  <View style={styles.calmAlertBoxRose}>
+                    <AlertTriangle size={15} color="#be123c" />
+                    <Text style={styles.calmAlertTextRose}>
+                      {protocoloGlicemico?.orientacaoHiper ||
+                        "Glicemia acima de 250 mg/dL. Hidrate-se bem e siga o protocolo de correção prescrito pela sua médica."}
+                    </Text>
+                  </View>
+                );
+              }
+              return null;
+            })()}
+
+            {/* Bloco opcional de Insulina Rápida (UI) SOMENTE se usaInsulina === true */}
+            {protocoloGlicemico?.usaInsulina ? (
+              <View style={styles.drawerInsulinRow}>
+                <View style={styles.drawerInsulinLabelCol}>
+                  <View style={styles.drawerInsulinTitleRow}>
+                    <Syringe size={14} color="#4338ca" />
+                    <Text style={styles.drawerInsulinTitle}>
+                      {protocoloGlicemico.insulinaRapidaNome ||
+                        "Insulina Rápida"}{" "}
+                      (opcional)
+                    </Text>
+                  </View>
+                  <Text style={styles.drawerInsulinHint}>
+                    Aplicou insulina rápida nesta medição?
+                  </Text>
+                </View>
+
+                <View style={styles.drawerInsulinInputWrap}>
+                  <TextInput
+                    value={insulinaRapidaInput}
+                    onChangeText={(txt) =>
+                      setInsulinaRapidaInput(
+                        txt.replace(/[^0-9.,]/g, "").slice(0, 5)
+                      )
+                    }
+                    placeholder="0"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="numeric"
+                    style={[
+                      styles.drawerInsulinInput,
+                      Platform.OS === "web" && ({ outlineStyle: "none" } as any),
+                    ]}
+                  />
+                  <Text style={styles.drawerInsulinUnit}>UI</Text>
+                </View>
+              </View>
+            ) : null}
+
+            {/* 3 Chips opcionais de contexto */}
+            <View style={styles.drawerTagsBlock}>
+              <Text style={styles.drawerTagsLabel}>
+                Contexto opcional (toque para marcar):
+              </Text>
+              <View style={styles.drawerTagsRow}>
+                {CONTEXTO_CHIPS.map((chip) => {
+                  const active = tagsDrawer.includes(chip.id);
+                  return (
+                    <TouchableOpacity
+                      key={chip.id}
+                      activeOpacity={0.78}
+                      onPress={() => handleToggleTagDrawer(chip.id)}
+                      style={[
+                        styles.drawerTagChip,
+                        active && styles.drawerTagChipActive,
+                      ]}
+                    >
+                      {active ? <Check size={12} color="#0f766e" /> : null}
+                      <Text
+                        style={[
+                          styles.drawerTagChipText,
+                          active && styles.drawerTagChipTextActive,
+                        ]}
+                      >
+                        {chip.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Botão Salvar */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={salvandoGlicemiaDrawer}
+              onPress={handleSalvarGlicemiaDrawer}
+              style={[
+                styles.drawerPrimaryBtn,
+                salvandoGlicemiaDrawer && { opacity: 0.65 },
+              ]}
+            >
+              {salvandoGlicemiaDrawer ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <CheckCircle2 size={17} color="#ffffff" />
+                  <Text style={styles.drawerPrimaryBtnText}>
+                    Salvar Medição
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* MODAL 1 TOQUE DE INSULINA BASAL */}
+      <Modal
+        visible={isBasalModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsBasalModalOpen(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.drawerOverlay}
+        >
+          <View style={styles.drawerSheet}>
+            <View style={styles.drawerHandle} />
+
+            <View style={styles.drawerHeaderRow}>
+              <View style={styles.drawerTitleGroup}>
+                <View
+                  style={[
+                    styles.trailIconBox,
+                    { backgroundColor: "#eef2ff", borderColor: "#c7d2fe" },
+                  ]}
+                >
+                  <Syringe size={16} color="#4338ca" />
+                </View>
+                <View>
+                  <Text style={styles.drawerTitle}>
+                    Registrar Insulina Basal
+                  </Text>
+                  <Text style={styles.drawerSubtitle}>
+                    {protocoloGlicemico?.insulinaBasalNome || "Insulina Basal"}
+                    {protocoloGlicemico?.insulinaBasalHorario
+                      ? ` • Horário: ${protocoloGlicemico.insulinaBasalHorario}`
+                      : ""}
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => setIsBasalModalOpen(false)}
+                style={styles.drawerCloseBtn}
+              >
+                <X size={18} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.drawerNumericBox}>
+              <TextInput
+                value={basalUnidadesInput}
+                onChangeText={(txt) =>
+                  setBasalUnidadesInput(txt.replace(/[^0-9.,]/g, "").slice(0, 5))
+                }
+                placeholder={
+                  protocoloGlicemico?.insulinaBasalDoseRef
+                    ? String(protocoloGlicemico.insulinaBasalDoseRef)
+                    : "18"
+                }
+                placeholderTextColor="#cbd5e1"
+                keyboardType="numeric"
+                autoFocus
+                style={[
+                  styles.drawerNumericInput,
+                  { color: "#312e81" },
+                  Platform.OS === "web" && ({ outlineStyle: "none" } as any),
+                ]}
+              />
+              <Text style={styles.drawerUnitLabel}>UI</Text>
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={salvandoBasal}
+              onPress={handleSalvarBasal}
+              style={[
+                styles.drawerPrimaryBtn,
+                { backgroundColor: "#4338ca" },
+                salvandoBasal && { opacity: 0.65 },
+              ]}
+            >
+              {salvandoBasal ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <CheckCircle2 size={17} color="#ffffff" />
+                  <Text style={styles.drawerPrimaryBtnText}>
+                    Confirmar Basal de Hoje
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* BARRA INFERIOR UNIFICADA */}
       <BottomTabBar
@@ -1518,6 +2288,376 @@ const styles = StyleSheet.create({
     padding: 10,
     borderWidth: 1,
     borderColor: "#f1f5f9",
+  },
+  // Trilha do Mapa Glicêmico & Insulina Basal
+  glycemicTrailCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+    gap: 12,
+  },
+  trailHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  trailTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  trailIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#fff1f2",
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  trailTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  trailSubtitle: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 1,
+  },
+  avulsaBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  avulsaBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  trailPillsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  trailSlotPillPending: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f8fafc",
+  },
+  dashedCircleDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: "#94a3b8",
+  },
+  trailSlotPendingText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  trailSlotPillDone: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  trailSlotDoneText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  trailRapidBadge: {
+    backgroundColor: "#e0e7ff",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 6,
+    marginLeft: 2,
+  },
+  trailRapidBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#3730a3",
+  },
+  basalPillPending: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#eef2ff",
+    borderWidth: 1,
+    borderColor: "#c7d2fe",
+  },
+  basalPillPendingText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#3730a3",
+  },
+  basalPillDone: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+  },
+  basalPillDoneText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#065f46",
+  },
+  // Gaveta de Registro em 3 Segundos
+  drawerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    justifyContent: "flex-end",
+  },
+  drawerSheet: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 24,
+    gap: 14,
+  },
+  drawerHandle: {
+    width: 38,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "#cbd5e1",
+    alignSelf: "center",
+    marginBottom: 4,
+  },
+  drawerHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  drawerTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  drawerTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  drawerSubtitle: {
+    fontSize: 11.5,
+    color: "#64748b",
+    marginTop: 1,
+  },
+  drawerCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#f1f5f9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  drawerMomentsRow: {
+    flexDirection: "row",
+    gap: 7,
+    paddingVertical: 2,
+  },
+  drawerMomentChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  drawerMomentChipActive: {
+    backgroundColor: "#0f766e",
+    borderColor: "#0f766e",
+  },
+  drawerMomentChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  drawerMomentChipTextActive: {
+    color: "#ffffff",
+    fontWeight: "700",
+  },
+  drawerNumericBox: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "center",
+    backgroundColor: "#f8fafc",
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  drawerNumericInput: {
+    fontSize: 40,
+    fontWeight: "800",
+    color: "#0f172a",
+    textAlign: "center",
+    minWidth: 100,
+    paddingVertical: 0,
+  },
+  drawerUnitLabel: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#64748b",
+  },
+  calmAlertBoxRose: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#fff1f2",
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+    borderRadius: 12,
+    padding: 11,
+  },
+  calmAlertTextRose: {
+    flex: 1,
+    fontSize: 12,
+    color: "#9f1239",
+    lineHeight: 17,
+    fontWeight: "600",
+  },
+  drawerInsulinRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#eef2ff",
+    borderWidth: 1,
+    borderColor: "#c7d2fe",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  drawerInsulinLabelCol: {
+    flex: 1,
+    gap: 2,
+  },
+  drawerInsulinTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  drawerInsulinTitle: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#312e81",
+  },
+  drawerInsulinHint: {
+    fontSize: 11,
+    color: "#4338ca",
+  },
+  drawerInsulinInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#a5b4fc",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  drawerInsulinInput: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#312e81",
+    minWidth: 38,
+    textAlign: "center",
+    paddingVertical: 0,
+  },
+  drawerInsulinUnit: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#4338ca",
+  },
+  drawerTagsBlock: {
+    gap: 7,
+  },
+  drawerTagsLabel: {
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  drawerTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  drawerTagChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  drawerTagChipActive: {
+    backgroundColor: "#f0fdfa",
+    borderColor: "#0f766e",
+  },
+  drawerTagChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  drawerTagChipTextActive: {
+    color: "#0f766e",
+    fontWeight: "700",
+  },
+  drawerPrimaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#0f766e",
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginTop: 2,
+  },
+  drawerPrimaryBtnText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
   },
 });
 

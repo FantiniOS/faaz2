@@ -27,10 +27,13 @@ import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
 import { RegistrarPesoModal } from "../components/RegistrarPesoModal";
 import {
   api,
+  CelulaMapaGlicemicoItem,
   MeasurementItem,
   GlicemiaHistoricoItem,
   GlicemiaResumoPeriodo,
   IntestinoCheckinItem,
+  MapaGlicemicoResponse,
+  MomentoClinicoGlicemia,
   PacienteTreinosResponse,
 } from "../services/api";
 import {
@@ -142,6 +145,8 @@ export function MetasScreen({
   const [glicemiaHistorico, setGlicemiaHistorico] = useState<
     GlicemiaHistoricoItem[]
   >([]);
+  const [mapaGlicemico, setMapaGlicemico] =
+    useState<MapaGlicemicoResponse | null>(null);
   const [intestinoHistorico, setIntestinoHistorico] = useState<
     IntestinoCheckinItem[]
   >([]);
@@ -206,22 +211,78 @@ export function MetasScreen({
         );
       }
 
-      // Micro-onda 2 (máx. 2 chamadas simultâneas): glicemia + intestino (Bristol)
-      const [glicemiaRes, intestinoRes] = await Promise.allSettled([
-        api.checkins.getHistoricoGlicemia(realPacienteId, 30),
+      // Micro-onda 2 (máx. 2 chamadas simultâneas): mapa glicêmico (7d + protocolo) + intestino (Bristol)
+      const [mapaGlicRes, intestinoRes] = await Promise.allSettled([
+        api.pacientes.getMapaGlicemico(realPacienteId, 7),
         api.checkins.getHistoricoIntestino(realPacienteId, 50),
       ]);
       if (!mountedRef.current) return;
 
-      if (glicemiaRes.status === "fulfilled" && glicemiaRes.value) {
-        if (glicemiaRes.value.resumo) {
-          setGlicemiaResumo(glicemiaRes.value.resumo);
+      if (mapaGlicRes.status === "fulfilled" && mapaGlicRes.value?.success) {
+        const mapa = mapaGlicRes.value;
+        setMapaGlicemico(mapa);
+
+        const r = mapa.resumo;
+        const total = r?.totalMedicoes || 0;
+        const alertas = (r?.episodiosHipo || 0) + (r?.episodiosHiper || 0);
+        const dentro =
+          r?.percentualNoAlvo !== null && r?.percentualNoAlvo !== undefined
+            ? Math.round((r.percentualNoAlvo / 100) * total)
+            : Math.max(0, total - alertas);
+
+        setGlicemiaResumo({
+          media: r?.mediaGeral ?? null,
+          totalMedicoes: total,
+          dentroDaMeta: dentro,
+          alertas,
+        });
+
+        const flatList: GlicemiaHistoricoItem[] = [];
+        for (const linha of mapa.linhas || []) {
+          const cels: CelulaMapaGlicemicoItem[] = [
+            ...(Object.values(linha.celulas).filter(
+              Boolean
+            ) as CelulaMapaGlicemicoItem[]),
+            ...(linha.avulsos || []),
+          ];
+          for (const cel of cels) {
+            const labelSlot: Record<MomentoClinicoGlicemia, string> = {
+              JEJUM: "Jejum",
+              POS_CAFE: "Pós-Café",
+              PRE_ALMOCO: "Pré-Almoço",
+              POS_ALMOCO: "Pós-Almoço",
+              PRE_JANTAR: "Pré-Jantar",
+              POS_JANTAR: "Pós-Jantar",
+              AO_DEITAR: "Ao Deitar",
+              AVULSO: "Avulsa",
+            };
+            const insTxt =
+              cel.insulinaUI && cel.insulinaUI > 0
+                ? ` (+${cel.insulinaUI} UI)`
+                : "";
+            flatList.push({
+              id: cel.id,
+              valor: cel.valor,
+              momento: cel.momentoClinico,
+              momentoClinico: cel.momentoClinico,
+              momentoLegivel: `${labelSlot[cel.momentoClinico] || cel.momentoClinico}${insTxt}`,
+              dataRegistro: cel.dataRegistro,
+              isCritico: cel.status === "HIPO" || cel.status === "HIPER",
+              tipoAlerta:
+                cel.status === "HIPO"
+                  ? "HIPOGLICEMIA"
+                  : cel.status === "HIPER"
+                    ? "HIPERGLICEMIA"
+                    : "NORMAL",
+            });
+          }
         }
-        setGlicemiaHistorico(
-          Array.isArray(glicemiaRes.value.historico)
-            ? glicemiaRes.value.historico
-            : []
+        flatList.sort(
+          (a, b) =>
+            new Date(b.dataRegistro).getTime() -
+            new Date(a.dataRegistro).getTime()
         );
+        setGlicemiaHistorico(flatList);
       }
 
       if (intestinoRes.status === "fulfilled" && intestinoRes.value) {
@@ -639,133 +700,150 @@ export function MetasScreen({
           </View>
 
           {/* ====================================================== */}
-          {/* BLOCO 3: GLICEMIA — ÚLTIMOS 30 DIAS                    */}
+          {/* BLOCO 3: GLICEMIA — EXIBIDO SOMENTE QUANDO ATIVO       */}
           {/* ====================================================== */}
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <View style={styles.cardTitleGroup}>
-                <View style={[styles.iconBox, { backgroundColor: "#fff1f2" }]}>
-                  <HeartPulse size={16} color="#e11d48" />
+          {mapaGlicemico?.protocolo?.ativo ? (
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <View style={styles.cardTitleGroup}>
+                  <View style={[styles.iconBox, { backgroundColor: "#fff1f2" }]}>
+                    <HeartPulse size={16} color="#e11d48" />
+                  </View>
+                  <View>
+                    <Text style={styles.cardTitle}>Glicemia — Últimos 7 dias</Text>
+                    <Text style={styles.cardSubtitle}>
+                      Jejum {mapaGlicemico.protocolo.alvoJejumMin}–
+                      {mapaGlicemico.protocolo.alvoJejumMax} · Pós ≤
+                      {mapaGlicemico.protocolo.alvoPosMax} mg/dL
+                    </Text>
+                  </View>
                 </View>
-                <View>
-                  <Text style={styles.cardTitle}>Glicemia — 30 dias</Text>
-                  <Text style={styles.cardSubtitle}>
-                    Faixa alvo clínica: 70 a 180 mg/dL
+
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => onNavigateToCheckin?.("glicemia")}
+                  style={styles.inlineAddBtn}
+                >
+                  <Plus size={13} color="#0f766e" />
+                  <Text style={styles.inlineAddBtnText}>Registrar</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.kpiRow4}>
+                <View style={styles.kpiBox}>
+                  <Text style={styles.kpiLabel}>Média Jejum</Text>
+                  <Text style={styles.kpiValue}>
+                    {mapaGlicemico.resumo?.mediaJejum !== null &&
+                    mapaGlicemico.resumo?.mediaJejum !== undefined
+                      ? `${mapaGlicemico.resumo.mediaJejum}`
+                      : "--"}
+                  </Text>
+                  <Text style={styles.kpiUnit}>mg/dL</Text>
+                </View>
+                <View style={styles.kpiBox}>
+                  <Text style={styles.kpiLabel}>Média Pós</Text>
+                  <Text style={styles.kpiValue}>
+                    {mapaGlicemico.resumo?.mediaPosPrandial !== null &&
+                    mapaGlicemico.resumo?.mediaPosPrandial !== undefined
+                      ? `${mapaGlicemico.resumo.mediaPosPrandial}`
+                      : "--"}
+                  </Text>
+                  <Text style={styles.kpiUnit}>mg/dL</Text>
+                </View>
+                <View style={styles.kpiBox}>
+                  <Text style={styles.kpiLabel}>No Alvo</Text>
+                  <Text style={[styles.kpiValue, { color: "#047857" }]}>
+                    {mapaGlicemico.resumo?.percentualNoAlvo !== null &&
+                    mapaGlicemico.resumo?.percentualNoAlvo !== undefined
+                      ? `${mapaGlicemico.resumo.percentualNoAlvo}%`
+                      : percGlicemiaNaMeta !== null
+                        ? `${percGlicemiaNaMeta}%`
+                        : "--"}
+                  </Text>
+                  <Text style={styles.kpiUnit}>
+                    {glicemiaResumo.dentroDaMeta} ok
+                  </Text>
+                </View>
+                <View style={styles.kpiBox}>
+                  <Text style={styles.kpiLabel}>Medições</Text>
+                  <Text
+                    style={[
+                      styles.kpiValue,
+                      glicemiaResumo.alertas > 0 && { color: "#be123c" },
+                    ]}
+                  >
+                    {glicemiaResumo.totalMedicoes}
+                  </Text>
+                  <Text style={styles.kpiUnit}>
+                    {glicemiaResumo.alertas > 0
+                      ? `${glicemiaResumo.alertas} alerta(s)`
+                      : "7 dias"}
                   </Text>
                 </View>
               </View>
 
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={() => onNavigateToCheckin?.("glicemia")}
-                style={styles.inlineAddBtn}
-              >
-                <Plus size={13} color="#0f766e" />
-                <Text style={styles.inlineAddBtnText}>Registrar</Text>
-              </TouchableOpacity>
-            </View>
+              {glicemiaHistorico.length > 0 ? (
+                <View style={styles.listContainer}>
+                  {glicemiaHistorico.slice(0, 8).map((item) => (
+                    <View key={item.id} style={styles.listRow}>
+                      <View style={styles.listLeft}>
+                        <View
+                          style={[
+                            styles.dotIndicator,
+                            {
+                              backgroundColor: item.isCritico
+                                ? "#e11d48"
+                                : "#059669",
+                            },
+                          ]}
+                        />
+                        <View>
+                          <Text style={styles.listMainText}>
+                            {item.valor} mg/dL{" "}
+                            <Text style={styles.listSubInline}>
+                              • {item.momentoLegivel || item.momento}
+                            </Text>
+                          </Text>
+                          <Text style={styles.listDateText}>
+                            {formatDataHoraLocal(item.dataRegistro)}
+                          </Text>
+                        </View>
+                      </View>
 
-            <View style={styles.kpiRow4}>
-              <View style={styles.kpiBox}>
-                <Text style={styles.kpiLabel}>Média</Text>
-                <Text style={styles.kpiValue}>
-                  {glicemiaResumo.media !== null
-                    ? `${glicemiaResumo.media}`
-                    : "--"}
-                </Text>
-                <Text style={styles.kpiUnit}>mg/dL</Text>
-              </View>
-              <View style={styles.kpiBox}>
-                <Text style={styles.kpiLabel}>Medições</Text>
-                <Text style={styles.kpiValue}>
-                  {glicemiaResumo.totalMedicoes}
-                </Text>
-                <Text style={styles.kpiUnit}>no período</Text>
-              </View>
-              <View style={styles.kpiBox}>
-                <Text style={styles.kpiLabel}>Na Meta</Text>
-                <Text style={[styles.kpiValue, { color: "#047857" }]}>
-                  {percGlicemiaNaMeta !== null ? `${percGlicemiaNaMeta}%` : "--"}
-                </Text>
-                <Text style={styles.kpiUnit}>
-                  {glicemiaResumo.dentroDaMeta} ok
-                </Text>
-              </View>
-              <View style={styles.kpiBox}>
-                <Text style={styles.kpiLabel}>Alertas</Text>
-                <Text
-                  style={[
-                    styles.kpiValue,
-                    glicemiaResumo.alertas > 0 && { color: "#be123c" },
-                  ]}
-                >
-                  {glicemiaResumo.alertas}
-                </Text>
-                <Text style={styles.kpiUnit}>fora faixa</Text>
-              </View>
-            </View>
-
-            {glicemiaHistorico.length > 0 ? (
-              <View style={styles.listContainer}>
-                {glicemiaHistorico.slice(0, 8).map((item) => (
-                  <View key={item.id} style={styles.listRow}>
-                    <View style={styles.listLeft}>
                       <View
                         style={[
-                          styles.dotIndicator,
-                          {
-                            backgroundColor: item.isCritico
-                              ? "#e11d48"
-                              : "#059669",
-                          },
+                          styles.tinyStatusPill,
+                          item.isCritico
+                            ? { backgroundColor: "#fff1f2" }
+                            : { backgroundColor: "#ecfdf5" },
                         ]}
-                      />
-                      <View>
-                        <Text style={styles.listMainText}>
-                          {item.valor} mg/dL{" "}
-                          <Text style={styles.listSubInline}>
-                            • {item.momentoLegivel || item.momento}
-                          </Text>
-                        </Text>
-                        <Text style={styles.listDateText}>
-                          {formatDataHoraLocal(item.dataRegistro)}
+                      >
+                        {item.isCritico ? (
+                          <AlertTriangle size={11} color="#be123c" />
+                        ) : (
+                          <CheckCircle2 size={11} color="#047857" />
+                        )}
+                        <Text
+                          style={[
+                            styles.tinyStatusText,
+                            { color: item.isCritico ? "#be123c" : "#047857" },
+                          ]}
+                        >
+                          {item.isCritico ? "Alerta" : "No alvo"}
                         </Text>
                       </View>
                     </View>
-
-                    <View
-                      style={[
-                        styles.tinyStatusPill,
-                        item.isCritico
-                          ? { backgroundColor: "#fff1f2" }
-                          : { backgroundColor: "#ecfdf5" },
-                      ]}
-                    >
-                      {item.isCritico ? (
-                        <AlertTriangle size={11} color="#be123c" />
-                      ) : (
-                        <CheckCircle2 size={11} color="#047857" />
-                      )}
-                      <Text
-                        style={[
-                          styles.tinyStatusText,
-                          { color: item.isCritico ? "#be123c" : "#047857" },
-                        ]}
-                      >
-                        {item.isCritico ? "Alerta" : "Normal"}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyText}>
-                  Nenhuma medição de glicemia registrada nos últimos 30 dias.
-                </Text>
-              </View>
-            )}
-          </View>
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.emptyBox}>
+                  <Text style={styles.emptyText}>
+                    Nenhuma medição de glicemia registrada nos últimos 7 dias.
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : null}
 
           {/* ====================================================== */}
           {/* BLOCO 4: PADRÃO INTESTINAL — ESCALA DE BRISTOL         */}

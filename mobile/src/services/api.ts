@@ -91,10 +91,131 @@ export interface GlicemiaHistoricoItem {
   id: string;
   valor: number;
   momento: string;
+  momentoClinico?: MomentoClinicoGlicemia | null;
   momentoLegivel?: string;
+  contextoTags?: string[];
   dataRegistro: string;
   isCritico: boolean;
   tipoAlerta?: "HIPOGLICEMIA" | "HIPERGLICEMIA" | "NORMAL";
+}
+
+export type SlotMapaGlicemico =
+  | "JEJUM"
+  | "POS_CAFE"
+  | "PRE_ALMOCO"
+  | "POS_ALMOCO"
+  | "PRE_JANTAR"
+  | "POS_JANTAR"
+  | "AO_DEITAR";
+
+export type MomentoClinicoGlicemia = SlotMapaGlicemico | "AVULSO";
+
+export type StatusCelulaGlicemia = "HIPO" | "ALVO" | "ATENCAO" | "HIPER";
+
+export type ModoProtocoloGlicemico =
+  | "LIVRE"
+  | "JEJUM"
+  | "PAREADO"
+  | "MAPA_COMPLETO"
+  | "PERSONALIZADO";
+
+export interface ProtocoloGlicemicoItem {
+  pacienteId: string;
+  ativo: boolean;
+  usaInsulina: boolean;
+  modo: ModoProtocoloGlicemico;
+  slotsAtivos: SlotMapaGlicemico[];
+  alvoJejumMin: number;
+  alvoJejumMax: number;
+  alvoPosMax: number;
+  insulinaBasalNome: string | null;
+  insulinaBasalDoseRef: number | null;
+  insulinaBasalHorario: string | null;
+  insulinaRapidaNome: string | null;
+  orientacaoHipo: string | null;
+  orientacaoHiper: string | null;
+  updatedAt: string | null;
+}
+
+export interface CelulaMapaGlicemicoItem {
+  id: string;
+  valor: number;
+  status: StatusCelulaGlicemia;
+  hora: string;
+  dataRegistro: string;
+  momentoClinico: MomentoClinicoGlicemia;
+  insulinaUI?: number | null;
+  insulinaNome?: string | null;
+  contextoTags: string[];
+}
+
+export interface DoseBasalDiaItem {
+  id: string;
+  unidades: number;
+  nome: string | null;
+  hora: string;
+  aplicadoEm: string;
+  observacao: string | null;
+}
+
+export interface LinhaMapaGlicemicoItem {
+  dataDia: string;
+  dataLabel: string;
+  diaSemanaCurto: string;
+  celulas: Partial<Record<SlotMapaGlicemico, CelulaMapaGlicemicoItem>>;
+  avulsos: CelulaMapaGlicemicoItem[];
+  basalDoses: DoseBasalDiaItem[];
+}
+
+export interface ResumoMapaGlicemicoItem {
+  mediaGeral: number | null;
+  mediaJejum: number | null;
+  mediaPosPrandial: number | null;
+  percentualNoAlvo: number | null;
+  episodiosHipo: number;
+  episodiosHiper: number;
+  totalMedicoes: number;
+  totalAplicacoesInsulina: number;
+  mediaDiariaBasalUI: number | null;
+  mediaDiariaRapidaUI: number | null;
+}
+
+export interface MapaGlicemicoResponse {
+  success: boolean;
+  dias: number;
+  hojeDataDia: string;
+  protocolo: ProtocoloGlicemicoItem;
+  resumo: ResumoMapaGlicemicoItem;
+  linhas: LinhaMapaGlicemicoItem[];
+  mediasPorColuna: Record<SlotMapaGlicemico, number | null>;
+}
+
+export interface ProtocoloGlicemicoResponse {
+  success: boolean;
+  protocolo: ProtocoloGlicemicoItem;
+}
+
+export interface RegistrarGlicemiaPayload {
+  pacienteId: string;
+  valor: number;
+  momento?: string;
+  momentoClinico?: MomentoClinicoGlicemia;
+  contextoTags?: string[];
+  insulina?: {
+    tipo?: "RAPIDA" | "BASAL";
+    unidades: number;
+    nome?: string | null;
+    observacao?: string | null;
+  } | null;
+}
+
+export interface RegistrarInsulinaPayload {
+  pacienteId: string;
+  tipo?: "BASAL" | "RAPIDA";
+  unidades: number;
+  nome?: string | null;
+  momentoClinico?: MomentoClinicoGlicemia | null;
+  observacao?: string | null;
 }
 
 export interface GlicemiaResumoPeriodo {
@@ -590,6 +711,22 @@ export const api = {
     getMetas(pacienteId: string) {
       return api.get(`/pacientes/${encodeURIComponent(pacienteId)}/metas`);
     },
+    getProtocoloGlicemico(
+      pacienteId: string
+    ): Promise<ProtocoloGlicemicoResponse> {
+      return api.get<ProtocoloGlicemicoResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/protocolo-glicemico`
+      );
+    },
+    getMapaGlicemico(
+      pacienteId: string,
+      dias: number = 7
+    ): Promise<MapaGlicemicoResponse> {
+      return api.get<MapaGlicemicoResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/mapa-glicemico`,
+        { params: { dias } }
+      );
+    },
     getProximaConsulta(pacienteId: string): Promise<ProximaConsultaResponse> {
       return api.get<ProximaConsultaResponse>(
         `/pacientes/${encodeURIComponent(pacienteId)}/proxima-consulta`
@@ -707,12 +844,16 @@ export const api = {
         params: pacienteId ? { pacienteId } : undefined,
       });
     },
-    registrarGlicemia(payload: {
-      pacienteId: string;
-      valor: number;
-      momento: string;
-    }) {
+    registrarGlicemia(payload: RegistrarGlicemiaPayload) {
       return api.post("/checkins/glicemia", payload);
+    },
+    registrarInsulina(payload: RegistrarInsulinaPayload) {
+      return api.post("/checkins/insulina", payload);
+    },
+    getInsulinaHoje(pacienteId: string, dias: number = 7) {
+      return api.get("/checkins/insulina", {
+        params: { pacienteId, dias },
+      });
     },
     getHistoricoGlicemia(pacienteId: string, dias: number = 30) {
       return api.get<GlicemiaHistoricoResponse>("/checkins/glicemia", {
