@@ -7,12 +7,10 @@ import {
   StyleSheet,
   ActivityIndicator,
   RefreshControl,
-  Share,
   Alert,
 } from "react-native";
 import {
   Utensils,
-  ShoppingBag,
   Clock,
   Check,
   CheckCircle2,
@@ -21,9 +19,6 @@ import {
   FileText,
   ChevronDown,
   ChevronUp,
-  Share2,
-  CheckSquare,
-  Square,
   Sparkles,
   AlertCircle,
   RotateCcw,
@@ -40,10 +35,7 @@ import {
 } from "../services/api";
 import {
   calcularTotaisEfetivosRefeicao,
-  consolidarListaCompras,
   formatHorarioCurto,
-  formatNumeroPtBr,
-  gerarTextoCompartilhamentoCompras,
   getItemEfetivo,
   selecionarRefeicaoMaisProximaAgora,
 } from "../utils/dietaHelpers";
@@ -54,8 +46,6 @@ export interface DietaScreenProps {
   onBack?: () => void;
   onTabPress?: (tab: string) => void;
 }
-
-type SubAbaDieta = "cardapio" | "compras";
 
 function getNomeCurtoRefeicao(nome?: string | null): string {
   const clean = (nome || "Refeição").trim();
@@ -122,15 +112,11 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
     recarregarDiario,
   } = useDiarioAlimentar();
 
-  const [subAba, setSubAba] = useState<SubAbaDieta>("cardapio");
   const [refeicaoSelecionadaId, setRefeicaoSelecionadaId] = useState<
     string | null
   >(null);
   const [refreshing, setRefreshing] = useState(false);
   const [resumoAberto, setResumoAberto] = useState(false);
-  const [itensCarrinho, setItensCarrinho] = useState<Record<string, boolean>>(
-    {}
-  );
 
   // Controle do modal de substituições 1:N
   const [itemModalTroca, setItemModalTroca] = useState<{
@@ -198,22 +184,6 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
     return calcularTotaisEfetivosRefeicao(refeicaoAtiva, trocasSelecionadas);
   }, [refeicaoAtiva, trocasSelecionadas]);
 
-  // Lista de compras consolidada automaticamente da variação ativa
-  const listaCompras = useMemo(
-    () => consolidarListaCompras(variacaoAtiva, trocasSelecionadas),
-    [variacaoAtiva, trocasSelecionadas]
-  );
-
-  const totalCarrinhoMarcados = useMemo(
-    () => listaCompras.filter((i) => Boolean(itensCarrinho[i.chave])).length,
-    [listaCompras, itensCarrinho]
-  );
-
-  const temTrocasNaListaCompras = useMemo(
-    () => listaCompras.some((i) => i.origemTroca),
-    [listaCompras]
-  );
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -236,33 +206,6 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
     },
     [refeicaoAtiva, registrarCheckinRefeicao]
   );
-
-  const handleToggleItemCarrinho = useCallback((chave: string) => {
-    setItensCarrinho((prev) => ({
-      ...prev,
-      [chave]: !prev[chave],
-    }));
-  }, []);
-
-  const handleCompartilharCompras = useCallback(async () => {
-    if (listaCompras.length === 0) return;
-    const tituloPlano =
-      plano?.titulo || plano?.nome || "Plano Alimentar";
-    const mensagem = gerarTextoCompartilhamentoCompras(
-      tituloPlano,
-      variacoes.length > 1 ? variacaoAtiva?.nome : null,
-      listaCompras,
-      itensCarrinho
-    );
-    try {
-      await Share.share({
-        title: "Lista de Compras — Clínica FAAZ",
-        message: mensagem,
-      });
-    } catch {
-      // Usuário cancelou ou share indisponível
-    }
-  }, [listaCompras, plano, variacoes.length, variacaoAtiva?.nome, itensCarrinho]);
 
   const medicoResponsavel =
     pacienteDieta?.medico?.trim() || "Equipe Clínica FAAZ";
@@ -317,73 +260,9 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
         rightElement={headerBadgeAdesao}
       />
 
-      {/* 2. SELETOR SEGMENTADO COMPACTO: CARDÁPIO | COMPRAS */}
-      <View style={styles.topControlsWrap}>
-        <View style={styles.segmentedTrack}>
-          <TouchableOpacity
-            activeOpacity={0.82}
-            onPress={() => setSubAba("cardapio")}
-            style={[
-              styles.segmentedBtn,
-              subAba === "cardapio" && styles.segmentedBtnActive,
-            ]}
-          >
-            <Utensils
-              size={14}
-              color={subAba === "cardapio" ? "#0f766e" : "#64748b"}
-            />
-            <Text
-              style={[
-                styles.segmentedText,
-                subAba === "cardapio" && styles.segmentedTextActive,
-              ]}
-            >
-              Cardápio
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.82}
-            onPress={() => setSubAba("compras")}
-            style={[
-              styles.segmentedBtn,
-              subAba === "compras" && styles.segmentedBtnActive,
-            ]}
-          >
-            <ShoppingBag
-              size={14}
-              color={subAba === "compras" ? "#0f766e" : "#64748b"}
-            />
-            <Text
-              style={[
-                styles.segmentedText,
-                subAba === "compras" && styles.segmentedTextActive,
-              ]}
-            >
-              Compras
-            </Text>
-            {listaCompras.length > 0 ? (
-              <View
-                style={[
-                  styles.segmentedCountPill,
-                  subAba === "compras" && styles.segmentedCountPillActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.segmentedCountText,
-                    subAba === "compras" && styles.segmentedCountTextActive,
-                  ]}
-                >
-                  {listaCompras.length}
-                </Text>
-              </View>
-            ) : null}
-          </TouchableOpacity>
-        </View>
-
-        {/* Pílulas discretas de variação (exibidas apenas quando houver > 1 variação) */}
-        {variacoes.length > 1 ? (
+      {/* 2. PÍLULAS DISCRETAS DE VARIAÇÃO (EXIBIDAS APENAS QUANDO HOUVER > 1 OPÇÃO) */}
+      {variacoes.length > 1 ? (
+        <View style={styles.topControlsWrap}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -413,8 +292,8 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
               );
             })}
           </ScrollView>
-        ) : null}
-      </View>
+        </View>
+      ) : null}
 
       {/* 3. CORPO PRINCIPAL */}
       {carregando && !plano ? (
@@ -459,9 +338,9 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
             suas refeições e trocas aparecerão aqui automaticamente.
           </Text>
         </ScrollView>
-      ) : subAba === "cardapio" ? (
+      ) : (
         /* ============================================================== */
-        /* ABA 1: CARDÁPIO — MODO "AGORA" + LINHA DO TEMPO + CHECK-IN 3s  */
+        /* CARDÁPIO — MODO "AGORA" + LINHA DO TEMPO + CHECK-IN 3s         */
         /* ============================================================== */
         <ScrollView
           style={styles.scrollView}
@@ -906,148 +785,6 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
             Prescrição acompanhada por {medicoResponsavel}
           </Text>
         </ScrollView>
-      ) : (
-        /* ============================================================== */
-        /* ABA 2: COMPRAS — LISTA CONSOLIDADA AUTOMÁTICA + SHARE NATIVO   */
-        /* ============================================================== */
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#0f766e"
-              colors={["#0f766e"]}
-            />
-          }
-        >
-          {/* Cabeçalho da Lista de Compras */}
-          <View style={styles.shoppingHeroCard}>
-            <View style={styles.shoppingHeroTop}>
-              <View style={{ flex: 1, paddingRight: 10 }}>
-                <Text style={styles.shoppingTitle}>Lista de Compras do Dia</Text>
-                <Text style={styles.shoppingSubtitle}>
-                  {variacaoAtiva?.nome
-                    ? `${variacaoAtiva.nome} · ${listaCompras.length} itens consolidados`
-                    : `${listaCompras.length} itens consolidados`}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                activeOpacity={0.82}
-                onPress={handleCompartilharCompras}
-                disabled={listaCompras.length === 0}
-                style={[
-                  styles.shareBtn,
-                  listaCompras.length === 0 && styles.shareBtnDisabled,
-                ]}
-              >
-                <Share2 size={14} color="#ffffff" />
-                <Text style={styles.shareBtnText}>Compartilhar lista</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.shoppingMetaRow}>
-              <Text style={styles.shoppingCountLabel}>
-                {totalCarrinhoMarcados} de {listaCompras.length} no carrinho
-              </Text>
-
-              {temTrocasNaListaCompras ? (
-                <View style={styles.shoppingSwapHint}>
-                  <ArrowLeftRight size={11} color="#0e7490" />
-                  <Text style={styles.shoppingSwapHintText}>
-                    Com suas trocas
-                  </Text>
-                </View>
-              ) : null}
-
-              {totalCarrinhoMarcados > 0 ? (
-                <TouchableOpacity
-                  activeOpacity={0.75}
-                  onPress={() => setItensCarrinho({})}
-                >
-                  <Text style={styles.clearCheckedText}>Limpar</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          </View>
-
-          {/* Lista Interativa de Compras */}
-          <View style={styles.shoppingListCard}>
-            {listaCompras.length === 0 ? (
-              <View style={styles.noItemsBox}>
-                <Text style={styles.noItemsText}>
-                  Nenhum item disponível para gerar lista de compras.
-                </Text>
-              </View>
-            ) : (
-              listaCompras.map((item, idx) => {
-                const checked = Boolean(itensCarrinho[item.chave]);
-                const isLast = idx === listaCompras.length - 1;
-                const qtdTexto = `${formatNumeroPtBr(item.quantidadeTotal)} ${item.unidade}`;
-
-                return (
-                  <TouchableOpacity
-                    key={item.chave}
-                    activeOpacity={0.78}
-                    onPress={() => handleToggleItemCarrinho(item.chave)}
-                    style={[
-                      styles.shoppingItemRow,
-                      !isLast && styles.foodItemDivider,
-                      checked && styles.shoppingItemRowChecked,
-                    ]}
-                  >
-                    {checked ? (
-                      <CheckSquare size={20} color="#059669" />
-                    ) : (
-                      <Square size={20} color="#94a3b8" />
-                    )}
-
-                    <FoodThumbnail
-                      nome={item.nome}
-                      categoria={item.categoria}
-                      imageUrl={item.thumbnailUrl}
-                      size={38}
-                      style={[styles.shoppingThumb, checked && { opacity: 0.55 }]}
-                    />
-
-                    <View style={styles.shoppingItemTextCol}>
-                      <View style={styles.shoppingNameLine}>
-                        <Text
-                          style={[
-                            styles.shoppingItemName,
-                            checked && styles.shoppingItemNameChecked,
-                          ]}
-                          numberOfLines={2}
-                        >
-                          {item.nome}
-                        </Text>
-                        {item.origemTroca ? (
-                          <View style={styles.shoppingSwapBadge}>
-                            <Text style={styles.shoppingSwapBadgeText}>
-                              Troca
-                            </Text>
-                          </View>
-                        ) : null}
-                      </View>
-
-                      <Text style={styles.shoppingItemDetail}>
-                        {qtdTexto}
-                        {item.ocorrencias > 1
-                          ? ` · ${item.ocorrencias} refeições`
-                          : item.medidaCaseiraHint
-                            ? ` · ${item.medidaCaseiraHint}`
-                            : ""}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })
-            )}
-          </View>
-        </ScrollView>
       )}
 
       {/* MODAL BOTTOM SHEET DE SUBSTITUIÇÕES 1:N EM 1 TOQUE */}
@@ -1103,62 +840,9 @@ const styles = StyleSheet.create({
   topControlsWrap: {
     backgroundColor: "#ffffff",
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: "#e2e8f0",
-    gap: 10,
-  },
-  segmentedTrack: {
-    flexDirection: "row",
-    backgroundColor: "#f1f5f9",
-    borderRadius: 12,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  segmentedBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 8,
-    borderRadius: 9,
-  },
-  segmentedBtnActive: {
-    backgroundColor: "#ffffff",
-    shadowColor: "#0f172a",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  segmentedText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#64748b",
-  },
-  segmentedTextActive: {
-    color: "#0f172a",
-    fontWeight: "700",
-  },
-  segmentedCountPill: {
-    backgroundColor: "#e2e8f0",
-    borderRadius: 999,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-  },
-  segmentedCountPillActive: {
-    backgroundColor: "#ccfbf1",
-  },
-  segmentedCountText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#475569",
-  },
-  segmentedCountTextActive: {
-    color: "#0f766e",
   },
   variationsRow: {
     flexDirection: "row",
@@ -1659,137 +1343,5 @@ const styles = StyleSheet.create({
     color: "#94a3b8",
     textAlign: "center",
     marginTop: 2,
-  },
-  // Aba Compras
-  shoppingHeroCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    padding: 15,
-    gap: 12,
-  },
-  shoppingHeroTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  shoppingTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  shoppingSubtitle: {
-    fontSize: 12,
-    color: "#64748b",
-    marginTop: 2,
-  },
-  shareBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#0f766e",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 11,
-  },
-  shareBtnDisabled: {
-    opacity: 0.45,
-  },
-  shareBtnText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  shoppingMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    gap: 8,
-  },
-  shoppingCountLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#475569",
-  },
-  shoppingSwapHint: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#ecfeff",
-    borderWidth: 1,
-    borderColor: "#a5f3fc",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  shoppingSwapHintText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#0e7490",
-  },
-  clearCheckedText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#0f766e",
-  },
-  shoppingListCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    paddingHorizontal: 14,
-  },
-  shoppingItemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 11,
-    paddingVertical: 12,
-  },
-  shoppingItemRowChecked: {
-    opacity: 0.72,
-  },
-  shoppingThumb: {
-    borderRadius: 9,
-  },
-  shoppingItemTextCol: {
-    flex: 1,
-    gap: 2,
-  },
-  shoppingNameLine: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  shoppingItemName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#0f172a",
-  },
-  shoppingItemNameChecked: {
-    textDecorationLine: "line-through",
-    color: "#64748b",
-  },
-  shoppingSwapBadge: {
-    backgroundColor: "#ecfeff",
-    borderWidth: 1,
-    borderColor: "#a5f3fc",
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 999,
-  },
-  shoppingSwapBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#0e7490",
-  },
-  shoppingItemDetail: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0f766e",
   },
 });

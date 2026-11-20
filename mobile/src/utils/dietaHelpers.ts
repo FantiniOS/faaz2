@@ -5,7 +5,6 @@ import {
   RefeicaoApi,
   SubstituicaoPrescritaItem,
   UnidadeMedidaDieta,
-  VariacaoDietaApi,
 } from "../services/api";
 
 export interface TrocaSelecionadaItem {
@@ -47,18 +46,6 @@ export interface ProgressoRefeicoesDia {
   totalConcluidas: number;
   percentualAdesao: number;
   pilarAtivo: boolean;
-}
-
-export interface ItemListaCompras {
-  chave: string;
-  nome: string;
-  quantidadeTotal: number;
-  unidade: UnidadeMedidaDieta;
-  medidaCaseiraHint: string | null;
-  ocorrencias: number;
-  thumbnailUrl: string | null;
-  categoria: string | null;
-  origemTroca: boolean;
 }
 
 export function formatNumeroPtBr(valor: number): string {
@@ -480,106 +467,4 @@ export function montarTrocasPayloadRefeicao(
   }
 
   return lista;
-}
-
-function normalizarChaveAlimento(texto: string): string {
-  return texto
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Consolida automaticamente todos os itens da variação selecionada para a aba Compras,
- * refletindo as trocas escolhidas pelo paciente e somando quantidades do mesmo alimento/unidade.
- */
-export function consolidarListaCompras(
-  variacao: VariacaoDietaApi | null | undefined,
-  trocasSelecionadas: Record<string, string>
-): ItemListaCompras[] {
-  if (!variacao || !Array.isArray(variacao.refeicoes)) return [];
-
-  const agrupado = new Map<string, ItemListaCompras>();
-
-  for (const ref of variacao.refeicoes) {
-    const itens = Array.isArray(ref.itens) ? ref.itens : [];
-    for (const item of itens) {
-      const eff = getItemEfetivo(item, trocasSelecionadas);
-      const chave = `${normalizarChaveAlimento(eff.nome)}|${eff.unidade}`;
-      const existente = agrupado.get(chave);
-
-      if (existente) {
-        existente.quantidadeTotal =
-          Math.round((existente.quantidadeTotal + eff.quantidade) * 10) / 10;
-        existente.ocorrencias += 1;
-        existente.medidaCaseiraHint = null; // Várias refeições somadas: exibe total consolidado
-        if (eff.isTrocado) existente.origemTroca = true;
-        if (!existente.thumbnailUrl && eff.thumbnailUrl) {
-          existente.thumbnailUrl = eff.thumbnailUrl;
-        }
-      } else {
-        agrupado.set(chave, {
-          chave,
-          nome: eff.nome,
-          quantidadeTotal: eff.quantidade,
-          unidade: eff.unidade,
-          medidaCaseiraHint: eff.medidaCaseira,
-          ocorrencias: 1,
-          thumbnailUrl: eff.thumbnailUrl,
-          categoria: eff.categoria,
-          origemTroca: eff.isTrocado,
-        });
-      }
-    }
-  }
-
-  return Array.from(agrupado.values()).sort((a, b) =>
-    a.nome.localeCompare(b.nome, "pt-BR")
-  );
-}
-
-/**
- * Gera texto formatado pronto para compartilhar via WhatsApp / Share nativo.
- */
-export function gerarTextoCompartilhamentoCompras(
-  tituloPlano: string,
-  nomeVariacao: string | null | undefined,
-  itens: ItemListaCompras[],
-  marcados: Record<string, boolean>
-): string {
-  const cabecalho = nomeVariacao
-    ? `Lista de Compras — ${tituloPlano} (${nomeVariacao})`
-    : `Lista de Compras — ${tituloPlano}`;
-
-  const pendentes = itens.filter((i) => !marcados[i.chave]);
-  const noCarrinho = itens.filter((i) => Boolean(marcados[i.chave]));
-
-  const linhas: string[] = [cabecalho, ""];
-
-  if (pendentes.length > 0) {
-    for (const item of pendentes) {
-      const qtd = `${formatNumeroPtBr(item.quantidadeTotal)} ${item.unidade}`;
-      const extra =
-        item.ocorrencias === 1 && item.medidaCaseiraHint
-          ? ` (${item.medidaCaseiraHint})`
-          : item.ocorrencias > 1
-            ? ` (${item.ocorrencias} porções/dia)`
-            : "";
-      linhas.push(`• ${item.nome} — ${qtd}${extra}`);
-    }
-  }
-
-  if (noCarrinho.length > 0) {
-    if (pendentes.length > 0) linhas.push("");
-    linhas.push("Já separados:");
-    for (const item of noCarrinho) {
-      const qtd = `${formatNumeroPtBr(item.quantidadeTotal)} ${item.unidade}`;
-      linhas.push(`✓ ${item.nome} — ${qtd}`);
-    }
-  }
-
-  linhas.push("", "Clínica FAAZ • Guia da Dieta");
-  return linhas.join("\n");
 }
