@@ -121,9 +121,13 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/api/checkin-intestinal") ||
     (pathname.startsWith("/api/pacientes/") &&
       request.method === "GET" &&
-      !pathname.includes("/termometro")) ||
+      !pathname.includes("/termometro") &&
+      !pathname.endsWith("/pacotes")) ||
     (pathname.startsWith("/api/pacientes/") &&
       pathname.endsWith("/proxima-consulta")) ||
+    (pathname.startsWith("/api/pacientes/") &&
+      pathname.endsWith("/plano-resumo") &&
+      request.method === "GET") ||
     (pathname.startsWith("/api/pacientes/") &&
       pathname.includes("/dieta")) ||
     (pathname.startsWith("/api/pacientes/") &&
