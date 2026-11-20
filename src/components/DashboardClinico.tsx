@@ -13,7 +13,6 @@ import {
   Dumbbell,
   Gauge,
   HeartPulse,
-  Moon,
   Radio,
   RefreshCw,
   RotateCcw,
@@ -22,7 +21,6 @@ import {
   ShieldAlert,
   SlidersHorizontal,
   Sparkles,
-  Sun,
   TrendingDown,
   TrendingUp,
   Users,
@@ -73,8 +71,6 @@ interface DashboardClinicoProps {
   isLoadingUser?: boolean;
 }
 
-type ThemeMode = "obsidian" | "light";
-
 interface ModulosVisiveis {
   hero: boolean;
   glicemia_dieta: boolean;
@@ -110,7 +106,10 @@ const PERIODOS_OPCOES: Array<{ key: PeriodoTelemetria; label: string }> = [
 ];
 
 const STORAGE_PREFS_KEY = "faaz_command_center_prefs_v1";
-const STORAGE_THEME_KEY = "faaz_command_center_theme_v1";
+
+function pluralizar(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
 
 function getSaudacaoHora(): string {
   const h = getPartesDataHoraBR().hour;
@@ -143,17 +142,15 @@ function formatDeltaSinal(val: number | null, sufixo: string): string {
 }
 
 /**
- * Container Bento com efeito hover spotlight radial sutil e entrada escalonada.
+ * Container Bento Clinical Light com efeito hover spotlight radial sutil e entrada escalonada.
  */
 function BentoCard({
   children,
   className = "",
-  isObsidian,
   delay = 0,
 }: {
   children: React.ReactNode;
   className?: string;
-  isObsidian: boolean;
   delay?: number;
 }) {
   const [spot, setSpot] = useState<{ x: number; y: number; visible: boolean }>({
@@ -178,19 +175,13 @@ function BentoCard({
       transition={{ duration: 0.42, delay, ease: [0.22, 1, 0.36, 1] }}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => setSpot((s) => ({ ...s, visible: false }))}
-      className={`relative overflow-hidden rounded-2xl border transition-colors ${
-        isObsidian
-          ? "bg-[#0B1324]/95 border-white/10 hover:border-emerald-400/30 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.75)]"
-          : "bg-white border-slate-200/90 hover:border-teal-300 shadow-xs hover:shadow-md"
-      } ${className}`}
+      className={`relative overflow-hidden rounded-2xl border bg-white border-slate-200/80 hover:border-emerald-300/80 shadow-xs hover:shadow-md transition-all ${className}`}
     >
       {spot.visible ? (
         <div
           className="pointer-events-none absolute -inset-px transition-opacity duration-300"
           style={{
-            background: isObsidian
-              ? `radial-gradient(420px circle at ${spot.x}px ${spot.y}px, rgba(16, 185, 129, 0.09), transparent 55%)`
-              : `radial-gradient(420px circle at ${spot.x}px ${spot.y}px, rgba(13, 148, 136, 0.06), transparent 55%)`,
+            background: `radial-gradient(420px circle at ${spot.x}px ${spot.y}px, rgba(16, 185, 129, 0.055), transparent 55%)`,
           }}
         />
       ) : null}
@@ -200,7 +191,7 @@ function BentoCard({
 }
 
 /**
- * Tooltip Glassmorphism Escuro para a Curva de Pulso do Ecossistema.
+ * Tooltip Clinical Light para a Curva de Pulso do Ecossistema.
  */
 function PulseTooltip({
   active,
@@ -212,35 +203,35 @@ function PulseTooltip({
   if (!active || !payload || payload.length === 0) return null;
   const pt = payload[0].payload;
   return (
-    <div className="rounded-xl bg-[#070D19]/95 backdrop-blur-md border border-white/15 px-3.5 py-2.5 shadow-2xl text-xs text-slate-100 min-w-[168px]">
-      <div className="flex items-center justify-between gap-3 pb-1.5 mb-1.5 border-b border-white/10">
-        <span className="text-[11px] font-bold text-slate-300">
+    <div className="rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 px-3.5 py-2.5 shadow-lg text-xs text-slate-800 min-w-[172px]">
+      <div className="flex items-center justify-between gap-3 pb-1.5 mb-1.5 border-b border-slate-100">
+        <span className="text-[11px] font-bold text-slate-700">
           {pt.dataLabel}
         </span>
-        <span className="text-xs font-black font-mono text-emerald-400 tabular-nums">
-          {pt.totalInteracoes} sinais
+        <span className="text-xs font-black font-mono text-emerald-600 tabular-nums">
+          {pluralizar(pt.totalInteracoes, "sinal", "sinais")}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-300">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-600">
         <span className="flex items-center justify-between">
-          <span className="text-slate-400">Dieta</span>
-          <strong className="font-mono text-emerald-300">{pt.dieta}</strong>
+          <span className="text-slate-500">Dieta</span>
+          <strong className="font-mono text-emerald-600">{pt.dieta}</strong>
         </span>
         <span className="flex items-center justify-between">
-          <span className="text-slate-400">Glicemia</span>
-          <strong className="font-mono text-rose-300">{pt.glicemia}</strong>
+          <span className="text-slate-500">Glicemia</span>
+          <strong className="font-mono text-rose-600">{pt.glicemia}</strong>
         </span>
         <span className="flex items-center justify-between">
-          <span className="text-slate-400">Bristol</span>
-          <strong className="font-mono text-amber-300">{pt.intestino}</strong>
+          <span className="text-slate-500">Bristol</span>
+          <strong className="font-mono text-amber-600">{pt.intestino}</strong>
         </span>
         <span className="flex items-center justify-between">
-          <span className="text-slate-400">Treinos</span>
-          <strong className="font-mono text-cyan-300">{pt.treinos}</strong>
+          <span className="text-slate-500">Treinos</span>
+          <strong className="font-mono text-teal-600">{pt.treinos}</strong>
         </span>
         <span className="flex items-center justify-between col-span-2">
-          <span className="text-slate-400">Pesagens</span>
-          <strong className="font-mono text-sky-300">{pt.pesagens}</strong>
+          <span className="text-slate-500">Pesagens</span>
+          <strong className="font-mono text-sky-600">{pt.pesagens}</strong>
         </span>
       </div>
     </div>
@@ -248,7 +239,7 @@ function PulseTooltip({
 }
 
 /**
- * Tooltip Glassmorphism para Histograma de Bristol.
+ * Tooltip Clinical Light para Histograma de Bristol.
  */
 function BristolTooltip({
   active,
@@ -266,13 +257,19 @@ function BristolTooltip({
 }) {
   if (!active || !payload || payload.length === 0) return null;
   const item = payload[0].payload;
+  const zonaColor =
+    item.zona === "Zona Ideal"
+      ? "text-emerald-600"
+      : item.zona === "Constipação"
+        ? "text-amber-600"
+        : "text-rose-600";
   return (
-    <div className="rounded-xl bg-[#070D19]/95 backdrop-blur-md border border-white/15 px-3 py-2 shadow-2xl text-xs text-slate-100">
-      <p className="font-bold text-white">
-        {item.rotulo} · <span className="text-emerald-400">{item.zona}</span>
+    <div className="rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 px-3 py-2 shadow-lg text-xs text-slate-800">
+      <p className="font-bold text-slate-900">
+        {item.rotulo} · <span className={zonaColor}>{item.zona}</span>
       </p>
-      <p className="text-[11px] text-slate-300 mt-0.5 font-mono tabular-nums">
-        {item.quantidade} registro(s)
+      <p className="text-[11px] text-slate-600 mt-0.5 font-mono tabular-nums">
+        {pluralizar(item.quantidade, "registro", "registros")}
       </p>
     </div>
   );
@@ -281,20 +278,20 @@ function BristolTooltip({
 function FeedEventIcon({ tipo }: { tipo: LiveFeedItem["tipo"] }) {
   switch (tipo) {
     case "GLICEMIA":
-      return <HeartPulse className="w-3.5 h-3.5 text-rose-400" />;
+      return <HeartPulse className="w-3.5 h-3.5 text-rose-500" />;
     case "DIETA":
-      return <Utensils className="w-3.5 h-3.5 text-emerald-400" />;
+      return <Utensils className="w-3.5 h-3.5 text-emerald-600" />;
     case "INTESTINO":
-      return <Activity className="w-3.5 h-3.5 text-amber-400" />;
+      return <Activity className="w-3.5 h-3.5 text-amber-500" />;
     case "PESAGEM":
-      return <Scale className="w-3.5 h-3.5 text-sky-400" />;
+      return <Scale className="w-3.5 h-3.5 text-sky-600" />;
     case "MEDIDAS":
-      return <Ruler className="w-3.5 h-3.5 text-indigo-400" />;
+      return <Ruler className="w-3.5 h-3.5 text-indigo-500" />;
     case "TREINO":
-      return <Dumbbell className="w-3.5 h-3.5 text-teal-400" />;
+      return <Dumbbell className="w-3.5 h-3.5 text-teal-600" />;
     case "HIDRATACAO":
     default:
-      return <Droplets className="w-3.5 h-3.5 text-cyan-400" />;
+      return <Droplets className="w-3.5 h-3.5 text-cyan-600" />;
   }
 }
 
@@ -306,7 +303,6 @@ export function DashboardClinico({
   const [objetivoHero, setObjetivoHero] = useState<
     "emagrecimento" | "hipertrofia"
   >("emagrecimento");
-  const [theme, setTheme] = useState<ThemeMode>("obsidian");
   const [modulos, setModulos] = useState<ModulosVisiveis>(DEFAULT_MODULOS);
   const [isCustomizingOpen, setIsCustomizingOpen] = useState(false);
 
@@ -329,17 +325,13 @@ export function DashboardClinico({
 
   const customizerRef = useRef<HTMLDivElement | null>(null);
 
-  // Hidrata preferências persistidas no localStorage (somente no cliente)
+  // Hidrata preferências de módulos persistidas no localStorage (somente no cliente)
   useEffect(() => {
     let ativo = true;
     async function hydratePrefs() {
       await Promise.resolve();
       if (!ativo || typeof window === "undefined") return;
       try {
-        const savedTheme = window.localStorage.getItem(STORAGE_THEME_KEY);
-        if (savedTheme === "obsidian" || savedTheme === "light") {
-          setTheme(savedTheme);
-        }
         const savedPrefs = window.localStorage.getItem(STORAGE_PREFS_KEY);
         if (savedPrefs) {
           const parsed = JSON.parse(savedPrefs) as Partial<ModulosVisiveis>;
@@ -369,18 +361,6 @@ export function DashboardClinico({
     document.addEventListener("mousedown", handleOutside);
     return () => document.removeEventListener("mousedown", handleOutside);
   }, [isCustomizingOpen]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => {
-      const next: ThemeMode = prev === "obsidian" ? "light" : "obsidian";
-      try {
-        window.localStorage.setItem(STORAGE_THEME_KEY, next);
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
 
   const toggleModulo = useCallback((key: keyof ModulosVisiveis) => {
     setModulos((prev) => {
@@ -500,8 +480,6 @@ export function DashboardClinico({
     });
   }, []);
 
-  const isObsidian = theme === "obsidian";
-
   // Dados formatados para o Histograma Bristol 1–7
   const bristolChartData = useMemo(() => {
     const h = dados?.intestino.histograma;
@@ -587,6 +565,13 @@ export function DashboardClinico({
     ).length;
   }, [dados]);
 
+  const totalSinaisPeriodo = useMemo(() => {
+    return (dados?.serieAtividade || []).reduce(
+      (acc, p) => acc + p.totalInteracoes,
+      0
+    );
+  }, [dados]);
+
   const nomeProfissional = user?.nome?.trim() || null;
   const saudacaoCompleta = isLoadingUser
     ? `${getSaudacaoHora()}`
@@ -594,15 +579,11 @@ export function DashboardClinico({
       ? `${getSaudacaoHora()}, ${nomeProfissional}`
       : `${getSaudacaoHora()} · Painel Clínico FAAZ`;
 
-  const subText = isObsidian ? "text-slate-400" : "text-slate-500";
-  const headingText = isObsidian ? "text-white" : "text-slate-900";
+  const subText = "text-slate-500";
+  const headingText = "text-slate-900";
 
   return (
-    <div
-      className={`min-h-screen flex flex-col transition-colors duration-300 ${
-        isObsidian ? "bg-[#060B14] text-slate-100" : "bg-slate-50 text-slate-900"
-      }`}
-    >
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       {/* BARRA SUPERIOR OFICIAL PRESERVADA (Início, Pacientes, Agenda, Configurações) */}
       <TopMenu activePath="/dashboard" />
 
@@ -614,13 +595,7 @@ export function DashboardClinico({
           {/* Esquerda: Saudação real + Badge AO VIVO ORACLE ADB */}
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2.5">
-              <div
-                className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest border ${
-                  isObsidian
-                    ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/25"
-                    : "bg-emerald-50 text-emerald-800 border-emerald-200"
-                }`}
-              >
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest border bg-emerald-50 text-emerald-800 border-emerald-200">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
@@ -641,14 +616,10 @@ export function DashboardClinico({
                 }}
                 disabled={isRefreshing}
                 title="Atualizar telemetria agora"
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer disabled:opacity-50 ${
-                  isObsidian
-                    ? "bg-white/5 border-white/10 text-slate-300 hover:text-white hover:border-emerald-400/40"
-                    : "bg-white border-slate-200 text-slate-600 hover:text-teal-700 hover:border-teal-300"
-                }`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold border bg-white border-slate-200 text-slate-600 hover:text-emerald-700 hover:border-emerald-300 transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
               >
                 <RefreshCw
-                  className={`w-3 h-3 ${isRefreshing ? "animate-spin text-emerald-400" : ""}`}
+                  className={`w-3 h-3 ${isRefreshing ? "animate-spin text-emerald-600" : ""}`}
                 />
                 <span>Atualizar</span>
               </button>
@@ -661,17 +632,13 @@ export function DashboardClinico({
             </h1>
           </div>
 
-          {/* Direita: Seletor de Período + Personalizar + Tema Obsidian/Light */}
+          {/* Direita: Seletor de Período + Personalizar Painel */}
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Seletor Segmentado de Período com layoutId Framer Motion */}
             <div
               role="tablist"
               aria-label="Selecionar período da telemetria"
-              className={`inline-flex items-center p-1 rounded-xl border ${
-                isObsidian
-                  ? "bg-[#0B1324] border-white/10"
-                  : "bg-white border-slate-200 shadow-2xs"
-              }`}
+              className="inline-flex items-center p-1 rounded-xl border bg-white border-slate-200 shadow-2xs"
             >
               {PERIODOS_OPCOES.map((opt) => {
                 const ativo = periodo === opt.key;
@@ -684,12 +651,8 @@ export function DashboardClinico({
                     onClick={() => setPeriodo(opt.key)}
                     className={`relative px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                       ativo
-                        ? isObsidian
-                          ? "text-white"
-                          : "text-teal-900"
-                        : isObsidian
-                          ? "text-slate-400 hover:text-slate-200"
-                          : "text-slate-500 hover:text-slate-800"
+                        ? "text-emerald-900"
+                        : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
                     {ativo ? (
@@ -700,11 +663,7 @@ export function DashboardClinico({
                           stiffness: 420,
                           damping: 32,
                         }}
-                        className={`absolute inset-0 rounded-lg ${
-                          isObsidian
-                            ? "bg-emerald-500/20 border border-emerald-400/35"
-                            : "bg-teal-50 border border-teal-200"
-                        }`}
+                        className="absolute inset-0 rounded-lg bg-emerald-50 border border-emerald-200"
                       />
                     ) : null}
                     <span className="relative z-10">{opt.label}</span>
@@ -720,12 +679,8 @@ export function DashboardClinico({
                 onClick={() => setIsCustomizingOpen((v) => !v)}
                 className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
                   isCustomizingOpen
-                    ? isObsidian
-                      ? "bg-emerald-500/20 border-emerald-400/40 text-emerald-200"
-                      : "bg-teal-50 border-teal-300 text-teal-800"
-                    : isObsidian
-                      ? "bg-[#0B1324] border-white/10 text-slate-300 hover:text-white hover:border-white/25"
-                      : "bg-white border-slate-200 text-slate-700 hover:border-teal-300 shadow-2xs"
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                    : "bg-white border-slate-200 text-slate-700 hover:border-emerald-300 shadow-2xs"
                 }`}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -739,20 +694,16 @@ export function DashboardClinico({
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 6, scale: 0.97 }}
                     transition={{ duration: 0.16 }}
-                    className={`absolute right-0 mt-2 w-72 rounded-2xl border p-3.5 shadow-2xl z-40 ${
-                      isObsidian
-                        ? "bg-[#0B1324] border-white/15 text-slate-100"
-                        : "bg-white border-slate-200 text-slate-900"
-                    }`}
+                    className="absolute right-0 mt-2 w-72 rounded-2xl border p-3.5 shadow-xl z-40 bg-white border-slate-200 text-slate-900"
                   >
-                    <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-current/10">
-                      <span className="text-xs font-extrabold uppercase tracking-wider">
+                    <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100">
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
                         Módulos Visíveis
                       </span>
                       <button
                         type="button"
                         onClick={resetModulos}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-500 hover:underline cursor-pointer"
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 hover:underline cursor-pointer"
                       >
                         <RotateCcw className="w-3 h-3" />
                         <span>Restaurar</span>
@@ -766,20 +717,14 @@ export function DashboardClinico({
                             key={m.key}
                             type="button"
                             onClick={() => toggleModulo(m.key)}
-                            className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
-                              isObsidian
-                                ? "hover:bg-white/5"
-                                : "hover:bg-slate-50"
-                            }`}
+                            className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer hover:bg-slate-50 text-slate-700"
                           >
                             <span>{m.label}</span>
                             <span
                               className={`w-4.5 h-4.5 rounded-md flex items-center justify-center border ${
                                 checked
-                                  ? "bg-emerald-500 border-emerald-500 text-white"
-                                  : isObsidian
-                                    ? "border-white/20 bg-white/5"
-                                    : "border-slate-300 bg-white"
+                                  ? "bg-emerald-600 border-emerald-600 text-white"
+                                  : "border-slate-300 bg-white"
                               }`}
                             >
                               {checked ? <Check className="w-3 h-3" /> : null}
@@ -792,44 +737,20 @@ export function DashboardClinico({
                 ) : null}
               </AnimatePresence>
             </div>
-
-            {/* Toggle Elegante Obsidian / Light */}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              title={`Alternar para modo ${isObsidian ? "Light" : "Obsidian"}`}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                isObsidian
-                  ? "bg-[#0B1324] border-white/10 text-emerald-300 hover:border-emerald-400/40"
-                  : "bg-slate-900 border-slate-800 text-emerald-300 hover:bg-slate-800 shadow-2xs"
-              }`}
-            >
-              {isObsidian ? (
-                <>
-                  <Sun className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Light</span>
-                </>
-              ) : (
-                <>
-                  <Moon className="w-3.5 h-3.5 text-emerald-300" />
-                  <span>Obsidian</span>
-                </>
-              )}
-            </button>
           </div>
         </div>
 
         {/* Alerta de erro se houver falha de comunicação */}
         {erroCarga ? (
-          <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 flex items-center justify-between gap-3 text-xs text-rose-300">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-center justify-between gap-3 text-xs text-rose-800">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
               <span>{erroCarga}</span>
             </div>
             <button
               type="button"
               onClick={() => void carregarTelemetria(false)}
-              className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 font-bold text-rose-200 cursor-pointer"
+              className="px-3 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 font-bold text-rose-900 cursor-pointer"
             >
               Tentar novamente
             </button>
@@ -837,34 +758,34 @@ export function DashboardClinico({
         ) : null}
 
         {/* ================================================================ */}
-        {/* 2. HERO OBSIDIAN GLASS (FULL-WIDTH)                              */}
+        {/* 2. HERO CLINICAL LIGHT GLASS (FULL-WIDTH)                        */}
         {/* ================================================================ */}
         {modulos.hero ? (
           <motion.section
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-            className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-[#070D19] via-[#0B1528] to-[#0F172A] text-white shadow-[0_24px_70px_-28px_rgba(2,6,23,0.9)]"
+            className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-white text-slate-900 shadow-[0_14px_40px_-22px_rgba(15,23,42,0.12)]"
           >
-            {/* Glow radial esmeralda/ciano sutil */}
+            {/* Aurora radial esmeralda/ciano claro ultra-sutil */}
             <div
-              className="pointer-events-none absolute -top-28 -left-24 w-96 h-96 rounded-full opacity-30 blur-3xl"
+              className="pointer-events-none absolute -top-28 -left-24 w-96 h-96 rounded-full blur-3xl"
               style={{
                 background:
-                  "radial-gradient(circle, rgba(16,185,129,0.45) 0%, rgba(6,182,212,0.12) 55%, transparent 75%)",
+                  "radial-gradient(circle, rgba(16,185,129,0.13) 0%, rgba(20,184,166,0.05) 52%, transparent 74%)",
               }}
             />
             <div
-              className="pointer-events-none absolute -bottom-32 right-12 w-96 h-96 rounded-full opacity-25 blur-3xl"
+              className="pointer-events-none absolute -bottom-32 right-12 w-96 h-96 rounded-full blur-3xl"
               style={{
                 background:
-                  "radial-gradient(circle, rgba(6,182,212,0.4) 0%, rgba(16,185,129,0.1) 55%, transparent 75%)",
+                  "radial-gradient(circle, rgba(6,182,212,0.11) 0%, rgba(16,185,129,0.04) 52%, transparent 74%)",
               }}
             />
 
             <div className="relative z-10 p-5 sm:p-6 lg:p-7 grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
               {/* HERO ESQUERDA: ANEL CONCÊNTRICO ÍNDICE CLÍNICO + EMAGRECIMENTO/HIPERTROFIA */}
-              <div className="lg:col-span-5 flex flex-col justify-between gap-5 lg:pr-5 lg:border-r lg:border-white/10">
+              <div className="lg:col-span-5 flex flex-col justify-between gap-5 lg:pr-5 lg:border-r lg:border-slate-200/80">
                 {/* Bloco 1: Índice Clínico Global */}
                 <div className="flex items-center gap-4">
                   <button
@@ -886,16 +807,16 @@ export function DashboardClinico({
                           y2="100%"
                         >
                           <stop offset="0%" stopColor="#10b981" />
-                          <stop offset="100%" stopColor="#06b6d4" />
+                          <stop offset="100%" stopColor="#14b8a6" />
                         </linearGradient>
                       </defs>
-                      {/* Anel externo (track) */}
+                      {/* Anel externo (track claro) */}
                       <circle
                         cx="62"
                         cy="62"
                         r={ringR}
                         fill="none"
-                        stroke="rgba(255,255,255,0.09)"
+                        stroke="#e2e8f0"
                         strokeWidth="8"
                       />
                       {/* Anel interno concêntrico decorativo */}
@@ -904,7 +825,7 @@ export function DashboardClinico({
                         cy="62"
                         r={39}
                         fill="none"
-                        stroke="rgba(45,212,191,0.18)"
+                        stroke="rgba(16,185,129,0.24)"
                         strokeWidth="1.5"
                         strokeDasharray="3 4"
                       />
@@ -924,7 +845,7 @@ export function DashboardClinico({
                       />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-300/90">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">
                         Índice
                       </span>
                       {isLoading && !dados ? (
@@ -934,14 +855,14 @@ export function DashboardClinico({
                       ) : hasGlobalScore ? (
                         <AnimatedCounter
                           value={globalScore}
-                          className="text-3xl font-black font-mono text-white leading-none mt-0.5"
+                          className="text-3xl font-black font-mono text-slate-900 leading-none mt-0.5"
                         />
                       ) : (
                         <span className="text-sm font-bold text-slate-400 mt-1">
                           Sem base
                         </span>
                       )}
-                      <span className="text-[9px] text-slate-400 font-semibold mt-0.5 group-hover:text-emerald-300 transition-colors">
+                      <span className="text-[9px] text-slate-500 font-semibold mt-0.5 group-hover:text-emerald-600 transition-colors">
                         de 100
                       </span>
                     </div>
@@ -949,14 +870,14 @@ export function DashboardClinico({
 
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex items-center gap-1.5">
-                      <Gauge className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-300">
+                      <Gauge className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700">
                         Índice Clínico Global
                       </span>
                     </div>
-                    <p className="text-xs text-slate-300 leading-relaxed">
+                    <p className="text-xs text-slate-500 leading-relaxed">
                       Média ponderada em tempo real dos pilares com atividade em{" "}
-                      <strong className="text-white">
+                      <strong className="text-slate-900">
                         {dados?.periodoLabel ?? "Últimos 30 dias"}
                       </strong>
                       .
@@ -967,8 +888,8 @@ export function DashboardClinico({
                           key={pl.chave}
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-md border tabular-nums ${
                             pl.ativo
-                              ? "bg-white/[0.06] border-white/10 text-slate-200"
-                              : "bg-white/[0.02] border-white/5 text-slate-500"
+                              ? "bg-slate-50/90 border-slate-200/80 text-slate-700"
+                              : "bg-slate-50/50 border-slate-200/60 text-slate-400"
                           }`}
                         >
                           {pl.rotulo.split(" ")[0]}:{" "}
@@ -980,9 +901,9 @@ export function DashboardClinico({
                 </div>
 
                 {/* Bloco 2: Alternador Emagrecimento / Hipertrofia */}
-                <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-4 space-y-3.5">
+                <div className="rounded-2xl bg-slate-50/90 border border-slate-200/80 p-4 space-y-3.5">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="inline-flex p-0.5 rounded-lg bg-slate-950/70 border border-white/10">
+                    <div className="inline-flex p-0.5 rounded-lg bg-slate-200/60 border border-slate-200/80">
                       {(["emagrecimento", "hipertrofia"] as const).map(
                         (modo) => {
                           const active = objetivoHero === modo;
@@ -993,8 +914,8 @@ export function DashboardClinico({
                               onClick={() => setObjetivoHero(modo)}
                               className={`relative px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
                                 active
-                                  ? "text-white"
-                                  : "text-slate-400 hover:text-slate-200"
+                                  ? "text-emerald-800"
+                                  : "text-slate-500 hover:text-slate-800"
                               }`}
                             >
                               {active ? (
@@ -1005,7 +926,7 @@ export function DashboardClinico({
                                     stiffness: 420,
                                     damping: 32,
                                   }}
-                                  className="absolute inset-0 rounded-md bg-emerald-500/25 border border-emerald-400/35"
+                                  className="absolute inset-0 rounded-md bg-white border border-emerald-200/80 shadow-2xs"
                                 />
                               ) : null}
                               <span className="relative z-10">
@@ -1022,7 +943,7 @@ export function DashboardClinico({
                     <button
                       type="button"
                       onClick={() => setDrawerModulo("impacto")}
-                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-300 hover:text-emerald-200 cursor-pointer"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer"
                     >
                       <span>Detalhes</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -1033,7 +954,7 @@ export function DashboardClinico({
                     <div className="space-y-3">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
                             Peso Eliminado ({dados?.periodoLabel ?? "30d"})
                           </span>
                           <div className="flex items-baseline gap-1.5 mt-0.5">
@@ -1044,7 +965,7 @@ export function DashboardClinico({
                               }
                               decimals={1}
                               suffix=" kg"
-                              className="text-3xl font-black font-mono text-white tracking-tight"
+                              className="text-3xl font-black font-mono text-slate-900 tracking-tight"
                             />
                           </div>
                         </div>
@@ -1057,8 +978,8 @@ export function DashboardClinico({
                             className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full border tabular-nums ${
                               dados.impactoCorporal.emagrecimento
                                 .deltaAnteriorPct >= 0
-                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-400/30"
-                                : "bg-amber-500/15 text-amber-300 border-amber-400/30"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-amber-50 text-amber-700 border-amber-200"
                             }`}
                           >
                             {dados.impactoCorporal.emagrecimento
@@ -1080,18 +1001,18 @@ export function DashboardClinico({
                             </span>
                           </span>
                         ) : (
-                          <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-slate-300">
+                          <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-600">
                             1º ciclo • Base inicial
                           </span>
                         )}
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/10">
+                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200/80">
                         <div>
-                          <span className="text-[10px] text-slate-400 block">
+                          <span className="text-[10px] text-slate-500 block">
                             Média/paciente
                           </span>
-                          <span className="text-xs font-extrabold font-mono text-emerald-300 tabular-nums">
+                          <span className="text-xs font-extrabold font-mono text-emerald-700 tabular-nums">
                             {(
                               dados?.impactoCorporal.emagrecimento
                                 .mediaPorPacienteKg ?? 0
@@ -1102,10 +1023,10 @@ export function DashboardClinico({
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 block">
+                          <span className="text-[10px] text-slate-500 block">
                             Maior redução
                           </span>
-                          <span className="text-xs font-extrabold font-mono text-cyan-300 tabular-nums">
+                          <span className="text-xs font-extrabold font-mono text-teal-700 tabular-nums">
                             {(
                               dados?.impactoCorporal.emagrecimento
                                 .maiorReducaoKg ?? 0
@@ -1116,10 +1037,10 @@ export function DashboardClinico({
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 block">
+                          <span className="text-[10px] text-slate-500 block">
                             Com redução
                           </span>
-                          <span className="text-xs font-extrabold font-mono text-white tabular-nums">
+                          <span className="text-xs font-extrabold font-mono text-slate-900 tabular-nums">
                             {dados?.impactoCorporal.emagrecimento
                               .pacientesComReducao ?? 0}{" "}
                             pac.
@@ -1131,7 +1052,7 @@ export function DashboardClinico({
                     <div className="space-y-3">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
                             Evolução Ponderal Média (Hipertrofia)
                           </span>
                           <div className="flex items-baseline gap-2 mt-0.5">
@@ -1152,39 +1073,42 @@ export function DashboardClinico({
                                     : ""
                                 }
                                 suffix=" kg"
-                                className="text-3xl font-black font-mono text-white tracking-tight"
+                                className="text-3xl font-black font-mono text-slate-900 tracking-tight"
                               />
                             ) : (
-                              <span className="text-xl font-bold text-slate-300">
+                              <span className="text-xl font-bold text-slate-600">
                                 Base inicial
                               </span>
                             )}
                           </div>
                         </div>
 
-                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 tabular-nums">
-                          {dados?.impactoCorporal.hipertrofia
-                            .totalPacientesAtivos ?? 0}{" "}
-                          ativos no protocolo
+                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-700 tabular-nums">
+                          {pluralizar(
+                            dados?.impactoCorporal.hipertrofia
+                              .totalPacientesAtivos ?? 0,
+                            "ativo no protocolo",
+                            "ativos no protocolo"
+                          )}
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/10">
+                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200/80">
                         <div>
-                          <span className="text-[10px] text-slate-400 block">
+                          <span className="text-[10px] text-slate-500 block">
                             Com ganho
                           </span>
-                          <span className="text-xs font-extrabold font-mono text-emerald-300 tabular-nums">
+                          <span className="text-xs font-extrabold font-mono text-emerald-700 tabular-nums">
                             {dados?.impactoCorporal.hipertrofia
                               .pacientesComGanho ?? 0}{" "}
                             pac.
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 block">
+                          <span className="text-[10px] text-slate-500 block">
                             Δ Braço médio
                           </span>
-                          <span className="text-xs font-extrabold font-mono text-cyan-300 tabular-nums">
+                          <span className="text-xs font-extrabold font-mono text-teal-700 tabular-nums">
                             {formatDeltaSinal(
                               dados?.impactoCorporal.hipertrofia
                                 .variacaoMediaBracoCm ?? null,
@@ -1193,10 +1117,10 @@ export function DashboardClinico({
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 block">
+                          <span className="text-[10px] text-slate-500 block">
                             Δ Cintura
                           </span>
-                          <span className="text-xs font-extrabold font-mono text-slate-200 tabular-nums">
+                          <span className="text-xs font-extrabold font-mono text-slate-700 tabular-nums">
                             {formatDeltaSinal(
                               dados?.impactoCorporal.hipertrofia
                                 .variacaoMediaCinturaCm ?? null,
@@ -1215,27 +1139,24 @@ export function DashboardClinico({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-cyan-300">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700">
                         Curva de Pulso do Ecossistema
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-500 mt-0.5">
                       Volume real de interações diárias no App Mobile (Dieta,
                       Glicemia, Bristol, Treinos e Pesagens)
                     </p>
                   </div>
                   <div className="text-right">
-                    <span className="text-lg font-black font-mono text-emerald-300 tabular-nums">
-                      <AnimatedCounter
-                        value={(dados?.serieAtividade || []).reduce(
-                          (acc, p) => acc + p.totalInteracoes,
-                          0
-                        )}
-                      />
+                    <span className="text-lg font-black font-mono text-emerald-600 tabular-nums">
+                      <AnimatedCounter value={totalSinaisPeriodo} />
                     </span>
-                    <span className="text-[10px] font-semibold text-slate-400 block">
-                      sinais no período
+                    <span className="text-[10px] font-semibold text-slate-500 block">
+                      {totalSinaisPeriodo === 1
+                        ? "sinal no período"
+                        : "sinais no período"}
                     </span>
                   </div>
                 </div>
@@ -1259,22 +1180,22 @@ export function DashboardClinico({
                             <stop
                               offset="0%"
                               stopColor="#10b981"
-                              stopOpacity={0.45}
+                              stopOpacity={0.28}
                             />
                             <stop
                               offset="60%"
-                              stopColor="#06b6d4"
-                              stopOpacity={0.14}
+                              stopColor="#14b8a6"
+                              stopOpacity={0.08}
                             />
                             <stop
                               offset="100%"
-                              stopColor="#06b6d4"
+                              stopColor="#14b8a6"
                               stopOpacity={0.0}
                             />
                           </linearGradient>
                         </defs>
                         <CartesianGrid
-                          stroke="rgba(148,163,184,0.1)"
+                          stroke="#e2e8f0"
                           strokeDasharray="3 4"
                           vertical={false}
                         />
@@ -1287,7 +1208,7 @@ export function DashboardClinico({
                         />
                         <YAxis
                           allowDecimals={false}
-                          tick={{ fill: "#64748b", fontSize: 10 }}
+                          tick={{ fill: "#94a3b8", fontSize: 10 }}
                           axisLine={false}
                           tickLine={false}
                         />
@@ -1295,20 +1216,20 @@ export function DashboardClinico({
                         <Area
                           type="monotone"
                           dataKey="totalInteracoes"
-                          stroke="#2dd4bf"
+                          stroke="#059669"
                           strokeWidth={2.4}
                           fill="url(#pulseAreaGrad)"
                           activeDot={{
                             r: 5,
-                            fill: "#2dd4bf",
-                            stroke: "#070D19",
+                            fill: "#059669",
+                            stroke: "#ffffff",
                             strokeWidth: 2,
                           }}
                         />
                       </AreaChart>
                     </ResponsiveContainer>
                   ) : (
-                    <div className="h-full rounded-2xl border border-dashed border-white/10 flex items-center justify-center text-xs text-slate-400">
+                    <div className="h-full rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 flex items-center justify-center text-xs text-slate-500">
                       {isLoading
                         ? "Sincronizando série temporal do Oracle ADB..."
                         : "Sem interações registradas no período."}
@@ -1321,18 +1242,18 @@ export function DashboardClinico({
                   <button
                     type="button"
                     onClick={() => setDrawerModulo("indice")}
-                    className="text-left rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 px-3 py-2.5 transition-colors cursor-pointer"
+                    className="text-left rounded-xl bg-white/80 hover:bg-emerald-50/40 border border-slate-200/80 hover:border-emerald-300/80 px-3 py-2.5 shadow-2xs transition-all cursor-pointer"
                   >
-                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
                       <span>Pacientes Ativos</span>
-                      <Users className="w-3.5 h-3.5 text-emerald-400" />
+                      <Users className="w-3.5 h-3.5 text-emerald-600" />
                     </div>
-                    <div className="text-lg font-black font-mono text-white mt-1 tabular-nums">
+                    <div className="text-lg font-black font-mono text-slate-900 mt-1 tabular-nums">
                       <AnimatedCounter
                         value={dados?.resumo.totalPacientesAtivos ?? 0}
                       />
                     </div>
-                    <span className="text-[10px] text-slate-400">
+                    <span className="text-[10px] text-slate-500">
                       em acompanhamento
                     </span>
                   </button>
@@ -1340,69 +1261,81 @@ export function DashboardClinico({
                   <button
                     type="button"
                     onClick={() => setDrawerModulo("indice")}
-                    className="text-left rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 px-3 py-2.5 transition-colors cursor-pointer"
+                    className="text-left rounded-xl bg-white/80 hover:bg-emerald-50/40 border border-slate-200/80 hover:border-emerald-300/80 px-3 py-2.5 shadow-2xs transition-all cursor-pointer"
                   >
-                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
                       <span>Engajamento</span>
-                      <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                      <Activity className="w-3.5 h-3.5 text-teal-600" />
                     </div>
-                    <div className="text-lg font-black font-mono text-cyan-300 mt-1 tabular-nums">
+                    <div className="text-lg font-black font-mono text-emerald-600 mt-1 tabular-nums">
                       <AnimatedCounter
                         value={dados?.resumo.taxaEngajamento ?? 0}
                         suffix="%"
                       />
                     </div>
-                    <span className="text-[10px] text-slate-400 tabular-nums">
-                      {dados?.resumo.ativosNoPeriodo ?? 0} ativos no período
+                    <span className="text-[10px] text-slate-500 tabular-nums">
+                      {pluralizar(
+                        dados?.resumo.ativosNoPeriodo ?? 0,
+                        "ativo no período",
+                        "ativos no período"
+                      )}
                     </span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setDrawerModulo("consultas")}
-                    className="text-left rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 px-3 py-2.5 transition-colors cursor-pointer"
+                    className="text-left rounded-xl bg-white/80 hover:bg-emerald-50/40 border border-slate-200/80 hover:border-emerald-300/80 px-3 py-2.5 shadow-2xs transition-all cursor-pointer"
                   >
-                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      <span>Consultas 7d</span>
-                      <Calendar className="w-3.5 h-3.5 text-sky-400" />
+                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <span>Consultas 7D</span>
+                      <Calendar className="w-3.5 h-3.5 text-sky-600" />
                     </div>
-                    <div className="text-lg font-black font-mono text-white mt-1 tabular-nums">
+                    <div className="text-lg font-black font-mono text-slate-900 mt-1 tabular-nums">
                       <AnimatedCounter
                         value={
                           dados?.resumo.consultasAgendadas.proximos7Dias ?? 0
                         }
                       />
                     </div>
-                    <span className="text-[10px] text-slate-400 tabular-nums">
-                      {dados?.resumo.consultasAgendadas.hoje ?? 0} agendadas hoje
+                    <span className="text-[10px] text-slate-500 tabular-nums">
+                      {pluralizar(
+                        dados?.resumo.consultasAgendadas.hoje ?? 0,
+                        "agendada hoje",
+                        "agendadas hoje"
+                      )}
                     </span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setDrawerModulo("radar")}
-                    className="text-left rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 px-3 py-2.5 transition-colors cursor-pointer"
+                    className={`text-left rounded-xl border px-3 py-2.5 shadow-2xs transition-all cursor-pointer ${
+                      alertasAtivosCount > 0
+                        ? "bg-rose-50/60 hover:bg-rose-50 border-rose-200/80 hover:border-rose-300"
+                        : "bg-emerald-50/40 hover:bg-emerald-50/80 border-emerald-200/80 hover:border-emerald-300"
+                    }`}
                   >
-                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
                       <span>Alertas Ativos</span>
                       <ShieldAlert
                         className={`w-3.5 h-3.5 ${
                           alertasAtivosCount > 0
-                            ? "text-rose-400"
-                            : "text-emerald-400"
+                            ? "text-rose-500"
+                            : "text-emerald-600"
                         }`}
                       />
                     </div>
                     <div
                       className={`text-lg font-black font-mono mt-1 tabular-nums ${
                         alertasAtivosCount > 0
-                          ? "text-rose-300"
-                          : "text-emerald-300"
+                          ? "text-rose-600"
+                          : "text-emerald-600"
                       }`}
                     >
                       <AnimatedCounter value={alertasAtivosCount} />
                     </div>
-                    <span className="text-[10px] text-slate-400 tabular-nums">
+                    <span className="text-[10px] text-slate-500 tabular-nums">
                       {dados?.radarTriagem.length ?? 0} total no radar
                     </span>
                   </button>
@@ -1420,11 +1353,10 @@ export function DashboardClinico({
             {/* ESQUERDA (8 COL): DUPLO CARD TÉCNICO — TELEMETRIA GLICÊMICA + ADESÃO ALIMENTAR */}
             {modulos.glicemia_dieta ? (
               <BentoCard
-                isObsidian={isObsidian}
                 delay={0.06}
                 className={modulos.radar ? "lg:col-span-8" : "lg:col-span-12"}
               >
-                <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-current/10 h-full">
+                <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200/80 h-full">
                   {/* SUB-CARD 1A: TELEMETRIA GLICÊMICA */}
                   <div className="p-5 flex flex-col justify-between gap-4">
                     <div className="flex items-start justify-between gap-2">
@@ -1439,14 +1371,18 @@ export function DashboardClinico({
                         </div>
                         <p className={`text-[11px] mt-0.5 ${subText}`}>
                           Time-in-Range (70–180 mg/dL) ·{" "}
-                          {dados?.glicemia.totalMedicoes ?? 0} medições
+                          {pluralizar(
+                            dados?.glicemia.totalMedicoes ?? 0,
+                            "medição",
+                            "medições"
+                          )}
                         </p>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => setDrawerModulo("glicemia")}
-                        className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-500 hover:text-emerald-400 cursor-pointer shrink-0"
+                        className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer shrink-0"
                       >
                         <span>Detalhes</span>
                         <ChevronRight className="w-3.5 h-3.5" />
@@ -1468,23 +1404,23 @@ export function DashboardClinico({
                           <span
                             className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border tabular-nums ${
                               dados.glicemia.alertasCriticos > 0
-                                ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
-                                : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                                ? "bg-rose-50 text-rose-700 border-rose-200"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
                             }`}
                           >
                             {dados.glicemia.alertasCriticos > 0
-                              ? `${dados.glicemia.alertasCriticos} alerta(s)`
+                              ? pluralizar(
+                                  dados.glicemia.alertasCriticos,
+                                  "alerta",
+                                  "alertas"
+                                )
                               : "Sem alertas"}
                           </span>
                         </div>
 
                         {/* Barra espectral Time-in-Range */}
                         <div className="space-y-2">
-                          <div
-                            className={`h-3 w-full rounded-full overflow-hidden flex ${
-                              isObsidian ? "bg-white/10" : "bg-slate-100"
-                            }`}
-                          >
+                          <div className="h-3 w-full rounded-full overflow-hidden flex bg-slate-100">
                             {dados.glicemia.timeInRange.hipoPct > 0 ? (
                               <div
                                 style={{
@@ -1512,13 +1448,13 @@ export function DashboardClinico({
                           </div>
 
                           <div className="grid grid-cols-3 text-[11px] font-mono tabular-nums">
-                            <span className="text-rose-400 font-bold">
+                            <span className="text-rose-600 font-bold">
                               &lt;70: {dados.glicemia.timeInRange.hipoPct}%
                             </span>
-                            <span className="text-emerald-400 font-bold text-center">
+                            <span className="text-emerald-600 font-bold text-center">
                               70–180: {dados.glicemia.timeInRange.metaPct}%
                             </span>
-                            <span className="text-amber-400 font-bold text-right">
+                            <span className="text-amber-600 font-bold text-right">
                               &gt;180: {dados.glicemia.timeInRange.hiperPct}%
                             </span>
                           </div>
@@ -1542,7 +1478,7 @@ export function DashboardClinico({
                                   <stop
                                     offset="0%"
                                     stopColor="#f43f5e"
-                                    stopOpacity={0.35}
+                                    stopOpacity={0.28}
                                   />
                                   <stop
                                     offset="100%"
@@ -1561,14 +1497,14 @@ export function DashboardClinico({
                                     pacienteNome: string;
                                   };
                                   return (
-                                    <div className="rounded-lg bg-[#070D19]/95 border border-white/15 px-2.5 py-1.5 text-[11px] text-white shadow-xl">
+                                    <div className="rounded-lg bg-white/95 backdrop-blur-md border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-900 shadow-lg">
                                       <p className="font-bold truncate max-w-[150px]">
                                         {d.pacienteNome}
                                       </p>
-                                      <p className="font-mono text-rose-300 font-black">
+                                      <p className="font-mono text-rose-600 font-black">
                                         {d.valor} mg/dL · {d.momento}
                                       </p>
-                                      <p className="text-[10px] text-slate-400">
+                                      <p className="text-[10px] text-slate-500">
                                         {d.horaLabel}
                                       </p>
                                     </div>
@@ -1578,7 +1514,7 @@ export function DashboardClinico({
                               <Area
                                 type="monotone"
                                 dataKey="valor"
-                                stroke="#fb7185"
+                                stroke="#f43f5e"
                                 strokeWidth={2}
                                 fill="url(#glicSparkGrad)"
                               />
@@ -1601,7 +1537,7 @@ export function DashboardClinico({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-1.5">
-                          <Utensils className="w-4 h-4 text-emerald-500" />
+                          <Utensils className="w-4 h-4 text-emerald-600" />
                           <h2
                             className={`text-xs font-extrabold uppercase tracking-wider ${headingText}`}
                           >
@@ -1610,14 +1546,18 @@ export function DashboardClinico({
                         </div>
                         <p className={`text-[11px] mt-0.5 ${subText}`}>
                           Segui + Troca Inteligente = 100% ·{" "}
-                          {dados?.dieta.totalCheckins ?? 0} check-ins
+                          {pluralizar(
+                            dados?.dieta.totalCheckins ?? 0,
+                            "check-in",
+                            "check-ins"
+                          )}
                         </p>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => setDrawerModulo("dieta")}
-                        className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-500 hover:text-emerald-400 cursor-pointer shrink-0"
+                        className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer shrink-0"
                       >
                         <span>Detalhes</span>
                         <ChevronRight className="w-3.5 h-3.5" />
@@ -1638,11 +1578,7 @@ export function DashboardClinico({
                                 cy="40"
                                 r={dietaR}
                                 fill="none"
-                                stroke={
-                                  isObsidian
-                                    ? "rgba(255,255,255,0.1)"
-                                    : "#e2e8f0"
-                                }
+                                stroke="#e2e8f0"
                                 strokeWidth="7"
                               />
                               <motion.circle
@@ -1672,30 +1608,30 @@ export function DashboardClinico({
 
                           <div className="flex-1 space-y-2 text-xs">
                             <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-1.5 font-semibold">
+                              <span className="flex items-center gap-1.5 font-semibold text-slate-700">
                                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
                                 <span>Segui</span>
                               </span>
-                              <span className="font-mono font-bold text-emerald-400 tabular-nums">
+                              <span className="font-mono font-bold text-emerald-600 tabular-nums">
                                 {dados.dieta.seguiuPct}% (
                                 {dados.dieta.seguiuCount})
                               </span>
                             </div>
 
                             <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-1.5 font-semibold">
-                                <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                              <span className="flex items-center gap-1.5 font-semibold text-slate-700">
+                                <span className="w-2 h-2 rounded-full bg-teal-500" />
                                 <span>Troca Inteligente</span>
                               </span>
-                              <span className="font-mono font-bold text-cyan-400 tabular-nums">
+                              <span className="font-mono font-bold text-teal-600 tabular-nums">
                                 {dados.dieta.trocaInteligentePct}% (
                                 {dados.dieta.trocaInteligenteCount})
                               </span>
                             </div>
 
                             <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-1.5 font-semibold">
-                                <span className="w-2 h-2 rounded-full bg-slate-400" />
+                              <span className="flex items-center gap-1.5 font-semibold text-slate-700">
+                                <span className="w-2 h-2 rounded-full bg-slate-300" />
                                 <span>Não fiz</span>
                               </span>
                               <span
@@ -1709,11 +1645,7 @@ export function DashboardClinico({
                         </div>
 
                         {/* Barra segmentada */}
-                        <div
-                          className={`h-2.5 w-full rounded-full overflow-hidden flex ${
-                            isObsidian ? "bg-white/10" : "bg-slate-100"
-                          }`}
-                        >
+                        <div className="h-2.5 w-full rounded-full overflow-hidden flex bg-slate-100">
                           <div
                             style={{ width: `${dados.dieta.seguiuPct}%` }}
                             className="h-full bg-emerald-500"
@@ -1722,11 +1654,11 @@ export function DashboardClinico({
                             style={{
                               width: `${dados.dieta.trocaInteligentePct}%`,
                             }}
-                            className="h-full bg-cyan-400"
+                            className="h-full bg-teal-500"
                           />
                           <div
                             style={{ width: `${dados.dieta.naoFezPct}%` }}
-                            className="h-full bg-slate-500/70"
+                            className="h-full bg-slate-300"
                           />
                         </div>
 
@@ -1734,12 +1666,8 @@ export function DashboardClinico({
                         <div
                           className={`rounded-xl px-3 py-2 border flex items-center justify-between gap-2 text-xs ${
                             dados.dieta.gargaloPrincipal
-                              ? isObsidian
-                                ? "bg-amber-500/10 border-amber-500/25 text-amber-300"
-                                : "bg-amber-50 border-amber-200 text-amber-800"
-                              : isObsidian
-                                ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-300"
-                                : "bg-emerald-50 border-emerald-200 text-emerald-800"
+                              ? "bg-amber-50 border-amber-200 text-amber-800"
+                              : "bg-emerald-50 border-emerald-200 text-emerald-800"
                           }`}
                         >
                           <span className="flex items-center gap-1.5 font-bold truncate">
@@ -1773,7 +1701,6 @@ export function DashboardClinico({
             {/* DIREITA (4 COL): RADAR DE TRIAGEM CLÍNICA */}
             {modulos.radar ? (
               <BentoCard
-                isObsidian={isObsidian}
                 delay={0.12}
                 className={
                   modulos.glicemia_dieta ? "lg:col-span-4" : "lg:col-span-12"
@@ -1798,7 +1725,7 @@ export function DashboardClinico({
                     <button
                       type="button"
                       onClick={() => setDrawerModulo("radar")}
-                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-500 hover:text-emerald-400 cursor-pointer shrink-0"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer shrink-0"
                     >
                       <span>Detalhes</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -1820,21 +1747,17 @@ export function DashboardClinico({
                               telefone: item.telefone,
                             })
                           }
-                          className={`w-full text-left rounded-xl p-3 border transition-all cursor-pointer group ${
-                            isObsidian
-                              ? "bg-white/[0.03] border-white/10 hover:bg-white/[0.07] hover:border-emerald-400/35"
-                              : "bg-slate-50/80 border-slate-200 hover:bg-teal-50/50 hover:border-teal-300"
-                          }`}
+                          className="w-full text-left rounded-xl p-3 border transition-all cursor-pointer group bg-slate-50/80 border-slate-200/90 hover:bg-emerald-50/40 hover:border-emerald-300"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <span
                                 className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border shrink-0 ${
                                   item.severidade === "CRITICO"
-                                    ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                                    ? "bg-rose-50 text-rose-700 border-rose-200"
                                     : item.severidade === "ATENCAO"
-                                      ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
-                                      : "bg-slate-500/15 text-slate-400 border-slate-500/30"
+                                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                                      : "bg-slate-100 text-slate-600 border-slate-200"
                                 }`}
                               >
                                 {item.severidade}
@@ -1852,9 +1775,9 @@ export function DashboardClinico({
                           <p
                             className={`text-[11px] font-semibold mt-1 truncate ${
                               item.severidade === "CRITICO"
-                                ? "text-rose-400"
+                                ? "text-rose-600"
                                 : item.severidade === "ATENCAO"
-                                  ? "text-amber-400"
+                                  ? "text-amber-700"
                                   : subText
                             }`}
                           >
@@ -1868,8 +1791,8 @@ export function DashboardClinico({
                     </div>
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center py-8 text-center">
-                      <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center mb-2">
-                        <Check className="w-5 h-5 text-emerald-400" />
+                      <div className="w-10 h-10 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-2">
+                        <Check className="w-5 h-5 text-emerald-600" />
                       </div>
                       <p className={`text-xs font-bold ${headingText}`}>
                         Nenhum alerta crítico ativo
@@ -1892,16 +1815,12 @@ export function DashboardClinico({
           <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
             {/* COL 1 (4 COL): SAÚDE INTESTINAL — HISTOGRAMA BRISTOL 1–7 */}
             {modulos.bristol ? (
-              <BentoCard
-                isObsidian={isObsidian}
-                delay={0.16}
-                className="lg:col-span-4"
-              >
+              <BentoCard delay={0.16} className="lg:col-span-4">
                 <div className="p-5 flex flex-col justify-between h-full gap-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <Activity className="w-4 h-4 text-emerald-500" />
+                        <Activity className="w-4 h-4 text-emerald-600" />
                         <h2
                           className={`text-xs font-extrabold uppercase tracking-wider ${headingText}`}
                         >
@@ -1910,14 +1829,18 @@ export function DashboardClinico({
                       </div>
                       <p className={`text-[11px] mt-0.5 ${subText}`}>
                         Distribuição Tipos 1–7 (T3–T4 ideal) ·{" "}
-                        {dados?.intestino.totalRegistros ?? 0} reg.
+                        {pluralizar(
+                          dados?.intestino.totalRegistros ?? 0,
+                          "registro",
+                          "registros"
+                        )}
                       </p>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => setDrawerModulo("intestino")}
-                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-500 hover:text-emerald-400 cursor-pointer shrink-0"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer shrink-0"
                     >
                       <span>Detalhes</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -1933,11 +1856,7 @@ export function DashboardClinico({
                             margin={{ top: 8, right: 4, left: -26, bottom: 0 }}
                           >
                             <CartesianGrid
-                              stroke={
-                                isObsidian
-                                  ? "rgba(148,163,184,0.08)"
-                                  : "rgba(148,163,184,0.2)"
-                              }
+                              stroke="#e2e8f0"
                               strokeDasharray="3 4"
                               vertical={false}
                             />
@@ -1949,16 +1868,12 @@ export function DashboardClinico({
                             />
                             <YAxis
                               allowDecimals={false}
-                              tick={{ fill: "#64748b", fontSize: 10 }}
+                              tick={{ fill: "#94a3b8", fontSize: 10 }}
                               axisLine={false}
                               tickLine={false}
                             />
                             <Tooltip
-                              cursor={{
-                                fill: isObsidian
-                                  ? "rgba(255,255,255,0.04)"
-                                  : "rgba(15,23,42,0.04)",
-                              }}
+                              cursor={{ fill: "rgba(15,23,42,0.04)" }}
                               content={<BristolTooltip />}
                             />
                             <Bar dataKey="quantidade" radius={[6, 6, 2, 2]}>
@@ -1971,45 +1886,27 @@ export function DashboardClinico({
                       </div>
 
                       <div className="grid grid-cols-3 gap-2">
-                        <div
-                          className={`rounded-xl px-2.5 py-2 border text-center ${
-                            isObsidian
-                              ? "bg-emerald-500/10 border-emerald-500/20"
-                              : "bg-emerald-50 border-emerald-200"
-                          }`}
-                        >
-                          <span className="text-[10px] font-bold text-emerald-400 block">
+                        <div className="rounded-xl px-2.5 py-2 border text-center bg-emerald-50 border-emerald-200">
+                          <span className="text-[10px] font-bold text-emerald-700 block">
                             Ideal (3–4)
                           </span>
-                          <span className="text-sm font-black font-mono text-emerald-400 tabular-nums">
+                          <span className="text-sm font-black font-mono text-emerald-700 tabular-nums">
                             {dados.intestino.distribuicao.idealPct}%
                           </span>
                         </div>
-                        <div
-                          className={`rounded-xl px-2.5 py-2 border text-center ${
-                            isObsidian
-                              ? "bg-amber-500/10 border-amber-500/20"
-                              : "bg-amber-50 border-amber-200"
-                          }`}
-                        >
-                          <span className="text-[10px] font-bold text-amber-400 block">
+                        <div className="rounded-xl px-2.5 py-2 border text-center bg-amber-50 border-amber-200">
+                          <span className="text-[10px] font-bold text-amber-700 block">
                             Constip.
                           </span>
-                          <span className="text-sm font-black font-mono text-amber-400 tabular-nums">
+                          <span className="text-sm font-black font-mono text-amber-700 tabular-nums">
                             {dados.intestino.distribuicao.constipacaoPct}%
                           </span>
                         </div>
-                        <div
-                          className={`rounded-xl px-2.5 py-2 border text-center ${
-                            isObsidian
-                              ? "bg-rose-500/10 border-rose-500/20"
-                              : "bg-rose-50 border-rose-200"
-                          }`}
-                        >
-                          <span className="text-[10px] font-bold text-rose-400 block">
+                        <div className="rounded-xl px-2.5 py-2 border text-center bg-rose-50 border-rose-200">
+                          <span className="text-[10px] font-bold text-rose-700 block">
                             Diarreia
                           </span>
-                          <span className="text-sm font-black font-mono text-rose-400 tabular-nums">
+                          <span className="text-sm font-black font-mono text-rose-700 tabular-nums">
                             {dados.intestino.distribuicao.diarreiaPct}%
                           </span>
                         </div>
@@ -2029,16 +1926,12 @@ export function DashboardClinico({
 
             {/* COL 2 (4 COL): HIDRATAÇÃO & TREINOS */}
             {modulos.hidratacao_treinos ? (
-              <BentoCard
-                isObsidian={isObsidian}
-                delay={0.2}
-                className="lg:col-span-4"
-              >
+              <BentoCard delay={0.2} className="lg:col-span-4">
                 <div className="p-5 flex flex-col justify-between h-full gap-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <Droplets className="w-4 h-4 text-cyan-400" />
+                        <Droplets className="w-4 h-4 text-cyan-600" />
                         <h2
                           className={`text-xs font-extrabold uppercase tracking-wider ${headingText}`}
                         >
@@ -2053,7 +1946,7 @@ export function DashboardClinico({
                     <button
                       type="button"
                       onClick={() => setDrawerModulo("hidratacao_treinos")}
-                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-500 hover:text-emerald-400 cursor-pointer shrink-0"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer shrink-0"
                     >
                       <span>Detalhes</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -2061,13 +1954,7 @@ export function DashboardClinico({
                   </div>
 
                   {/* Gauge Circular Hídrico */}
-                  <div
-                    className={`rounded-2xl p-3.5 border flex items-center gap-4 ${
-                      isObsidian
-                        ? "bg-white/[0.03] border-white/10"
-                        : "bg-slate-50 border-slate-200"
-                    }`}
-                  >
+                  <div className="rounded-2xl p-3.5 border flex items-center gap-4 bg-slate-50/90 border-slate-200/80">
                     <div className="relative w-24 h-24 shrink-0">
                       <svg
                         viewBox="0 0 92 92"
@@ -2078,9 +1965,7 @@ export function DashboardClinico({
                           cy="46"
                           r={hidraR}
                           fill="none"
-                          stroke={
-                            isObsidian ? "rgba(255,255,255,0.1)" : "#e2e8f0"
-                          }
+                          stroke="#e2e8f0"
                           strokeWidth="7.5"
                         />
                         <motion.circle
@@ -2103,7 +1988,7 @@ export function DashboardClinico({
                         >
                           {hasHidraData ? `${hidraPerc}%` : "--"}
                         </span>
-                        <span className="text-[9px] font-bold text-cyan-400 uppercase">
+                        <span className="text-[9px] font-bold text-cyan-600 uppercase">
                           Água
                         </span>
                       </div>
@@ -2115,7 +2000,7 @@ export function DashboardClinico({
                       </p>
                       {hasHidraData && dados ? (
                         <>
-                          <p className="text-sm font-black font-mono text-cyan-400 tabular-nums">
+                          <p className="text-sm font-black font-mono text-cyan-700 tabular-nums">
                             {dados.hidratacaoETreinos.hidratacao.totalConsumidoL
                               .toFixed(1)
                               .replace(".", ",")}{" "}
@@ -2131,13 +2016,19 @@ export function DashboardClinico({
                             </span>
                           </p>
                           <p className={`text-[11px] ${subText}`}>
-                            {
+                            {pluralizar(
                               dados.hidratacaoETreinos.hidratacao
-                                .pacientesRegistraram
-                            }{" "}
-                            paciente(s) ·{" "}
-                            {dados.hidratacaoETreinos.hidratacao.totalRegistros}{" "}
-                            reg.
+                                .pacientesRegistraram,
+                              "paciente",
+                              "pacientes"
+                            )}{" "}
+                            ·{" "}
+                            {pluralizar(
+                              dados.hidratacaoETreinos.hidratacao
+                                .totalRegistros,
+                              "registro",
+                              "registros"
+                            )}
                           </p>
                         </>
                       ) : (
@@ -2149,21 +2040,15 @@ export function DashboardClinico({
                   </div>
 
                   {/* Barra de Adesão a Treinos */}
-                  <div
-                    className={`rounded-2xl p-3.5 border space-y-2.5 ${
-                      isObsidian
-                        ? "bg-white/[0.03] border-white/10"
-                        : "bg-slate-50 border-slate-200"
-                    }`}
-                  >
+                  <div className="rounded-2xl p-3.5 border space-y-2.5 bg-slate-50/90 border-slate-200/80">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5">
-                        <Dumbbell className="w-3.5 h-3.5 text-emerald-400" />
+                        <Dumbbell className="w-3.5 h-3.5 text-emerald-600" />
                         <span className={`text-xs font-extrabold ${headingText}`}>
                           Adesão aos Treinos
                         </span>
                       </div>
-                      <span className="text-sm font-black font-mono text-emerald-400 tabular-nums">
+                      <span className="text-sm font-black font-mono text-emerald-600 tabular-nums">
                         {dados &&
                         dados.hidratacaoETreinos.treinos.percentualAdesao !==
                           null
@@ -2172,11 +2057,7 @@ export function DashboardClinico({
                       </span>
                     </div>
 
-                    <div
-                      className={`h-2.5 w-full rounded-full overflow-hidden ${
-                        isObsidian ? "bg-white/10" : "bg-slate-200"
-                      }`}
-                    >
+                    <div className="h-2.5 w-full rounded-full overflow-hidden bg-slate-200">
                       <motion.div
                         initial={{ width: 0 }}
                         animate={{
@@ -2197,7 +2078,10 @@ export function DashboardClinico({
                         <span>
                           {dados.hidratacaoETreinos.treinos.diasAtivosTotal} /{" "}
                           {dados.hidratacaoETreinos.treinos.metaTotalEsperada}{" "}
-                          dias ativos
+                          {dados.hidratacaoETreinos.treinos
+                            .metaTotalEsperada === 1
+                            ? "dia ativo"
+                            : "dias ativos"}
                         </span>
                         <span>
                           {
@@ -2219,16 +2103,12 @@ export function DashboardClinico({
 
             {/* COL 3 (4 COL): LIVE TELEMETRY STREAM */}
             {modulos.live_feed ? (
-              <BentoCard
-                isObsidian={isObsidian}
-                delay={0.24}
-                className="lg:col-span-4"
-              >
+              <BentoCard delay={0.24} className="lg:col-span-4">
                 <div className="p-5 flex flex-col h-full gap-3.5">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <Radio className="w-4 h-4 text-cyan-400" />
+                        <Radio className="w-4 h-4 text-teal-600" />
                         <h2
                           className={`text-xs font-extrabold uppercase tracking-wider ${headingText}`}
                         >
@@ -2243,7 +2123,7 @@ export function DashboardClinico({
                     <button
                       type="button"
                       onClick={() => setDrawerModulo("live_feed")}
-                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-500 hover:text-emerald-400 cursor-pointer shrink-0"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer shrink-0"
                     >
                       <span>Detalhes</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -2263,19 +2143,9 @@ export function DashboardClinico({
                               recordCode: ev.pacienteRecordCode,
                             })
                           }
-                          className={`w-full text-left rounded-xl px-3 py-2 border transition-all flex items-start gap-2.5 cursor-pointer group ${
-                            isObsidian
-                              ? "bg-white/[0.025] border-white/8 hover:bg-white/[0.06] hover:border-cyan-400/30"
-                              : "bg-slate-50/70 border-slate-200/80 hover:bg-teal-50/50 hover:border-teal-300"
-                          }`}
+                          className="w-full text-left rounded-xl px-3 py-2 border transition-all flex items-start gap-2.5 cursor-pointer group bg-slate-50/70 border-slate-200/80 hover:bg-emerald-50/40 hover:border-emerald-300"
                         >
-                          <div
-                            className={`mt-0.5 p-1.5 rounded-lg border shrink-0 ${
-                              isObsidian
-                                ? "bg-white/[0.05] border-white/10"
-                                : "bg-white border-slate-200"
-                            }`}
-                          >
+                          <div className="mt-0.5 p-1.5 rounded-lg border shrink-0 bg-white border-slate-200">
                             <FeedEventIcon tipo={ev.tipo} />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -2294,7 +2164,7 @@ export function DashboardClinico({
                             <p
                               className={`text-[11px] mt-0.5 truncate ${
                                 ev.severidade === "critico"
-                                  ? "text-rose-400 font-semibold"
+                                  ? "text-rose-600 font-semibold"
                                   : subText
                               }`}
                             >
@@ -2323,7 +2193,6 @@ export function DashboardClinico({
       <TelemetryDrawer
         modulo={drawerModulo}
         dados={dados}
-        isObsidian={isObsidian}
         onClose={() => setDrawerModulo(null)}
         onOpenProntuario={handleOpenProntuario}
       />

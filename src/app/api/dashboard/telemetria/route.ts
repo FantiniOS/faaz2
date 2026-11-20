@@ -1568,7 +1568,9 @@ export async function GET(req: NextRequest) {
         motivo: `${crit.tipo === "HIPO" ? "Hipoglicemia" : "Hiperglicemia"}: ${
           crit.ultimoValor
         } mg/dL (${crit.momento})`,
-        detalhe: `${crit.totalAlertas} episódio(s) fora da meta no período`,
+        detalhe: `${crit.totalAlertas} ${
+          crit.totalAlertas === 1 ? "episódio fora" : "episódios fora"
+        } da meta no período`,
         ultimoSinalEm: crit.dataRegistro,
       });
     }
@@ -1596,7 +1598,11 @@ export async function GET(req: NextRequest) {
         detalhe:
           det.sintomasRecentes.length > 0
             ? `Sintomas: ${det.sintomasRecentes.join(", ")}`
-            : `${det.totalRegistros} registro(s) intestinais no período`,
+            : `${det.totalRegistros} ${
+                det.totalRegistros === 1
+                  ? "registro intestinal"
+                  : "registros intestinais"
+              } no período`,
         ultimoSinalEm: det.ultimaData,
       });
     }

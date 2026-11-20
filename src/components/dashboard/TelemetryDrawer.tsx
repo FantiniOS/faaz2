@@ -42,9 +42,12 @@ export interface PacienteAtalhoProntuario {
 interface TelemetryDrawerProps {
   modulo: DrawerModuloKey | null;
   dados: TelemetriaDashboardResponse | null;
-  isObsidian: boolean;
   onClose: () => void;
   onOpenProntuario: (paciente: PacienteAtalhoProntuario) => void;
+}
+
+function pluralizar(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
 }
 
 function formatDataHoraCurta(iso?: string | null): string {
@@ -118,7 +121,6 @@ const TITULO_MODULO: Record<
 export function TelemetryDrawer({
   modulo,
   dados,
-  isObsidian,
   onClose,
   onOpenProntuario,
 }: TelemetryDrawerProps) {
@@ -141,15 +143,10 @@ export function TelemetryDrawer({
   const meta = modulo ? TITULO_MODULO[modulo] : null;
   const HeaderIcon = meta?.icon ?? Gauge;
 
-  const panelClass = isObsidian
-    ? "bg-[#091121] border-l border-white/10 text-slate-100"
-    : "bg-white border-l border-slate-200 text-slate-900";
-
-  const cardClass = isObsidian
-    ? "bg-white/[0.03] border border-white/10 hover:border-emerald-400/35"
-    : "bg-slate-50/80 border border-slate-200 hover:border-teal-400";
-
-  const mutedText = isObsidian ? "text-slate-400" : "text-slate-500";
+  const panelClass = "bg-white border-l border-slate-200 text-slate-900";
+  const cardClass =
+    "bg-slate-50/80 border border-slate-200/90 hover:border-emerald-300 hover:bg-white";
+  const mutedText = "text-slate-500";
 
   return (
     <AnimatePresence>
@@ -162,7 +159,7 @@ export function TelemetryDrawer({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={onClose}
-            className="fixed inset-0 bg-slate-950/65 backdrop-blur-xs"
+            className="fixed inset-0 bg-slate-900/35 backdrop-blur-xs"
           />
 
           {/* Slide-over Drawer */}
@@ -174,32 +171,16 @@ export function TelemetryDrawer({
             className={`relative z-10 w-full max-w-xl h-full flex flex-col shadow-2xl ${panelClass}`}
           >
             {/* Header */}
-            <div
-              className={`px-6 py-5 border-b flex items-start justify-between gap-4 shrink-0 ${
-                isObsidian
-                  ? "border-white/10 bg-[#070D19]"
-                  : "border-slate-200 bg-slate-50"
-              }`}
-            >
+            <div className="px-6 py-5 border-b border-slate-200 bg-slate-50/90 flex items-start justify-between gap-4 shrink-0">
               <div className="flex items-start gap-3">
-                <div
-                  className={`p-2.5 rounded-xl border ${
-                    isObsidian
-                      ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400"
-                      : "bg-teal-50 border-teal-200 text-teal-700"
-                  }`}
-                >
+                <div className="p-2.5 rounded-xl border bg-emerald-50 border-emerald-200 text-emerald-700">
                   <HeaderIcon className="w-5 h-5" />
                 </div>
                 <div>
-                  <span
-                    className={`text-[10px] font-bold uppercase tracking-widest ${
-                      isObsidian ? "text-emerald-400" : "text-teal-700"
-                    }`}
-                  >
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700">
                     Drill-Down • {dados.periodoLabel}
                   </span>
-                  <h2 className="text-base font-extrabold tracking-tight mt-0.5">
+                  <h2 className="text-base font-extrabold tracking-tight text-slate-900 mt-0.5">
                     {meta.titulo}
                   </h2>
                   <p className={`text-xs mt-0.5 ${mutedText}`}>
@@ -211,11 +192,7 @@ export function TelemetryDrawer({
               <button
                 type="button"
                 onClick={onClose}
-                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
-                  isObsidian
-                    ? "border-white/10 text-slate-400 hover:text-white hover:bg-white/5"
-                    : "border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-                }`}
+                className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
                 aria-label="Fechar detalhes"
               >
                 <X className="w-4 h-4" />
@@ -227,18 +204,12 @@ export function TelemetryDrawer({
               {/* 1. ÍNDICE CLÍNICO GLOBAL */}
               {modulo === "indice" ? (
                 <div className="space-y-4">
-                  <div
-                    className={`rounded-2xl p-4 border ${
-                      isObsidian
-                        ? "bg-emerald-500/5 border-emerald-500/20"
-                        : "bg-teal-50/70 border-teal-200"
-                    }`}
-                  >
+                  <div className="rounded-2xl p-4 border bg-emerald-50/70 border-emerald-200">
                     <div className="flex items-baseline justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-500">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
                         Score Global Ponderado
                       </span>
-                      <span className="text-3xl font-black font-mono tabular-nums">
+                      <span className="text-3xl font-black font-mono text-slate-900 tabular-nums">
                         {dados.resumo.indiceClinicoGlobal !== null
                           ? `${dados.resumo.indiceClinicoGlobal}/100`
                           : "Sem base"}
@@ -256,21 +227,17 @@ export function TelemetryDrawer({
                         key={pilar.chave}
                         className={`rounded-xl p-3.5 transition-colors ${cardClass}`}
                       >
-                        <div className="flex items-center justify-between text-xs font-bold mb-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-800 mb-2">
                           <span>{pilar.rotulo}</span>
-                          <span className="font-mono tabular-nums">
+                          <span className="font-mono tabular-nums text-emerald-700">
                             {pilar.ativo && pilar.score !== null
                               ? `${pilar.score}%`
                               : "Sem registros"}
                           </span>
                         </div>
-                        <div
-                          className={`h-2 rounded-full overflow-hidden ${
-                            isObsidian ? "bg-white/10" : "bg-slate-200"
-                          }`}
-                        >
+                        <div className="h-2 rounded-full overflow-hidden bg-slate-200">
                           <div
-                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all"
+                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all"
                             style={{
                               width: `${
                                 pilar.ativo && pilar.score !== null
@@ -299,13 +266,7 @@ export function TelemetryDrawer({
               {/* 2. IMPACTO CORPORAL */}
               {modulo === "impacto" ? (
                 <div className="space-y-4">
-                  <div
-                    className={`inline-flex p-1 rounded-xl border ${
-                      isObsidian
-                        ? "bg-white/5 border-white/10"
-                        : "bg-slate-100 border-slate-200"
-                    }`}
-                  >
+                  <div className="inline-flex p-1 rounded-xl border bg-slate-100 border-slate-200">
                     {(["emagrecimento", "hipertrofia"] as const).map((tab) => (
                       <button
                         key={tab}
@@ -313,10 +274,8 @@ export function TelemetryDrawer({
                         onClick={() => setImpactoSubTab(tab)}
                         className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                           impactoSubTab === tab
-                            ? isObsidian
-                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                              : "bg-white text-teal-800 shadow-xs"
-                            : mutedText
+                            ? "bg-white text-emerald-800 border border-emerald-200/80 shadow-2xs"
+                            : `${mutedText} hover:text-slate-800`
                         }`}
                       >
                         {tab === "emagrecimento"
@@ -328,10 +287,7 @@ export function TelemetryDrawer({
 
                   {impactoSubTab === "emagrecimento" ? (
                     dados.impactoCorporal.emagrecimento.detalhes.length === 0 ? (
-                      <EmptyDrawerState
-                        isObsidian={isObsidian}
-                        texto="Nenhuma redução ponderal registrada no período selecionado."
-                      />
+                      <EmptyDrawerState texto="Nenhuma redução ponderal registrada no período selecionado." />
                     ) : (
                       <div className="space-y-2.5">
                         {dados.impactoCorporal.emagrecimento.detalhes.map(
@@ -341,7 +297,7 @@ export function TelemetryDrawer({
                               className={`rounded-xl p-3.5 flex items-center justify-between gap-3 transition-colors ${cardClass}`}
                             >
                               <div className="min-w-0">
-                                <p className="text-sm font-bold truncate">
+                                <p className="text-sm font-bold text-slate-900 truncate">
                                   {item.nome}
                                 </p>
                                 <p className={`text-xs mt-0.5 ${mutedText}`}>
@@ -350,11 +306,10 @@ export function TelemetryDrawer({
                                 </p>
                               </div>
                               <div className="flex items-center gap-3 shrink-0">
-                                <span className="text-sm font-black font-mono text-emerald-400 tabular-nums">
+                                <span className="text-sm font-black font-mono text-emerald-600 tabular-nums">
                                   -{item.reducaoKg.toFixed(1).replace(".", ",")} kg
                                 </span>
                                 <OpenProntuarioBtn
-                                  isObsidian={isObsidian}
                                   onClick={() =>
                                     onOpenProntuario({
                                       id: item.pacienteId,
@@ -370,10 +325,7 @@ export function TelemetryDrawer({
                       </div>
                     )
                   ) : dados.impactoCorporal.hipertrofia.detalhes.length === 0 ? (
-                    <EmptyDrawerState
-                      isObsidian={isObsidian}
-                      texto="Nenhum paciente ativo com objetivo de Hipertrofia cadastrado."
-                    />
+                    <EmptyDrawerState texto="Nenhum paciente ativo com objetivo de Hipertrofia cadastrado." />
                   ) : (
                     <div className="space-y-2.5">
                       {dados.impactoCorporal.hipertrofia.detalhes.map(
@@ -383,7 +335,7 @@ export function TelemetryDrawer({
                             className={`rounded-xl p-3.5 flex items-center justify-between gap-3 transition-colors ${cardClass}`}
                           >
                             <div className="min-w-0">
-                              <p className="text-sm font-bold truncate">
+                              <p className="text-sm font-bold text-slate-900 truncate">
                                 {item.nome}
                               </p>
                               <p className={`text-xs mt-0.5 ${mutedText}`}>
@@ -412,7 +364,7 @@ export function TelemetryDrawer({
                               <span
                                 className={`text-sm font-black font-mono tabular-nums ${
                                   (item.deltaPesoKg ?? 0) > 0
-                                    ? "text-emerald-400"
+                                    ? "text-emerald-600"
                                     : mutedText
                                 }`}
                               >
@@ -423,7 +375,6 @@ export function TelemetryDrawer({
                                   : "Base"}
                               </span>
                               <OpenProntuarioBtn
-                                isObsidian={isObsidian}
                                 onClick={() =>
                                   onOpenProntuario({
                                     id: item.pacienteId,
@@ -444,10 +395,7 @@ export function TelemetryDrawer({
               {/* 3. CONSULTAS PRÓXIMAS */}
               {modulo === "consultas" ? (
                 dados.resumo.consultasAgendadas.proximas.length === 0 ? (
-                  <EmptyDrawerState
-                    isObsidian={isObsidian}
-                    texto="Nenhuma consulta futura agendada no Oracle."
-                  />
+                  <EmptyDrawerState texto="Nenhuma consulta futura agendada no Oracle." />
                 ) : (
                   <div className="space-y-2.5">
                     {dados.resumo.consultasAgendadas.proximas.map((c) => (
@@ -456,7 +404,7 @@ export function TelemetryDrawer({
                         className={`rounded-xl p-3.5 flex items-center justify-between gap-3 transition-colors ${cardClass}`}
                       >
                         <div className="min-w-0">
-                          <p className="text-sm font-bold truncate">
+                          <p className="text-sm font-bold text-slate-900 truncate">
                             {c.pacienteNome}
                           </p>
                           <p className={`text-xs mt-0.5 ${mutedText}`}>
@@ -465,7 +413,6 @@ export function TelemetryDrawer({
                           </p>
                         </div>
                         <OpenProntuarioBtn
-                          isObsidian={isObsidian}
                           onClick={() =>
                             onOpenProntuario({
                               id: c.pacienteId,
@@ -483,10 +430,7 @@ export function TelemetryDrawer({
               {/* 4. GLICEMIA */}
               {modulo === "glicemia" ? (
                 dados.glicemia.detalhesPorPaciente.length === 0 ? (
-                  <EmptyDrawerState
-                    isObsidian={isObsidian}
-                    texto="Nenhuma medição glicêmica registrada no período selecionado."
-                  />
+                  <EmptyDrawerState texto="Nenhuma medição glicêmica registrada no período selecionado." />
                 ) : (
                   <div className="space-y-2.5">
                     {dados.glicemia.detalhesPorPaciente.map((item) => (
@@ -496,23 +440,27 @@ export function TelemetryDrawer({
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold truncate">
+                            <p className="text-sm font-bold text-slate-900 truncate">
                               {item.nome}
                             </p>
                             {item.alertasCriticos > 0 ? (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30">
-                                {item.alertasCriticos} alerta(s)
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                {pluralizar(
+                                  item.alertasCriticos,
+                                  "alerta",
+                                  "alertas"
+                                )}
                               </span>
                             ) : null}
                           </div>
                           <p className={`text-xs mt-0.5 ${mutedText}`}>
                             Média: {item.mediaMgDl} mg/dL · Última:{" "}
-                            {item.ultimoValor} mg/dL · {item.medicoes} med. ·{" "}
+                            {item.ultimoValor} mg/dL ·{" "}
+                            {pluralizar(item.medicoes, "medição", "medições")} ·{" "}
                             {formatTempoRelativo(item.ultimaData)}
                           </p>
                         </div>
                         <OpenProntuarioBtn
-                          isObsidian={isObsidian}
                           onClick={() =>
                             onOpenProntuario({
                               id: item.pacienteId,
@@ -530,26 +478,23 @@ export function TelemetryDrawer({
               {/* 5. DIETA */}
               {modulo === "dieta" ? (
                 dados.dieta.detalhesPorPaciente.length === 0 ? (
-                  <EmptyDrawerState
-                    isObsidian={isObsidian}
-                    texto="Nenhum check-in de refeição registrado no período."
-                  />
+                  <EmptyDrawerState texto="Nenhum check-in de refeição registrado no período." />
                 ) : (
                   <div className="space-y-2.5">
                     {dados.dieta.gargaloPrincipal ? (
-                      <div
-                        className={`rounded-xl p-3.5 border flex items-center gap-2.5 ${
-                          isObsidian
-                            ? "bg-amber-500/10 border-amber-500/25 text-amber-300"
-                            : "bg-amber-50 border-amber-200 text-amber-800"
-                        }`}
-                      >
+                      <div className="rounded-xl p-3.5 border flex items-center gap-2.5 bg-amber-50 border-amber-200 text-amber-800">
                         <AlertTriangle className="w-4 h-4 shrink-0" />
                         <span className="text-xs font-semibold">
                           Principal gargalo clínico:{" "}
                           <strong>{dados.dieta.gargaloPrincipal.label}</strong> (
                           {dados.dieta.gargaloPrincipal.percentualAdesao}% adesão
-                          em {dados.dieta.gargaloPrincipal.totalRegistros} reg.)
+                          em{" "}
+                          {pluralizar(
+                            dados.dieta.gargaloPrincipal.totalRegistros,
+                            "registro",
+                            "registros"
+                          )}
+                          )
                         </span>
                       </div>
                     ) : null}
@@ -559,22 +504,27 @@ export function TelemetryDrawer({
                         className={`rounded-xl p-3.5 flex items-center justify-between gap-3 transition-colors ${cardClass}`}
                       >
                         <div className="min-w-0">
-                          <p className="text-sm font-bold truncate">
+                          <p className="text-sm font-bold text-slate-900 truncate">
                             {item.nome}
                           </p>
                           <p className={`text-xs mt-0.5 ${mutedText}`}>
                             Segui: {item.seguiu} · Trocas: {item.trocas} · Não
-                            fiz: {item.naoFez} ({item.totalCheckins} check-ins)
+                            fiz: {item.naoFez} (
+                            {pluralizar(
+                              item.totalCheckins,
+                              "check-in",
+                              "check-ins"
+                            )}
+                            )
                           </p>
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
-                          <span className="text-sm font-black font-mono text-emerald-400 tabular-nums">
+                          <span className="text-sm font-black font-mono text-emerald-600 tabular-nums">
                             {item.percentualAdesao !== null
                               ? `${item.percentualAdesao}%`
                               : "--"}
                           </span>
                           <OpenProntuarioBtn
-                            isObsidian={isObsidian}
                             onClick={() =>
                               onOpenProntuario({
                                 id: item.pacienteId,
@@ -593,10 +543,7 @@ export function TelemetryDrawer({
               {/* 6. INTESTINO */}
               {modulo === "intestino" ? (
                 dados.intestino.detalhesPorPaciente.length === 0 ? (
-                  <EmptyDrawerState
-                    isObsidian={isObsidian}
-                    texto="Nenhum registro da Escala de Bristol no período."
-                  />
+                  <EmptyDrawerState texto="Nenhum registro da Escala de Bristol no período." />
                 ) : (
                   <div className="space-y-2.5">
                     {dados.intestino.detalhesPorPaciente.map((item) => (
@@ -606,16 +553,16 @@ export function TelemetryDrawer({
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold truncate">
+                            <p className="text-sm font-bold text-slate-900 truncate">
                               {item.nome}
                             </p>
                             <span
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                                 item.padraoPredominante === "ideal"
-                                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                   : item.padraoPredominante === "constipacao"
-                                    ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
-                                    : "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                                    : "bg-rose-50 text-rose-700 border-rose-200"
                               }`}
                             >
                               Tipo {item.ultimoTipo} ·{" "}
@@ -627,14 +574,18 @@ export function TelemetryDrawer({
                             </span>
                           </div>
                           <p className={`text-xs mt-0.5 ${mutedText}`}>
-                            {item.totalRegistros} registro(s) ·{" "}
+                            {pluralizar(
+                              item.totalRegistros,
+                              "registro",
+                              "registros"
+                            )}{" "}
+                            ·{" "}
                             {item.sintomasRecentes.length > 0
                               ? `Sintomas: ${item.sintomasRecentes.join(", ")}`
                               : "Sem sintomas reportados"}
                           </p>
                         </div>
                         <OpenProntuarioBtn
-                          isObsidian={isObsidian}
                           onClick={() =>
                             onOpenProntuario({
                               id: item.pacienteId,
@@ -653,23 +604,22 @@ export function TelemetryDrawer({
               {modulo === "hidratacao_treinos" ? (
                 <div className="space-y-5">
                   <div className="space-y-2.5">
-                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-cyan-400">
+                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-cyan-700">
                       <Droplets className="w-4 h-4" />
                       <span>
                         Hidratação (
-                        {
+                        {pluralizar(
                           dados.hidratacaoETreinos.hidratacao
-                            .detalhesPorPaciente.length
-                        }{" "}
-                        pacientes)
+                            .detalhesPorPaciente.length,
+                          "paciente",
+                          "pacientes"
+                        )}
+                        )
                       </span>
                     </div>
                     {dados.hidratacaoETreinos.hidratacao.detalhesPorPaciente
                       .length === 0 ? (
-                      <EmptyDrawerState
-                        isObsidian={isObsidian}
-                        texto="Sem check-ins de hidratação no período."
-                      />
+                      <EmptyDrawerState texto="Sem check-ins de hidratação no período." />
                     ) : (
                       dados.hidratacaoETreinos.hidratacao.detalhesPorPaciente.map(
                         (item) => (
@@ -678,21 +628,20 @@ export function TelemetryDrawer({
                             className={`rounded-xl p-3 flex items-center justify-between gap-3 ${cardClass}`}
                           >
                             <div className="min-w-0">
-                              <p className="text-sm font-bold truncate">
+                              <p className="text-sm font-bold text-slate-900 truncate">
                                 {item.nome}
                               </p>
                               <p className={`text-xs ${mutedText}`}>
                                 Média {item.volumeMedioDiarioMl} ml/dia · Meta{" "}
-                                {item.metaDiariaMl} ml · {item.diasRegistrados}{" "}
-                                dia(s)
+                                {item.metaDiariaMl} ml ·{" "}
+                                {pluralizar(item.diasRegistrados, "dia", "dias")}
                               </p>
                             </div>
                             <div className="flex items-center gap-2.5 shrink-0">
-                              <span className="text-sm font-black font-mono text-cyan-400 tabular-nums">
+                              <span className="text-sm font-black font-mono text-cyan-700 tabular-nums">
                                 {item.percentual}%
                               </span>
                               <OpenProntuarioBtn
-                                isObsidian={isObsidian}
                                 onClick={() =>
                                   onOpenProntuario({
                                     id: item.pacienteId,
@@ -709,23 +658,22 @@ export function TelemetryDrawer({
                   </div>
 
                   <div className="space-y-2.5">
-                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-emerald-400">
+                    <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-emerald-700">
                       <Dumbbell className="w-4 h-4" />
                       <span>
                         Treinos (
-                        {
+                        {pluralizar(
                           dados.hidratacaoETreinos.treinos.detalhesPorPaciente
-                            .length
-                        }{" "}
-                        pacientes ativos)
+                            .length,
+                          "paciente ativo",
+                          "pacientes ativos"
+                        )}
+                        )
                       </span>
                     </div>
                     {dados.hidratacaoETreinos.treinos.detalhesPorPaciente
                       .length === 0 ? (
-                      <EmptyDrawerState
-                        isObsidian={isObsidian}
-                        texto="Sem check-ins de treino no período."
-                      />
+                      <EmptyDrawerState texto="Sem check-ins de treino no período." />
                     ) : (
                       dados.hidratacaoETreinos.treinos.detalhesPorPaciente.map(
                         (item) => (
@@ -734,20 +682,22 @@ export function TelemetryDrawer({
                             className={`rounded-xl p-3 flex items-center justify-between gap-3 ${cardClass}`}
                           >
                             <div className="min-w-0">
-                              <p className="text-sm font-bold truncate">
+                              <p className="text-sm font-bold text-slate-900 truncate">
                                 {item.nome}
                               </p>
                               <p className={`text-xs ${mutedText}`}>
-                                {item.diasAtivos} de {item.metaEsperada} dias
-                                ativos · {item.modalidade}
+                                {item.diasAtivos} de {item.metaEsperada}{" "}
+                                {item.metaEsperada === 1
+                                  ? "dia ativo"
+                                  : "dias ativos"}{" "}
+                                · {item.modalidade}
                               </p>
                             </div>
                             <div className="flex items-center gap-2.5 shrink-0">
-                              <span className="text-sm font-black font-mono text-emerald-400 tabular-nums">
+                              <span className="text-sm font-black font-mono text-emerald-600 tabular-nums">
                                 {item.percentualAdesao}%
                               </span>
                               <OpenProntuarioBtn
-                                isObsidian={isObsidian}
                                 onClick={() =>
                                   onOpenProntuario({
                                     id: item.pacienteId,
@@ -777,12 +727,8 @@ export function TelemetryDrawer({
                           onClick={() => setRadarFiltro(sev)}
                           className={`px-3 py-1 rounded-full text-[11px] font-bold border transition-colors cursor-pointer ${
                             radarFiltro === sev
-                              ? isObsidian
-                                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/35"
-                                : "bg-teal-600 text-white border-teal-600"
-                              : isObsidian
-                                ? "bg-white/5 text-slate-400 border-white/10"
-                                : "bg-slate-100 text-slate-600 border-slate-200"
+                              ? "bg-emerald-600 text-white border-emerald-600"
+                              : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200/70"
                           }`}
                         >
                           {sev === "TODOS"
@@ -813,10 +759,7 @@ export function TelemetryDrawer({
                     (r) =>
                       radarFiltro === "TODOS" || r.severidade === radarFiltro
                   ).length === 0 ? (
-                    <EmptyDrawerState
-                      isObsidian={isObsidian}
-                      texto="Nenhum paciente nesta categoria de triagem."
-                    />
+                    <EmptyDrawerState texto="Nenhum paciente nesta categoria de triagem." />
                   ) : (
                     <div className="space-y-2.5">
                       {dados.radarTriagem
@@ -835,19 +778,19 @@ export function TelemetryDrawer({
                                 <span
                                   className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
                                     item.severidade === "CRITICO"
-                                      ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                                      ? "bg-rose-50 text-rose-700 border-rose-200"
                                       : item.severidade === "ATENCAO"
-                                        ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
-                                        : "bg-slate-500/15 text-slate-400 border-slate-500/30"
+                                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                                        : "bg-slate-100 text-slate-600 border-slate-200"
                                   }`}
                                 >
                                   {item.severidade}
                                 </span>
-                                <p className="text-sm font-bold truncate">
+                                <p className="text-sm font-bold text-slate-900 truncate">
                                   {item.nome}
                                 </p>
                               </div>
-                              <p className="text-xs font-semibold mt-1">
+                              <p className="text-xs font-semibold text-slate-800 mt-1">
                                 {item.motivo}
                               </p>
                               <p className={`text-[11px] mt-0.5 ${mutedText}`}>
@@ -856,7 +799,6 @@ export function TelemetryDrawer({
                               </p>
                             </div>
                             <OpenProntuarioBtn
-                              isObsidian={isObsidian}
                               onClick={() =>
                                 onOpenProntuario({
                                   id: item.pacienteId,
@@ -877,10 +819,7 @@ export function TelemetryDrawer({
               {/* 9. LIVE TELEMETRY FEED */}
               {modulo === "live_feed" ? (
                 dados.liveFeed.length === 0 ? (
-                  <EmptyDrawerState
-                    isObsidian={isObsidian}
-                    texto="Nenhum sinal recebido do App Mobile neste período."
-                  />
+                  <EmptyDrawerState texto="Nenhum sinal recebido do App Mobile neste período." />
                 ) : (
                   <div className="space-y-2.5">
                     {dados.liveFeed.map((ev) => (
@@ -890,7 +829,7 @@ export function TelemetryDrawer({
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold">
+                            <span className="text-xs font-bold text-slate-900">
                               {ev.pacienteNome}
                             </span>
                             <span className={`text-[10px] ${mutedText}`}>
@@ -902,7 +841,6 @@ export function TelemetryDrawer({
                           </p>
                         </div>
                         <OpenProntuarioBtn
-                          isObsidian={isObsidian}
                           onClick={() =>
                             onOpenProntuario({
                               id: ev.pacienteId,
@@ -924,22 +862,12 @@ export function TelemetryDrawer({
   );
 }
 
-function OpenProntuarioBtn({
-  isObsidian,
-  onClick,
-}: {
-  isObsidian: boolean;
-  onClick: () => void;
-}) {
+function OpenProntuarioBtn({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer shrink-0 border ${
-        isObsidian
-          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25"
-          : "bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100"
-      }`}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer shrink-0 border bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
     >
       <span>Prontuário</span>
       <ExternalLink className="w-3 h-3" />
@@ -947,21 +875,9 @@ function OpenProntuarioBtn({
   );
 }
 
-function EmptyDrawerState({
-  isObsidian,
-  texto,
-}: {
-  isObsidian: boolean;
-  texto: string;
-}) {
+function EmptyDrawerState({ texto }: { texto: string }) {
   return (
-    <div
-      className={`rounded-2xl border border-dashed p-8 text-center ${
-        isObsidian
-          ? "border-white/15 bg-white/[0.02] text-slate-400"
-          : "border-slate-200 bg-slate-50 text-slate-500"
-      }`}
-    >
+    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
       <p className="text-xs font-semibold">{texto}</p>
     </div>
   );
