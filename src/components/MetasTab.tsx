@@ -6,10 +6,10 @@ import {
   Droplets,
   Target,
   Scale,
-  Footprints,
   Activity,
   CheckCircle2,
   TrendingDown,
+  TrendingUp,
   Clock,
   Sparkles,
   Sliders,
@@ -20,7 +20,7 @@ import {
   Flame,
   Utensils,
   Dumbbell,
-  Zap,
+  AlertTriangle,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -35,7 +35,18 @@ import {
   ReferenceLine,
 } from "recharts";
 import { TIMEZONE_BR } from "@/lib/date-br";
-import { CLINICAL_OBJECTIVES } from "@/lib/clinical-objectives";
+import {
+  CLINICAL_OBJECTIVES,
+  DEFAULT_CLINICAL_OBJECTIVE,
+} from "@/lib/clinical-objectives";
+import {
+  avaliarDistanciaPesoAlvo,
+  avaliarVariacaoPeso,
+  getConfigObjetivoClinico,
+  normalizarObjetivoClinicoValor,
+  resolverObjetivoAtivo,
+} from "@/lib/objetivo-clinico";
+import { invalidateClientCache } from "@/lib/client-swr-cache";
 
 export interface MetasTabProps {
   pacienteId: string;
@@ -43,6 +54,9 @@ export interface MetasTabProps {
   pacienteMetaHidricaMl?: number;
   pacientePesoAtualKg?: number | string | null;
   pacienteAlturaCm?: number | string | null;
+  objetivoAtual?: string | null;
+  onObjetivoUpdated?: (novoObjetivo: string) => void;
+  onMetasUpdated?: () => void;
   ultimoSonoInicial?: {
     id?: string;
     horas: number;
@@ -52,16 +66,50 @@ export interface MetasTabProps {
   } | null;
 }
 
+interface ConstanciaAlimentar30d {
+  temDados: boolean;
+  percentualAdesao: number | null;
+  totalCheckins: number;
+  diasRegistrados: number;
+  seguiu: number;
+  trocasInteligentes: number;
+  naoFez: number;
+  opcionaisBonus: number;
+  gargalo: {
+    refeicaoId: string;
+    nome: string;
+    horario: string | null;
+    label: string;
+    totalRegistros: number;
+    naoFez: number;
+    percentualNaoFez: number;
+    percentualAdesao: number;
+  } | null;
+}
+
+interface AdesaoTreinos30d {
+  temDados: boolean;
+  percentualAdesao: number;
+  diasAtivos: number;
+  metaEsperada: number;
+  frequenciaSemanal: number;
+  duracaoMin: number | null;
+  modalidade: string | null;
+  totalLogs: number;
+  treinouHoje: boolean;
+  checkinsHojeCount: number;
+  ultimoTreinoEm: string | null;
+}
+
 interface MetasData {
   metas: {
     sonoHorasAlvo: number;
     aguaMlAlvo: number;
     pesoAlvoKg: number;
     passosAlvo: number;
-    caloriasAlvo?: number;
-    caloriasBonusAlvo?: number;
-    pontosAlvo?: number;
-    pontosBonusAlvo?: number;
+    workoutFrequency?: number;
+    workoutType?: string | null;
+    workoutDuration?: number | null;
     focoMetabolico: string;
     treatmentObjective?: string;
   };
@@ -105,19 +153,33 @@ interface MetasData {
       peso: number;
     }>;
   };
-  caloriasConsumidasHoje?: number;
-  caloriasGastasTreino?: number;
-  treinosHoje?: Array<{
-    id: string;
-    titulo: string;
-    calorias: number;
-    data?: string | Date;
-  }>;
+  constanciaAlimentar30d?: ConstanciaAlimentar30d;
+  adesaoTreinos30d?: AdesaoTreinos30d;
+}
+
+function getAdesaoBadgeClass(percentual: number | null, temDados: boolean): string {
+  if (!temDados || percentual === null) {
+    return "bg-slate-100 text-slate-600 border-slate-200";
+  }
+  if (percentual >= 75) {
+    return "bg-emerald-50 text-emerald-800 border-emerald-200/80";
+  }
+  if (percentual >= 50) {
+    return "bg-amber-50 text-amber-800 border-amber-200/80";
+  }
+  return "bg-rose-50 text-rose-800 border-rose-200/80";
+}
+
+function formatBrNum(val: number, decimals = 1): string {
+  return val.toFixed(decimals).replace(".", ",");
 }
 
 export function MetasTab({
   pacienteId,
   pacienteNome,
+  objetivoAtual,
+  onObjetivoUpdated,
+  onMetasUpdated,
   ultimoSonoInicial,
 }: MetasTabProps) {
   const [mounted, setMounted] = useState(false);
@@ -130,27 +192,34 @@ export function MetasTab({
   const [salvandoObjetivo, setSalvandoObjetivo] = useState(false);
   const [objetivoSalvoRecently, setObjetivoSalvoRecently] = useState(false);
   const [toastMensagem, setToastMensagem] = useState<string | null>(null);
+  const [toastTipo, setToastTipo] = useState<"success" | "error">("success");
 
-  // Estados do formulário mantidos como string durante a digitação
-  const [formSonoHoras, setFormSonoHoras] = useState("");
-  const [formAguaMl, setFormAguaMl] = useState("");
+  // Estados do formulário do modal "Ajustar Metas do Paciente" (somente metas reais ativas)
+  const [formFoco, setFormFoco] = useState<string>(DEFAULT_CLINICAL_OBJECTIVE);
   const [formPesoAlvo, setFormPesoAlvo] = useState("");
-  const [formCaloriasAlvo, setFormCaloriasAlvo] = useState("");
-  const [formCaloriasBonus, setFormCaloriasBonus] = useState("");
-  const [formFoco, setFormFoco] = useState<string>(CLINICAL_OBJECTIVES[0]);
+  const [formAguaLitros, setFormAguaLitros] = useState("");
+  const [formSonoHoras, setFormSonoHoras] = useState("");
+  const [formWorkoutFreq, setFormWorkoutFreq] = useState("3");
+
+  const showToast = useCallback(
+    (msg: string, tipo: "success" | "error" = "success") => {
+      setToastTipo(tipo);
+      setToastMensagem(msg);
+      setTimeout(() => setToastMensagem(null), 3500);
+    },
+    []
+  );
 
   const syncFormFromMetas = useCallback((m: MetasData["metas"]) => {
-    setFormSonoHoras(m.sonoHorasAlvo ? String(m.sonoHorasAlvo) : "");
-    setFormAguaMl(m.aguaMlAlvo ? String(m.aguaMlAlvo) : "");
-    setFormPesoAlvo(m.pesoAlvoKg ? String(m.pesoAlvoKg) : "");
-    const cal = m.caloriasAlvo ?? m.pontosAlvo ?? 0;
-    setFormCaloriasAlvo(cal ? String(cal) : "");
-    const bonus = m.caloriasBonusAlvo ?? m.pontosBonusAlvo ?? 0;
-    setFormCaloriasBonus(bonus ? String(bonus) : "");
+    setFormSonoHoras(m.sonoHorasAlvo ? String(m.sonoHorasAlvo).replace(".", ",") : "");
+    setFormAguaLitros(
+      m.aguaMlAlvo ? (m.aguaMlAlvo / 1000).toFixed(1).replace(".", ",") : ""
+    );
+    setFormPesoAlvo(m.pesoAlvoKg ? String(m.pesoAlvoKg).replace(".", ",") : "");
+    setFormWorkoutFreq(String(m.workoutFrequency ?? 3));
     setFormFoco(
-      m.treatmentObjective ||
-        m.focoMetabolico ||
-        CLINICAL_OBJECTIVES[0]
+      resolverObjetivoAtivo(m.treatmentObjective, m.focoMetabolico) ||
+        DEFAULT_CLINICAL_OBJECTIVE
     );
   }, []);
 
@@ -162,9 +231,8 @@ export function MetasTab({
           cache: "no-store",
         });
         if (res.ok) {
-          const json = await res.json();
+          const json: MetasData = await res.json();
           setData(json);
-          // Não sobrescreve os campos enquanto o modal estiver aberto ou durante polling silencioso
           if (json.metas && !silent && !isModalAjusteOpenRef.current) {
             syncFormFromMetas(json.metas);
           }
@@ -186,7 +254,6 @@ export function MetasTab({
       void carregarMetas(false);
     });
 
-    // Sincronização em tempo real (polling silencioso) sem sobrescrever digitação ativa no modal
     const interval = setInterval(() => {
       if (!isModalAjusteOpenRef.current) {
         void carregarMetas(true);
@@ -201,7 +268,15 @@ export function MetasTab({
 
   function handleOpenModalAjuste() {
     if (data?.metas) {
-      syncFormFromMetas(data.metas);
+      syncFormFromMetas({
+        ...data.metas,
+        treatmentObjective:
+          resolverObjetivoAtivo(
+            data.metas.treatmentObjective,
+            data.metas.focoMetabolico,
+            objetivoAtual
+          ) || DEFAULT_CLINICAL_OBJECTIVE,
+      });
     }
     setFormError(null);
     isModalAjusteOpenRef.current = true;
@@ -215,10 +290,19 @@ export function MetasTab({
     setFormError(null);
   }
 
-  async function handleChangeObjetivo(novoObjetivo: string) {
+  async function handleChangeObjetivo(novoObjetivoRaw: string) {
+    const novoObjetivo = normalizarObjetivoClinicoValor(novoObjetivoRaw);
+    if (!novoObjetivo) return;
+
+    const anterior = resolverObjetivoAtivo(
+      data?.metas?.treatmentObjective,
+      data?.metas?.focoMetabolico,
+      objetivoAtual
+    );
+
     try {
       setSalvandoObjetivo(true);
-      // Atualização otimista
+      // Atualização otimista imediata na aba Metas e no cabeçalho/Prontuário pai
       setData((prev) =>
         prev
           ? {
@@ -232,6 +316,7 @@ export function MetasTab({
           : null
       );
       setFormFoco(novoObjetivo);
+      onObjetivoUpdated?.(novoObjetivo);
 
       const res = await fetch(`/api/pacientes/${pacienteId}/metas`, {
         method: "PUT",
@@ -243,11 +328,52 @@ export function MetasTab({
       });
 
       if (res.ok) {
+        // Invalida cache SWR do Command Center e lista de Pacientes para refletir na hora
+        invalidateClientCache("telemetria:");
+        invalidateClientCache("pacientes:");
         setObjetivoSalvoRecently(true);
-        setTimeout(() => setObjetivoSalvoRecently(false), 3000);
+        showToast("Objetivo do tratamento sincronizado com Prontuário, Dashboard e App!");
+        onMetasUpdated?.();
+        setTimeout(() => setObjetivoSalvoRecently(false), 3500);
+      } else {
+        // Reverte estado otimista em caso de erro
+        if (anterior) {
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  metas: {
+                    ...prev.metas,
+                    focoMetabolico: anterior,
+                    treatmentObjective: anterior,
+                  },
+                }
+              : null
+          );
+          setFormFoco(anterior);
+          onObjetivoUpdated?.(anterior);
+        }
+        showToast("Não foi possível atualizar o objetivo do tratamento.", "error");
       }
     } catch (err) {
       console.error("Erro ao atualizar objetivo do tratamento:", err);
+      if (anterior) {
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                metas: {
+                  ...prev.metas,
+                  focoMetabolico: anterior,
+                  treatmentObjective: anterior,
+                },
+              }
+            : null
+        );
+        setFormFoco(anterior);
+        onObjetivoUpdated?.(anterior);
+      }
+      showToast("Falha de conexão ao salvar o objetivo do tratamento.", "error");
     } finally {
       setSalvandoObjetivo(false);
     }
@@ -269,32 +395,38 @@ export function MetasTab({
       return Math.round(Number.parseFloat(normalized));
     };
 
-    const sonoHorasVal = parseDecimal(formSonoHoras);
-    const aguaMlVal = parseInteger(formAguaMl);
+    const objetivoLimpo = normalizarObjetivoClinicoValor(formFoco);
     const pesoAlvoVal = parseDecimal(formPesoAlvo);
-    const caloriasAlvoVal = parseInteger(formCaloriasAlvo);
-    const caloriasBonusVal = parseInteger(formCaloriasBonus);
+    const aguaLitrosVal = parseDecimal(formAguaLitros);
+    const sonoHorasVal = parseDecimal(formSonoHoras);
+    const workoutFreqVal = parseInteger(formWorkoutFreq);
 
+    if (!objetivoLimpo) {
+      setFormError("Selecione o Objetivo do Tratamento (Diretriz Clínica).");
+      return;
+    }
+    if (!Number.isFinite(pesoAlvoVal) || pesoAlvoVal < 35 || pesoAlvoVal > 250) {
+      setFormError("Meta de Peso Alvo deve estar entre 35 e 250 kg.");
+      return;
+    }
+    if (!Number.isFinite(aguaLitrosVal) || aguaLitrosVal < 1 || aguaLitrosVal > 6) {
+      setFormError("Meta de Hidratação deve estar entre 1,0 e 6,0 L/dia.");
+      return;
+    }
     if (!Number.isFinite(sonoHorasVal) || sonoHorasVal < 4 || sonoHorasVal > 14) {
       setFormError("Meta de Sono deve estar entre 4 e 14 horas/noite.");
       return;
     }
-    if (!Number.isFinite(aguaMlVal) || aguaMlVal < 1000 || aguaMlVal > 6000) {
-      setFormError("Meta de Água deve estar entre 1000 e 6000 ml/dia.");
+    if (
+      !Number.isFinite(workoutFreqVal) ||
+      workoutFreqVal < 1 ||
+      workoutFreqVal > 7
+    ) {
+      setFormError("Frequência Semanal de Treinos deve estar entre 1 e 7 dias/sem.");
       return;
     }
-    if (!Number.isFinite(pesoAlvoVal) || pesoAlvoVal < 35 || pesoAlvoVal > 250) {
-      setFormError("Peso Alvo deve estar entre 35 e 250 kg.");
-      return;
-    }
-    if (!Number.isFinite(caloriasAlvoVal) || caloriasAlvoVal < 500 || caloriasAlvoVal > 6000) {
-      setFormError("Meta Calórica Diária deve estar entre 500 e 6000 kcal.");
-      return;
-    }
-    if (!Number.isFinite(caloriasBonusVal) || caloriasBonusVal < 0 || caloriasBonusVal > 2000) {
-      setFormError("Meta de Gasto Calórico deve estar entre 0 e 2000 kcal.");
-      return;
-    }
+
+    const aguaMlVal = Math.round(aguaLitrosVal * 1000);
 
     try {
       setIsSavingMetas(true);
@@ -302,15 +434,12 @@ export function MetasTab({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sonoHorasAlvo: Math.round(sonoHorasVal * 10) / 10,
-          aguaMlAlvo: aguaMlVal,
+          treatmentObjective: objetivoLimpo,
+          focoMetabolico: objetivoLimpo,
           pesoAlvoKg: Math.round(pesoAlvoVal * 10) / 10,
-          caloriasAlvo: caloriasAlvoVal,
-          caloriasBonusAlvo: caloriasBonusVal,
-          pontosAlvo: caloriasAlvoVal, // compatibilidade
-          pontosBonusAlvo: caloriasBonusVal, // compatibilidade
-          focoMetabolico: formFoco.trim(),
-          treatmentObjective: formFoco.trim(),
+          aguaMlAlvo: aguaMlVal,
+          sonoHorasAlvo: Math.round(sonoHorasVal * 10) / 10,
+          workoutFrequency: workoutFreqVal,
         }),
       });
 
@@ -328,36 +457,47 @@ export function MetasTab({
                   hidratacaoHoje: {
                     ...prev.hidratacaoHoje,
                     metaMl: resJson.metas.aguaMlAlvo,
-                    percentual: Math.min(
-                      100,
-                      Math.round(
-                        (prev.hidratacaoHoje.consumidoMl /
-                          resJson.metas.aguaMlAlvo) *
-                          100
-                      )
-                    ),
+                    percentual:
+                      resJson.metas.aguaMlAlvo > 0
+                        ? Math.min(
+                            100,
+                            Math.round(
+                              (prev.hidratacaoHoje.consumidoMl /
+                                resJson.metas.aguaMlAlvo) *
+                                100
+                            )
+                          )
+                        : 0,
                   },
                   pesoEvolucao: {
                     ...prev.pesoEvolucao,
                     pesoAlvoKg: resJson.metas.pesoAlvoKg,
-                    distanciaAlvoKg: Math.max(
-                      0,
-                      Math.round(
-                        (prev.pesoEvolucao.pesoAtualKg -
-                          resJson.metas.pesoAlvoKg) *
-                          10
-                      ) / 10
-                    ),
+                    distanciaAlvoKg:
+                      prev.pesoEvolucao.pesoAtualKg > 0 &&
+                      resJson.metas.pesoAlvoKg > 0
+                        ? Math.round(
+                            Math.abs(
+                              prev.pesoEvolucao.pesoAtualKg -
+                                resJson.metas.pesoAlvoKg
+                            ) * 10
+                          ) / 10
+                        : 0,
                   },
                 }
               : prev
           );
           syncFormFromMetas(resJson.metas);
         }
+
+        // Propagação imediata para Prontuário, Termômetro, Dashboard e Pacientes
+        invalidateClientCache("telemetria:");
+        invalidateClientCache("pacientes:");
+        onObjetivoUpdated?.(objetivoLimpo);
+        onMetasUpdated?.();
+
         isModalAjusteOpenRef.current = false;
         setIsModalAjusteOpen(false);
-        setToastMensagem("Metas clínicas atualizadas com sucesso!");
-        setTimeout(() => setToastMensagem(null), 3500);
+        showToast("Metas clínicas atualizadas e sincronizadas com sucesso!");
         await carregarMetas(false);
       } else {
         const errJson = await res.json().catch(() => ({}));
@@ -387,22 +527,19 @@ export function MetasTab({
     aguaMlAlvo: 0,
     pesoAlvoKg: 0,
     passosAlvo: 0,
-    caloriasAlvo: 0,
-    caloriasBonusAlvo: 0,
-    pontosAlvo: 0,
-    pontosBonusAlvo: 0,
+    workoutFrequency: 3,
+    workoutType: null,
+    workoutDuration: null,
     focoMetabolico: "",
     treatmentObjective: "",
   };
 
-  const metaCalorias = metas.caloriasAlvo ?? metas.pontosAlvo ?? 0;
-  const metaCaloriasBonus = metas.caloriasBonusAlvo ?? metas.pontosBonusAlvo ?? 0;
-  const caloriasConsumidas = data?.caloriasConsumidasHoje ?? 0;
-  const saldoCaloricoRestante = Math.max(0, metaCalorias - caloriasConsumidas);
-  const percentualCalorico =
-    metaCalorias > 0
-      ? Math.min(100, Math.round((caloriasConsumidas / metaCalorias) * 100))
-      : 0;
+  const objetivoAtivo = resolverObjetivoAtivo(
+    metas.treatmentObjective,
+    metas.focoMetabolico,
+    objetivoAtual
+  );
+  const configObjetivo = getConfigObjetivoClinico(objetivoAtivo);
 
   const ultimoSono = data?.ultimoSono ?? ultimoSonoInicial ?? null;
   const sonoHistorico = data?.sonoHistorico ?? [];
@@ -430,21 +567,94 @@ export function MetasTab({
     historico: [],
   };
 
-  const caloriasGastasTreino = data?.caloriasGastasTreino ?? 0;
-  const treinosHoje = data?.treinosHoje ?? [];
+  const variacaoPeso = avaliarVariacaoPeso(pesoEvolucao.perdaTotalKg, objetivoAtivo);
+  const distanciaPesoAlvo = avaliarDistanciaPesoAlvo(
+    pesoEvolucao.pesoAtualKg,
+    pesoEvolucao.pesoAlvoKg,
+    objetivoAtivo
+  );
+
+  const constanciaDieta: ConstanciaAlimentar30d = data?.constanciaAlimentar30d || {
+    temDados: false,
+    percentualAdesao: null,
+    totalCheckins: 0,
+    diasRegistrados: 0,
+    seguiu: 0,
+    trocasInteligentes: 0,
+    naoFez: 0,
+    opcionaisBonus: 0,
+    gargalo: null,
+  };
+
+  const adesaoTreinos: AdesaoTreinos30d = data?.adesaoTreinos30d || {
+    temDados: false,
+    percentualAdesao: 0,
+    diasAtivos: 0,
+    metaEsperada: Math.max(1, Math.round(((metas.workoutFrequency ?? 3) / 7) * 30)),
+    frequenciaSemanal: metas.workoutFrequency ?? 3,
+    duracaoMin: metas.workoutDuration ?? null,
+    modalidade: metas.workoutType ?? null,
+    totalLogs: 0,
+    treinouHoje: false,
+    checkinsHojeCount: 0,
+    ultimoTreinoEm: null,
+  };
+
+  const totalBreakdownDieta =
+    constanciaDieta.seguiu +
+    constanciaDieta.trocasInteligentes +
+    constanciaDieta.naoFez;
+  const pctSeguiuBar =
+    totalBreakdownDieta > 0
+      ? (constanciaDieta.seguiu / totalBreakdownDieta) * 100
+      : 0;
+  const pctTrocaBar =
+    totalBreakdownDieta > 0
+      ? (constanciaDieta.trocasInteligentes / totalBreakdownDieta) * 100
+      : 0;
+  const pctNaoFezBar =
+    totalBreakdownDieta > 0
+      ? (constanciaDieta.naoFez / totalBreakdownDieta) * 100
+      : 0;
+
+  const diretrizTreinoResumo = [
+    adesaoTreinos.modalidade || "Treino prescrito",
+    adesaoTreinos.duracaoMin ? `${adesaoTreinos.duracaoMin} min` : null,
+    `${adesaoTreinos.frequenciaSemanal}x/sem`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const temDadosRegistrados =
     sonoHistorico.length > 0 ||
     hidratacaoHistorico.length > 0 ||
     pesoEvolucao.historico.length > 0 ||
-    treinosHoje.length > 0;
+    constanciaDieta.temDados ||
+    adesaoTreinos.temDados;
+
+  // Prévia em ml para o input de L/dia no modal
+  const previewAguaMl = (() => {
+    const parsed = Number.parseFloat(formAguaLitros.trim().replace(",", "."));
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.round(parsed * 1000);
+  })();
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-7 space-y-6 bg-slate-50/50">
       {/* TOAST DE FEEDBACK — CLINICAL LIGHT */}
       {toastMensagem && (
-        <div className="fixed top-16 right-8 z-50 cl-toast flex items-center gap-2 px-4 py-2.5 text-xs font-bold animate-in fade-in slide-in-from-top-4">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+        <div
+          className={`fixed top-16 right-8 z-50 cl-toast flex items-center gap-2 px-4 py-2.5 text-xs font-bold animate-in fade-in slide-in-from-top-4 ${
+            toastTipo === "error"
+              ? "border-rose-200 bg-rose-50 text-rose-800"
+              : ""
+          }`}
+        >
+          {toastTipo === "error" ? (
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          )}
           <span>{toastMensagem}</span>
         </div>
       )}
@@ -462,7 +672,7 @@ export function MetasTab({
             </span>
           </div>
           <p className="text-xs text-slate-500 font-medium mt-0.5">
-            Monitoramento de aderência metabólica, qualidade do repouso e hidratação de {pacienteNome}.
+            Monitoramento de constância alimentar, treinos, repouso, hidratação e evolução corporal de {pacienteNome}.
           </p>
         </div>
 
@@ -502,7 +712,7 @@ export function MetasTab({
 
               <span className="text-[11px] font-bold text-violet-800 bg-violet-50/90 border border-violet-200/80 px-2 py-0.5 rounded-lg">
                 {metas.sonoHorasAlvo > 0
-                  ? `Meta: ${metas.sonoHorasAlvo.toFixed(1)}h`
+                  ? `Meta: ${formatBrNum(metas.sonoHorasAlvo)}h`
                   : "Nenhuma meta definida"}
               </span>
             </div>
@@ -511,7 +721,7 @@ export function MetasTab({
             <div className="flex items-baseline justify-between py-1">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-3xl font-black text-slate-900 tracking-tight font-mono">
-                  {horasDormidasExibicao.toFixed(1)}h
+                  {formatBrNum(horasDormidasExibicao)}h
                 </span>
                 <span className="text-xs font-semibold text-slate-400">
                   {ultimoSono ? "horas dormidas (app)" : "sem registros"}
@@ -536,15 +746,15 @@ export function MetasTab({
                 <div className="flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-violet-600 shrink-0" />
                   <span>
-                    Último Check-in: <strong>{Number(ultimoSono.horas).toFixed(1)}h</strong> ({ultimoSono.qualidade})
+                    Último Check-in: <strong>{formatBrNum(Number(ultimoSono.horas))}h</strong> ({ultimoSono.qualidade})
                   </span>
                 </div>
                 <span className="text-[10px] text-violet-600 font-mono">
                   {new Date(ultimoSono.data).toLocaleDateString("pt-BR", {
-                  timeZone: TIMEZONE_BR,
-                  day: "2-digit",
-                  month: "2-digit",
-                })}
+                    timeZone: TIMEZONE_BR,
+                    day: "2-digit",
+                    month: "2-digit",
+                  })}
                 </span>
               </div>
             )}
@@ -616,7 +826,7 @@ export function MetasTab({
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
             <span className="flex items-center gap-1 font-medium">
               <Clock className="w-3.5 h-3.5 text-slate-400" />
-              Média semanal: <strong className="text-slate-700">{sonoMedia.toFixed(1)}h</strong>
+              Média semanal: <strong className="text-slate-700">{formatBrNum(sonoMedia)}h</strong>
             </span>
             <span className="font-bold text-violet-700">
               {ultimoSono ? `Qualidade: ${ultimoSono.qualidade}` : "Aguardando primeiro check-in"}
@@ -647,7 +857,7 @@ export function MetasTab({
 
               <span className="text-[11px] font-bold text-sky-800 bg-sky-50/90 border border-sky-200/80 px-2 py-0.5 rounded-lg">
                 {metas.aguaMlAlvo > 0
-                  ? `Meta: ${(metas.aguaMlAlvo / 1000).toFixed(1)}L / dia`
+                  ? `Meta: ${formatBrNum(metas.aguaMlAlvo / 1000)}L / dia`
                   : "Nenhuma meta definida"}
               </span>
             </div>
@@ -754,52 +964,59 @@ export function MetasTab({
         </div>
 
         {/* ======================================================== */}
-        {/* CARD 3: META DE PESO & COMPOSIÇÃO CORPORAL                */}
+        {/* CARD 3: META DE PESO CORPORAL (SEMÂNTICA POR OBJETIVO)   */}
         {/* ======================================================== */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 flex flex-col justify-between space-y-4 hover:border-slate-300 transition-colors">
           <div>
             {/* Header do Card */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 shrink-0">
                   <Scale className="w-4 h-4 stroke-[2.2]" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
                     Meta de Peso Corporal
                   </h3>
-                  <p className="text-[10px] font-medium text-slate-400">
-                    Curva de emagrecimento saudável
+                  <p className="text-[10px] font-medium text-slate-400 truncate">
+                    {configObjetivo.subtituloPeso}
                   </p>
                 </div>
               </div>
 
-              <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50/90 border border-emerald-200/80 px-2 py-0.5 rounded-lg">
+              <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50/90 border border-emerald-200/80 px-2 py-0.5 rounded-lg shrink-0">
                 {pesoEvolucao.pesoAlvoKg > 0
-                  ? `Alvo: ${pesoEvolucao.pesoAlvoKg.toFixed(1)} kg`
+                  ? `Alvo: ${formatBrNum(pesoEvolucao.pesoAlvoKg)} kg`
                   : "Nenhuma meta definida"}
               </span>
             </div>
 
-            {/* Destaque Numérico */}
-            <div className="flex items-baseline justify-between py-1">
-              <div className="flex items-baseline gap-1.5">
+            {/* Destaque Numérico com Cor/Sinal Coerente ao Objetivo */}
+            <div className="flex items-baseline justify-between gap-2 py-1">
+              <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className="text-3xl font-black text-slate-900 tracking-tight font-mono">
                   {pesoEvolucao.pesoAtualKg > 0
-                    ? `${pesoEvolucao.pesoAtualKg.toFixed(1)} kg`
-                    : "0.0 kg"}
+                    ? `${formatBrNum(pesoEvolucao.pesoAtualKg)} kg`
+                    : "0,0 kg"}
                 </span>
-                {pesoEvolucao.perdaTotalKg !== 0 && (
-                  <span className="text-xs font-semibold text-emerald-700 flex items-center gap-0.5">
-                    <TrendingDown className="w-3.5 h-3.5" />
-                    {pesoEvolucao.perdaTotalKg} kg
+                {pesoEvolucao.historico.length >= 2 && (
+                  <span
+                    className={`text-xs font-bold font-mono inline-flex items-center gap-0.5 ${variacaoPeso.textClass}`}
+                    title={variacaoPeso.rotulo}
+                  >
+                    {variacaoPeso.direcao === "up" ? (
+                      <TrendingUp className="w-3.5 h-3.5" />
+                    ) : variacaoPeso.direcao === "down" ? (
+                      <TrendingDown className="w-3.5 h-3.5" />
+                    ) : null}
+                    <span>{variacaoPeso.sinalTexto}</span>
                   </span>
                 )}
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                {pesoEvolucao.pesoAlvoKg > 0 && pesoEvolucao.pesoAtualKg > 0
-                  ? `Falta ${pesoEvolucao.distanciaAlvoKg} kg`
-                  : "Sem peso alvo"}
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${distanciaPesoAlvo.badgeClass}`}
+              >
+                {distanciaPesoAlvo.label}
               </span>
             </div>
 
@@ -871,19 +1088,19 @@ export function MetasTab({
             <span className="font-medium">
               IMC Atual:{" "}
               <strong className="text-slate-800 font-mono">
-                {pesoEvolucao.imcAtual > 0 ? pesoEvolucao.imcAtual : "--"}
+                {pesoEvolucao.imcAtual > 0 ? formatBrNum(pesoEvolucao.imcAtual) : "--"}
               </strong>
             </span>
-            <span className="font-bold text-emerald-700">
+            <span className={`font-bold ${configObjetivo.accentTextClass}`}>
               {pesoEvolucao.historico.length > 0
-                ? "Em acompanhamento"
+                ? `Foco: ${configObjetivo.rotuloCurto}`
                 : "Sem medições"}
             </span>
           </div>
         </div>
 
         {/* ======================================================== */}
-        {/* CARD 4: FOCO METABÓLICO & DIRETRIZES                     */}
+        {/* CARD 4: FOCO METABÓLICO & DIRETRIZES (FONTE GLOBAL)      */}
         {/* ======================================================== */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 flex flex-col justify-between space-y-4 hover:border-slate-300 transition-colors">
           <div>
@@ -902,31 +1119,37 @@ export function MetasTab({
                 </div>
               </div>
 
-              <span className="text-[11px] font-bold text-amber-800 bg-amber-50/90 border border-amber-200/80 px-2 py-0.5 rounded-lg">
-                {metas.treatmentObjective || metas.focoMetabolico ? "Ativo" : "Pendente"}
+              <span
+                className={`text-[11px] font-bold border px-2 py-0.5 rounded-lg ${
+                  objetivoAtivo
+                    ? configObjetivo.badgeClass
+                    : "text-amber-800 bg-amber-50/90 border-amber-200/80"
+                }`}
+              >
+                {objetivoAtivo ? configObjetivo.rotuloCurto : "Pendente"}
               </span>
             </div>
 
             <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 my-2 space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wide">
                   Objetivo do Tratamento (Diretriz Clínica)
                 </span>
                 {salvandoObjetivo && (
-                  <span className="text-[10px] font-bold text-teal-700 flex items-center gap-1 animate-pulse">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Atualizando...
+                  <span className="text-[10px] font-bold text-teal-700 flex items-center gap-1 animate-pulse shrink-0">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Salvando...
                   </span>
                 )}
-                {objetivoSalvoRecently && (
-                  <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Sincronizado no App
+                {objetivoSalvoRecently && !salvandoObjetivo && (
+                  <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1 shrink-0">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Sincronizado
                   </span>
                 )}
               </div>
 
               <div className="relative">
                 <select
-                  value={metas.treatmentObjective || metas.focoMetabolico || ""}
+                  value={objetivoAtivo || ""}
                   onChange={(e) => handleChangeObjetivo(e.target.value)}
                   disabled={salvandoObjetivo}
                   className="w-full text-xs font-bold text-amber-950 bg-white border border-amber-300 rounded-lg px-2.5 py-2 shadow-2xs focus:outline-hidden focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 cursor-pointer transition-all disabled:opacity-60"
@@ -939,11 +1162,15 @@ export function MetasTab({
                       {opcao}
                     </option>
                   ))}
+                  {objetivoAtivo &&
+                    !(CLINICAL_OBJECTIVES as readonly string[]).includes(
+                      objetivoAtivo
+                    ) && <option value={objetivoAtivo}>{objetivoAtivo}</option>}
                 </select>
               </div>
 
-              <p className="text-[10px] text-amber-900/70 font-medium">
-                Sincronizado automaticamente com a tela de Perfil do paciente no aplicativo.
+              <p className="text-[10px] text-amber-900/75 font-medium leading-relaxed">
+                Sincronizado em tempo real com Prontuário, Dashboard e App do paciente (Hoje, Evolução e Clínica).
               </p>
             </div>
 
@@ -951,194 +1178,296 @@ export function MetasTab({
               <div className="flex items-center justify-between py-1 border-b border-slate-100">
                 <span className="text-slate-500 font-medium flex items-center gap-1.5">
                   <Activity className="w-3.5 h-3.5 text-slate-400" />
-                  Frequência de Aderência
+                  Sinais Clínicos (30d)
                 </span>
                 <span className="font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
-                  {temDadosRegistrados ? "Registros Ativos" : "Aguardando primeiro check-in"}
+                  {temDadosRegistrados ? "Registros Ativos" : "Aguardando check-in"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between py-1">
+                <span className="text-slate-500 font-medium">Orientação</span>
+                <span className="text-[11px] font-semibold text-slate-700 text-right">
+                  {configObjetivo.subtituloDiretriz}
                 </span>
               </div>
             </div>
           </div>
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Protocolo de Longevidade</span>
+            <span>Protocolo FAAZ</span>
             <span className="font-bold text-slate-700">
-              {metas.treatmentObjective || metas.focoMetabolico ? "Configurado" : "Sem meta definida"}
+              {objetivoAtivo ? "Ativo e sincronizado" : "Sem diretriz definida"}
             </span>
           </div>
         </div>
 
         {/* ======================================================== */}
-        {/* CARD 5: META CALÓRICA DIÁRIA (NUTRIÇÃO)                  */}
+        {/* CARD 5: CONSTÂNCIA ALIMENTAR (DIETA · 30D)               */}
         {/* ======================================================== */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 flex flex-col justify-between space-y-4 hover:border-slate-300 transition-colors">
           <div>
             {/* Header do Card */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center border border-orange-100 shrink-0">
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 shrink-0">
                   <Utensils className="w-4 h-4 stroke-[2.2]" />
                 </div>
-                <div>
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-                    Meta Calórica Diária
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide truncate">
+                    Constância Alimentar
                   </h3>
                   <p className="text-[10px] font-medium text-slate-400">
-                    Planejamento nutricional e déficit calórico
+                    Dieta · últimos 30 dias
                   </p>
                 </div>
               </div>
 
-              <span className="text-[11px] font-bold text-orange-800 bg-orange-50/90 border border-orange-200/80 px-2 py-0.5 rounded-lg">
-                {metaCalorias > 0 ? `Meta: ${metaCalorias} kcal` : "Nenhuma meta definida"}
+              <span
+                className={`text-[11px] font-bold border px-2 py-0.5 rounded-lg shrink-0 ${getAdesaoBadgeClass(
+                  constanciaDieta.percentualAdesao,
+                  constanciaDieta.temDados
+                )}`}
+              >
+                {constanciaDieta.temDados && constanciaDieta.percentualAdesao !== null
+                  ? `${constanciaDieta.percentualAdesao}% aderência`
+                  : "Sem check-ins"}
               </span>
             </div>
 
-            {/* Destaque Numérico: Saldo Diário de Calorias vs Consumidas */}
+            {/* Destaque Numérico */}
             <div className="flex items-baseline justify-between py-1">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-3xl font-black text-slate-900 tracking-tight font-mono">
-                  {caloriasConsumidas}
+                  {constanciaDieta.temDados &&
+                  constanciaDieta.percentualAdesao !== null
+                    ? `${constanciaDieta.percentualAdesao}%`
+                    : "--"}
                 </span>
                 <span className="text-xs font-semibold text-slate-400">
-                  / {metaCalorias} kcal consumidas
+                  {constanciaDieta.temDados
+                    ? `${constanciaDieta.diasRegistrados} dia(s) ativo(s)`
+                    : "sem registros"}
                 </span>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                {metaCalorias > 0
-                  ? `Restam ${saldoCaloricoRestante} kcal`
-                  : "0 kcal"}
-              </span>
+              {constanciaDieta.opcionaisBonus > 0 && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+                  +{constanciaDieta.opcionaisBonus} bônus
+                </span>
+              )}
             </div>
 
-            {/* Barra de Progresso do Consumo Calórico */}
-            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-1">
-              <div
-                className="bg-orange-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${percentualCalorico}%` }}
-              />
+            {/* Barra Segmentada: Segui + Trocas Inteligentes + Não fiz */}
+            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden flex mt-1">
+              {totalBreakdownDieta > 0 ? (
+                <>
+                  {pctSeguiuBar > 0 && (
+                    <div
+                      className="bg-emerald-500 h-full transition-all duration-500"
+                      style={{ width: `${pctSeguiuBar}%` }}
+                      title={`Segui: ${constanciaDieta.seguiu}`}
+                    />
+                  )}
+                  {pctTrocaBar > 0 && (
+                    <div
+                      className="bg-sky-500 h-full transition-all duration-500"
+                      style={{ width: `${pctTrocaBar}%` }}
+                      title={`Trocas Inteligentes: ${constanciaDieta.trocasInteligentes}`}
+                    />
+                  )}
+                  {pctNaoFezBar > 0 && (
+                    <div
+                      className="bg-rose-400 h-full transition-all duration-500"
+                      style={{ width: `${pctNaoFezBar}%` }}
+                      title={`Não fiz: ${constanciaDieta.naoFez}`}
+                    />
+                  )}
+                </>
+              ) : null}
             </div>
 
-            {/* Detalhamento de Calorias do Dia */}
-            <div className="space-y-2 mt-3 text-xs">
-              <div className="flex items-center justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-500 font-medium">Meta Calórica Base</span>
-                <span className="font-bold font-mono text-slate-800">{metaCalorias} kcal</span>
+            {/* Breakdown Limpo: Segui / Trocas Inteligentes / Não fiz */}
+            <div className="grid grid-cols-3 gap-2 mt-3">
+              <div className="rounded-xl bg-emerald-50/70 border border-emerald-200/70 px-2.5 py-2 text-center">
+                <span className="block text-base font-black font-mono text-emerald-700 leading-tight">
+                  {constanciaDieta.seguiu}
+                </span>
+                <span className="text-[10px] font-bold text-emerald-800/80">
+                  Segui
+                </span>
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-500 font-medium">Calorias Consumidas</span>
-                <span className="font-bold font-mono text-orange-600">{caloriasConsumidas} kcal</span>
+              <div className="rounded-xl bg-sky-50/70 border border-sky-200/70 px-2.5 py-2 text-center">
+                <span className="block text-base font-black font-mono text-sky-700 leading-tight">
+                  {constanciaDieta.trocasInteligentes}
+                </span>
+                <span className="text-[10px] font-bold text-sky-800/80">
+                  Trocas Intel.
+                </span>
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-500 font-medium">Saldo Restante Disponível</span>
-                <span className="font-extrabold font-mono text-emerald-700">
-                  {saldoCaloricoRestante} kcal
+              <div className="rounded-xl bg-rose-50/70 border border-rose-200/70 px-2.5 py-2 text-center">
+                <span className="block text-base font-black font-mono text-rose-700 leading-tight">
+                  {constanciaDieta.naoFez}
+                </span>
+                <span className="text-[10px] font-bold text-rose-800/80">
+                  Não fiz
                 </span>
               </div>
             </div>
-          </div>
 
-          {/* Rodapé do Card */}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span className="font-medium">Diretriz Nutricional em kcal</span>
-            <span className="font-bold text-orange-700">
-              {metaCalorias > 0 ? "Meta Definida" : "Nenhuma meta definida"}
-            </span>
-          </div>
-        </div>
-
-        {/* ======================================================== */}
-        {/* CARD 6: TREINO & GASTO CALÓRICO (EXERCÍCIOS)              */}
-        {/* ======================================================== */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 flex flex-col justify-between space-y-4 hover:border-slate-300 transition-colors">
-          <div>
-            {/* Header do Card */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center border border-teal-100 shrink-0">
-                  <Dumbbell className="w-4 h-4 stroke-[2.2]" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-                    Treino & Gasto Calórico
-                  </h3>
-                  <p className="text-[10px] font-medium text-slate-400">
-                    Exercícios e gasto energético ativo
-                  </p>
-                </div>
-              </div>
-
-              <span className="text-[11px] font-bold text-teal-800 bg-teal-50/90 border border-teal-200/80 px-2 py-0.5 rounded-lg flex items-center gap-1">
-                <Zap className="w-3 h-3 text-teal-600" />
-                {metaCaloriasBonus > 0
-                  ? `Meta: +${metaCaloriasBonus} kcal`
-                  : "Nenhuma meta definida"}
-              </span>
-            </div>
-
-            {/* Destaque Numérico: Gasto Calórico em Treinos */}
-            <div className="flex items-baseline justify-between py-1">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-3xl font-black text-teal-600 tracking-tight font-mono">
-                  +{caloriasGastasTreino}
-                </span>
-                <span className="text-xs font-bold text-teal-800">
-                  KCAL GASTAS NO TREINO
-                </span>
-              </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                {caloriasGastasTreino > 0 ? "Treino Registrado" : "0 kcal hoje"}
-              </span>
-            </div>
-
-            {/* Visual Explicativo: Aumenta o Déficit Calórico */}
-            <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200/60 my-1 space-y-1">
-              <div className="flex items-center gap-1.5 text-teal-900 font-extrabold text-[11px]">
-                <Sparkles className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                <span>Exercícios Potencializam o Déficit Calórico</span>
-              </div>
-              <p className="text-[10px] text-teal-800 font-medium leading-relaxed">
-                Cada sessão de exercício contribui para o gasto energético total do paciente, acelerando a queima calórica e preservando o tecido muscular.
-              </p>
-            </div>
-
-            {/* Detalhes de Treinos do Dia (Reais ou Empty State) */}
-            <div className="space-y-2 mt-2 text-xs">
-              {treinosHoje.length > 0 ? (
-                treinosHoje.map((t) => (
-                  <div
-                    key={t.id}
-                    className="flex items-center justify-between py-1 border-b border-slate-100"
-                  >
-                    <span className="text-slate-600 font-medium">{t.titulo}</span>
-                    <span className="font-extrabold font-mono text-teal-700">
-                      +{t.calorias} kcal gastas
+            {/* Indicador de Horário de Gargalo ou Sem Gargalos */}
+            <div className="mt-3">
+              {constanciaDieta.gargalo ? (
+                <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50/80 border border-amber-200/80 text-[11px] text-amber-900">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <span className="font-bold block truncate">
+                      Gargalo: {constanciaDieta.gargalo.label}
+                    </span>
+                    <span className="text-[10px] text-amber-800/80 font-medium">
+                      {constanciaDieta.gargalo.naoFez} de{" "}
+                      {constanciaDieta.gargalo.totalRegistros} registro(s) sem adesão
                     </span>
                   </div>
-                ))
+                </div>
+              ) : constanciaDieta.temDados ? (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50/70 border border-emerald-200/70 text-[11px] font-semibold text-emerald-800">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Sem gargalos críticos no período</span>
+                </div>
               ) : (
-                <div className="py-2 text-center text-[11px] font-semibold text-slate-400 border border-dashed border-slate-200 rounded-lg bg-slate-50/60">
-                  Aguardando primeiro check-in de treino
+                <div className="py-2.5 text-center text-[11px] font-semibold text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50/60">
+                  Aguardando check-ins alimentares no App
                 </div>
               )}
             </div>
           </div>
 
-          {/* Rodapé do Card */}
+          {/* Rodapé do Card de Dieta */}
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+            <span className="font-medium">Segui + Trocas = 100%</span>
+            <span className="font-bold text-emerald-700 font-mono">
+              {constanciaDieta.totalCheckins} check-in(s)
+            </span>
+          </div>
+        </div>
+
+        {/* ======================================================== */}
+        {/* CARD 6: ADESÃO AOS TREINOS (30D)                         */}
+        {/* ======================================================== */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 flex flex-col justify-between space-y-4 hover:border-slate-300 transition-colors">
+          <div>
+            {/* Header do Card */}
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center border border-teal-100 shrink-0">
+                  <Dumbbell className="w-4 h-4 stroke-[2.2]" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide truncate">
+                    Adesão aos Treinos
+                  </h3>
+                  <p className="text-[10px] font-medium text-slate-400">
+                    Consistência · últimos 30 dias
+                  </p>
+                </div>
+              </div>
+
+              <span className="text-[11px] font-bold text-teal-800 bg-teal-50/90 border border-teal-200/80 px-2 py-0.5 rounded-lg shrink-0">
+                Meta: {adesaoTreinos.frequenciaSemanal}x / sem
+              </span>
+            </div>
+
+            {/* Destaque Numérico */}
+            <div className="flex items-baseline justify-between py-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-3xl font-black text-slate-900 tracking-tight font-mono">
+                  {adesaoTreinos.temDados ? `${adesaoTreinos.percentualAdesao}%` : "0%"}
+                </span>
+                <span className="text-xs font-semibold text-slate-400">
+                  {adesaoTreinos.diasAtivos} de {adesaoTreinos.metaEsperada} dias ativos
+                </span>
+              </div>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${getAdesaoBadgeClass(
+                  adesaoTreinos.percentualAdesao,
+                  adesaoTreinos.temDados
+                )}`}
+              >
+                {adesaoTreinos.temDados
+                  ? adesaoTreinos.percentualAdesao >= 75
+                    ? "Consistente"
+                    : adesaoTreinos.percentualAdesao >= 50
+                      ? "Moderada"
+                      : "Baixa"
+                  : "Sem registros"}
+              </span>
+            </div>
+
+            {/* Barra de Progresso de Adesão 30d */}
+            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden mt-1">
+              <div
+                className="bg-teal-500 h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(100, adesaoTreinos.percentualAdesao)}%`,
+                }}
+              />
+            </div>
+
+            {/* Diretriz Prescrita (Modalidade · Duração · Frequência) */}
+            <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200/70 mt-3 space-y-1">
+              <span className="text-[10px] font-bold text-teal-800 uppercase tracking-wide block">
+                Prescrição de Treino Ativa
+              </span>
+              <p className="text-xs font-extrabold text-teal-950 truncate" title={diretrizTreinoResumo}>
+                {diretrizTreinoResumo}
+              </p>
+            </div>
+
+            {/* Status do Check-in de Hoje */}
+            <div className="mt-3 space-y-2 text-xs">
+              <div className="flex items-center justify-between py-1.5 px-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                <span className="text-slate-600 font-semibold">Check-in de hoje</span>
+                {adesaoTreinos.treinouHoje ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    <span>
+                      Concluído
+                      {adesaoTreinos.checkinsHojeCount > 1
+                        ? ` (${adesaoTreinos.checkinsHojeCount}x)`
+                        : ""}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span>Pendente hoje</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Rodapé do Card de Treinos */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
             <span className="font-medium">
-              Gasto Adicional Total:{" "}
-              <strong className="text-teal-700">+{caloriasGastasTreino} kcal</strong>
+              {adesaoTreinos.ultimoTreinoEm
+                ? `Último treino: ${new Date(
+                    adesaoTreinos.ultimoTreinoEm
+                  ).toLocaleDateString("pt-BR", {
+                    timeZone: TIMEZONE_BR,
+                    day: "2-digit",
+                    month: "2-digit",
+                  })}`
+                : "Sem check-ins em 30d"}
             </span>
-            <span className="font-bold text-teal-700">
-              {caloriasGastasTreino > 0 ? "Queima Ativa" : "Sem registros hoje"}
+            <span className="font-bold text-teal-700 font-mono">
+              {adesaoTreinos.totalLogs} sessão(ões)
             </span>
           </div>
         </div>
       </div>
 
       {/* ======================================================== */}
-      {/* MODAL: AJUSTAR METAS DO PACIENTE                          */}
+      {/* MODAL: AJUSTAR METAS DO PACIENTE (APENAS METAS REAIS)    */}
       {/* ======================================================== */}
       {isModalAjusteOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
@@ -1162,7 +1491,7 @@ export function MetasTab({
               </button>
             </div>
 
-            {/* Formulário controlado com estado string para digitação livre */}
+            {/* Formulário controlado com apenas as 5 metas ativas no ecossistema */}
             <form onSubmit={handleSalvarMetas} className="p-5 space-y-4 text-xs">
               {formError && (
                 <div className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2 text-xs font-semibold text-rose-700 flex items-center gap-2">
@@ -1171,111 +1500,7 @@ export function MetasTab({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Meta de Sono */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                    <Moon className="w-3.5 h-3.5 text-violet-600" />
-                    <span>Meta de Sono (horas/noite) *</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    required
-                    value={formSonoHoras}
-                    onChange={(e) => setFormSonoHoras(e.target.value)}
-                    placeholder="8,0"
-                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">
-                    Ideal adulto: entre 7.5h e 8.5h
-                  </span>
-                </div>
-
-                {/* Meta de Hidratação */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                    <Droplets className="w-3.5 h-3.5 text-sky-600" />
-                    <span>Meta de Água (ml/dia) *</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    required
-                    value={formAguaMl}
-                    onChange={(e) => setFormAguaMl(e.target.value)}
-                    placeholder="2500"
-                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">
-                    Sincroniza com botões do App
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Meta de Peso Alvo */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                    <Scale className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Peso Alvo Desejado (kg) *</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    required
-                    value={formPesoAlvo}
-                    onChange={(e) => setFormPesoAlvo(e.target.value)}
-                    placeholder="75,0"
-                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">
-                    Alvo traçado no plano nutricional
-                  </span>
-                </div>
-
-                {/* Meta Calórica Diária (Alimentação) */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                    <Utensils className="w-3.5 h-3.5 text-orange-600" />
-                    <span>Meta Calórica Diária (kcal) *</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    required
-                    value={formCaloriasAlvo}
-                    onChange={(e) => setFormCaloriasAlvo(e.target.value)}
-                    placeholder="2000"
-                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">
-                    Meta diária base de calorias do plano alimentar
-                  </span>
-                </div>
-              </div>
-
-              {/* Meta de Gasto Calórico via Treino */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                  <Dumbbell className="w-3.5 h-3.5 text-teal-600" />
-                  <span>Meta de Gasto Calórico via Treino (kcal) *</span>
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  required
-                  value={formCaloriasBonus}
-                  onChange={(e) => setFormCaloriasBonus(e.target.value)}
-                  placeholder="300"
-                  className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
-                />
-                <span className="text-[10px] text-slate-400 mt-0.5 block">
-                  Calorias adicionais gastas via exercícios e atividades
-                </span>
-              </div>
-
-              {/* Objetivo do Tratamento */}
+              {/* 1. Objetivo do Tratamento (Diretriz Clínica) */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
                   <Target className="w-3.5 h-3.5 text-teal-600" />
@@ -1292,10 +1517,100 @@ export function MetasTab({
                       {opcao}
                     </option>
                   ))}
+                  {formFoco &&
+                    !(CLINICAL_OBJECTIVES as readonly string[]).includes(formFoco) && (
+                      <option value={formFoco}>{formFoco}</option>
+                    )}
                 </select>
                 <span className="text-[10px] text-slate-400 mt-0.5 block">
-                  Sincronizado diretamente com a tela de Perfil do app do paciente
+                  Sincronizado em tempo real com Prontuário, Dashboard e App do paciente
                 </span>
+              </div>
+
+              {/* 2. Meta de Peso Alvo (kg) + 3. Meta de Hidratação (L/dia) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Scale className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Meta de Peso Alvo (kg) *</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    value={formPesoAlvo}
+                    onChange={(e) => setFormPesoAlvo(e.target.value)}
+                    placeholder="Ex: 75,0"
+                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Alvo traçado para a diretriz ativa
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Droplets className="w-3.5 h-3.5 text-sky-600" />
+                    <span>Meta de Hidratação (L/dia) *</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    value={formAguaLitros}
+                    onChange={(e) => setFormAguaLitros(e.target.value)}
+                    placeholder="Ex: 2,5"
+                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    {previewAguaMl
+                      ? `Equivale a ${previewAguaMl.toLocaleString("pt-BR")} ml/dia no App`
+                      : "Entre 1,0 e 6,0 L/dia"}
+                  </span>
+                </div>
+              </div>
+
+              {/* 4. Meta de Sono (horas/noite) + 5. Frequência Semanal de Treinos (dias/sem) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Moon className="w-3.5 h-3.5 text-violet-600" />
+                    <span>Meta de Sono (horas/noite) *</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    value={formSonoHoras}
+                    onChange={(e) => setFormSonoHoras(e.target.value)}
+                    placeholder="Ex: 8,0"
+                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Ideal adulto: entre 7,5h e 8,5h
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Dumbbell className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Frequência Semanal de Treinos (dias/sem) *</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={7}
+                    step={1}
+                    required
+                    value={formWorkoutFreq}
+                    onChange={(e) => setFormWorkoutFreq(e.target.value)}
+                    placeholder="3"
+                    className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 bg-white"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Usada no cálculo de adesão (30d) e App
+                  </span>
+                </div>
               </div>
 
               {/* Ações do Modal */}

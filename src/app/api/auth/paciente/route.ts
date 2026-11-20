@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { IsNull } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import { PatientEntity, ProntuarioPacienteEntity } from "@/lib/db/entities";
+import { DEFAULT_CLINICAL_OBJECTIVE } from "@/lib/clinical-objectives";
+import { resolverObjetivoAtivo } from "@/lib/objetivo-clinico";
 
 export async function POST(req: NextRequest) {
   try {
@@ -58,9 +60,15 @@ export async function POST(req: NextRequest) {
     const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
     const prontuario = await prontuarioRepo.findOne({
       where: { pacienteId: paciente.id },
-      select: { id: true, medicacoes: true },
+      select: { id: true, medicacoes: true, objetivo: true },
     });
     const medicacoes = prontuario?.medicacoes?.trim() || null;
+    const objetivoUnificado =
+      resolverObjetivoAtivo(
+        paciente.treatmentObjective,
+        paciente.clinicalFocus,
+        prontuario?.objetivo,
+      ) || DEFAULT_CLINICAL_OBJECTIVE;
 
     // Retorna os dados do paciente para salvar no estado global do app mobile
     return NextResponse.json(
@@ -76,14 +84,8 @@ export async function POST(req: NextRequest) {
           recordCode: paciente.recordCode,
           medicoResponsavel: paciente.primaryDoctor?.fullName || null,
           especialidadeMedico: paciente.primaryDoctor?.specialty || null,
-          focoClinico:
-            paciente.treatmentObjective ||
-            paciente.clinicalFocus ||
-            "Otimização Metabólica & Saúde Integrativa",
-          treatmentObjective:
-            paciente.treatmentObjective ||
-            paciente.clinicalFocus ||
-            "Otimização Metabólica & Saúde Integrativa",
+          focoClinico: objetivoUnificado,
+          treatmentObjective: objetivoUnificado,
           medicacoes,
           avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
         },

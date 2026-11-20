@@ -17,6 +17,10 @@ import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { invalidarCacheMetricaPeso } from "@/lib/metrica-peso-eliminado";
 import { toIsoUtc } from "@/lib/date-br";
+import {
+  normalizarObjetivoClinicoValor,
+  resolverObjetivoAtivo,
+} from "@/lib/objetivo-clinico";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -360,6 +364,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       ? String(paciente.birthDate).split("T")[0]
       : null;
 
+    // Fonte única de verdade para o Objetivo do Tratamento (prioriza PATIENTS.TREATMENT_OBJECTIVE)
+    const objetivoUnificado = resolverObjetivoAtivo(
+      paciente.treatmentObjective,
+      paciente.clinicalFocus,
+      prontuario?.objetivo,
+    );
+
     return NextResponse.json(
       {
         success: true,
@@ -375,10 +386,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           convenio: paciente.convenio,
           telefoneWhatsapp: paciente.phoneWhatsapp,
           heightCm: paciente.heightCm != null ? Number(paciente.heightCm) : null,
-          clinicalFocus:
-            paciente.treatmentObjective || paciente.clinicalFocus,
-          treatmentObjective:
-            paciente.treatmentObjective || paciente.clinicalFocus,
+          clinicalFocus: objetivoUnificado || null,
+          treatmentObjective: objetivoUnificado || null,
           avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
           glicemiaRecente,
           glicemiaStatus,
@@ -389,11 +398,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           pesoAtualKg,
           alturaCm,
           imc,
-          objetivo:
-            prontuario?.objetivo ||
-            paciente.treatmentObjective ||
-            paciente.clinicalFocus ||
-            "",
+          objetivo: objetivoUnificado,
           comorbidades: prontuario?.comorbidades || "",
           alergias: prontuario?.alergias || "",
           medicacoes: prontuario?.medicacoes || "",
@@ -497,11 +502,15 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       imcCalculado = Math.round((pesoNum / (alturaM * alturaM)) * 100) / 100;
     }
 
+    const objetivoNormalizado = objetivo
+      ? normalizarObjetivoClinicoValor(String(objetivo))
+      : null;
+
     const fields = {
       pesoAtualKg: pesoNum,
       alturaCm: alturaNum,
       imc: imcCalculado,
-      objetivo: objetivo ? String(objetivo).trim().toUpperCase() : null,
+      objetivo: objetivoNormalizado,
       comorbidades: comorbidades
         ? String(comorbidades).trim().toUpperCase()
         : null,
@@ -534,9 +543,9 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     if (alturaNum && alturaNum > 0) {
       patientUpdateData.heightCm = alturaNum;
     }
-    if (objetivo) {
-      patientUpdateData.treatmentObjective = String(objetivo).trim();
-      patientUpdateData.clinicalFocus = String(objetivo).trim();
+    if (objetivoNormalizado) {
+      patientUpdateData.treatmentObjective = objetivoNormalizado;
+      patientUpdateData.clinicalFocus = objetivoNormalizado;
     }
     if (Object.keys(patientUpdateData).length > 0) {
       await patientRepo.update({ id }, patientUpdateData);

@@ -2,10 +2,11 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { IsNull, Not } from "typeorm";
+import { IsNull, MoreThanOrEqual, Not } from "typeorm";
 import { getRepository, withTransaction } from "@/lib/db/data-source";
 import {
   CheckinHidratacaoEntity,
+  CheckinRefeicaoEntity,
   CheckInSonoEntity,
   EvolucaoClinicaEntity,
   PatientEntity,
@@ -17,12 +18,21 @@ import {
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
+import {
+  getDataDiaBR,
+  getIntervaloDiasBR,
+  getPartesDataHoraBR,
+} from "@/lib/date-br";
+import {
+  normalizarObjetivoClinicoValor,
+  resolverObjetivoAtivo,
+} from "@/lib/objetivo-clinico";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// Identificadores canônicos de cada meta na tabela PATIENT_GOALS (sem colisão entre Calorias Diárias, Gasto de Treino e Sono)
+// Identificadores canônicos de cada meta na tabela PATIENT_GOALS
 function isSleepGoal(g: PatientGoal): boolean {
   const t = (g.title || "").toUpperCase();
   const u = (g.unit || "").toLowerCase().trim();
@@ -32,7 +42,13 @@ function isSleepGoal(g: PatientGoal): boolean {
 function isHydrationGoal(g: PatientGoal): boolean {
   const t = (g.title || "").toUpperCase();
   const u = (g.unit || "").toLowerCase().trim();
-  return g.category === "HYDRATION" || t.includes("HIDRATA") || t.includes("ÁGUA") || t.includes("AGUA") || u === "ml";
+  return (
+    g.category === "HYDRATION" ||
+    t.includes("HIDRATA") ||
+    t.includes("ÁGUA") ||
+    t.includes("AGUA") ||
+    u === "ml"
+  );
 }
 
 function isWeightGoal(g: PatientGoal): boolean {
@@ -52,7 +68,12 @@ function isWorkoutCalorieGoal(g: PatientGoal): boolean {
 }
 
 function isDailyCalorieGoal(g: PatientGoal): boolean {
-  if (isWorkoutCalorieGoal(g) || isSleepGoal(g) || isWeightGoal(g) || isHydrationGoal(g)) {
+  if (
+    isWorkoutCalorieGoal(g) ||
+    isSleepGoal(g) ||
+    isWeightGoal(g) ||
+    isHydrationGoal(g)
+  ) {
     return false;
   }
   const t = (g.title || "").toUpperCase();
@@ -76,6 +97,16 @@ function parseFiniteNumber(val: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function formatHorarioCurto(horario?: string | null): string | null {
+  if (!horario) return null;
+  const match = horario.match(/(\d{1,2})\s*[:hH]\s*(\d{2})/);
+  if (match) {
+    return `${match[1].padStart(2, "0")}:${match[2]}`;
+  }
+  const limpo = horario.trim();
+  return limpo.length > 0 ? limpo : null;
+}
+
 /**
  * GET /api/pacientes/[id]/metas
  */
@@ -94,33 +125,54 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const patientRepo = await getRepository(PatientEntity);
-    const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
-    const goalRepo = await getRepository(PatientGoalEntity);
-    const hidraRepo = await getRepository(CheckinHidratacaoEntity);
-    const sonoRepo = await getRepository(CheckInSonoEntity);
-    const evolucaoRepo = await getRepository(EvolucaoClinicaEntity);
-    const workoutRepo = await getRepository(WorkoutLogEntity);
+    const [
+      patientRepo,
+      prontuarioRepo,
+      goalRepo,
+      hidraRepo,
+      sonoRepo,
+      evolucaoRepo,
+      workoutRepo,
+      checkinRefeicaoRepo,
+    ] = await Promise.all([
+      getRepository(PatientEntity),
+      getRepository(ProntuarioPacienteEntity),
+      getRepository(PatientGoalEntity),
+      getRepository(CheckinHidratacaoEntity),
+      getRepository(CheckInSonoEntity),
+      getRepository(EvolucaoClinicaEntity),
+      getRepository(WorkoutLogEntity),
+      getRepository(CheckinRefeicaoEntity),
+    ]);
 
-    const paciente = await patientRepo.findOne({
-      where: { id },
-    });
-
-    if (!paciente || paciente.deletedAt) {
-      return NextResponse.json(
-        { error: "Paciente não encontrado." },
-        { status: 404 },
-      );
-    }
+    const { dataInicioIso: inicio30dIso, inicioUtc: inicio30dUtc } =
+      getIntervaloDiasBR(30);
+    const hojeIso = getDataDiaBR();
 
     const [
+      paciente,
       prontuario,
       patientGoals,
       checkinsHidratacao,
       checkinsSono,
       evolucoesComPeso,
-      workoutLogs,
+      workoutLogs30d,
+      checkinsRefeicoes30d,
     ] = await Promise.all([
+      patientRepo.findOne({
+        where: { id },
+        select: {
+          id: true,
+          deletedAt: true,
+          heightCm: true,
+          metaDiariaMl: true,
+          treatmentObjective: true,
+          clinicalFocus: true,
+          workoutType: true,
+          workoutFrequency: true,
+          workoutDuration: true,
+        },
+      }),
       prontuarioRepo.findOne({ where: { pacienteId: id } }),
       goalRepo.find({
         where: { patientId: id, deletedAt: IsNull() },
@@ -129,7 +181,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       hidraRepo.find({
         where: { pacienteId: id },
         order: { data: "DESC" },
-        take: 30,
+        take: 40,
       }),
       sonoRepo.find({
         where: { pacienteId: id },
@@ -142,28 +194,60 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           pesoAtual: Not(IsNull()),
         },
         order: { dataAtendimento: "ASC" },
-        take: 10,
+        take: 20,
       }),
       workoutRepo.find({
-        where: { patientId: id },
+        where: {
+          patientId: id,
+          date: MoreThanOrEqual(inicio30dUtc),
+        },
+        select: { id: true, date: true },
         order: { date: "DESC" },
-        take: 10,
+      }),
+      checkinRefeicaoRepo.find({
+        where: {
+          pacienteId: id,
+          dataDia: MoreThanOrEqual(inicio30dIso),
+        },
+        select: {
+          id: true,
+          refeicaoId: true,
+          dataDia: true,
+          status: true,
+          refeicao: {
+            id: true,
+            nome: true,
+            horario: true,
+            opcional: true,
+          },
+        },
+        relations: { refeicao: true },
+        order: { dataDia: "DESC", criadoEm: "DESC" },
       }),
     ]);
+
+    if (!paciente || paciente.deletedAt) {
+      return NextResponse.json(
+        { error: "Paciente não encontrado." },
+        { status: 404 },
+      );
+    }
 
     const activeGoals = patientGoals.filter((g) => g.status === "ACTIVE");
 
     const hidratacaoGoal = activeGoals.find(isHydrationGoal);
     const metaAguaMl = hidratacaoGoal
       ? Math.round(Number(hidratacaoGoal.targetValue))
-      : 0;
+      : paciente.metaDiariaMl
+        ? Math.round(Number(paciente.metaDiariaMl))
+        : 0;
 
     const sonoGoal = activeGoals.find(isSleepGoal);
     const metaSonoHoras = sonoGoal ? Number(sonoGoal.targetValue) : 0;
 
+    // Retrocompatibilidade de leitura (colunas mantidas no Oracle)
     const caloriasGoal = activeGoals.find(isDailyCalorieGoal);
     const caloriasBonusGoal = activeGoals.find(isWorkoutCalorieGoal);
-
     const caloriasRaw = caloriasGoal ? Number(caloriasGoal.targetValue) : 0;
     const caloriasAlvoNum =
       caloriasRaw === 0
@@ -171,7 +255,6 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         : caloriasRaw > 200
           ? caloriasRaw
           : caloriasRaw * 40;
-
     const bonusRaw = caloriasBonusGoal
       ? Number(caloriasBonusGoal.targetValue)
       : 0;
@@ -203,10 +286,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         ? Math.round((pesoAtualNum / (alturaM * alturaM)) * 100) / 100
         : 0;
 
-    // Consumo de água estritamente dos check-ins reais registrados hoje no Oracle
-    const hojeStr = new Date().toDateString();
+    // Consumo de água de hoje em Brasília (America/Sao_Paulo)
     const checkinsHidraHoje = checkinsHidratacao.filter(
-      (c) => c.data && new Date(c.data).toDateString() === hojeStr,
+      (c) => c.data && getDataDiaBR(new Date(c.data)) === hojeIso,
     );
     const consumoHojeMl = checkinsHidraHoje.reduce(
       (acc, c) => acc + (Number(c.volumeMl) || 0),
@@ -215,13 +297,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     const diasSemanaCurto = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
-    // Histórico de sono estritamente dos registros reais em CHECKINS_SONO
+    // Histórico de sono (CHECKINS_SONO)
     const ultimoRegistroSono = checkinsSono[0] || null;
     const sonoHistorico = [...checkinsSono].reverse().map((reg) => {
-      const d = new Date(reg.data);
-      const dia = diasSemanaCurto[d.getDay()] || "--";
-      const dataFmt = `${String(d.getDate()).padStart(2, "0")}/${String(
-        d.getMonth() + 1,
+      const partes = getPartesDataHoraBR(new Date(reg.data));
+      const dia = diasSemanaCurto[partes.weekdayIndex] || "--";
+      const dataFmt = `${String(partes.day).padStart(2, "0")}/${String(
+        partes.month,
       ).padStart(2, "0")}`;
       return {
         dia,
@@ -242,22 +324,22 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           ) / 10
         : 0;
 
-    // Histórico de hidratação estritamente agrupado por dia a partir de CHECKINS_HIDRATACAO
+    // Histórico de hidratação agrupado por dia em Brasília
     const hidraPorDiaMap = new Map<
       string,
       { dia: string; data: string; consumoMl: number; metaMl: number }
     >();
     for (const c of [...checkinsHidratacao].reverse()) {
-      const d = new Date(c.data);
-      const key = `${String(d.getDate()).padStart(2, "0")}/${String(
-        d.getMonth() + 1,
+      const partes = getPartesDataHoraBR(new Date(c.data));
+      const key = `${String(partes.day).padStart(2, "0")}/${String(
+        partes.month,
       ).padStart(2, "0")}`;
       const existing = hidraPorDiaMap.get(key);
       if (existing) {
         existing.consumoMl += Number(c.volumeMl) || 0;
       } else {
         hidraPorDiaMap.set(key, {
-          dia: diasSemanaCurto[d.getDay()] || "--",
+          dia: diasSemanaCurto[partes.weekdayIndex] || "--",
           data: key,
           consumoMl: Number(c.volumeMl) || 0,
           metaMl: metaAguaMl,
@@ -266,12 +348,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
     const hidratacaoHistorico = Array.from(hidraPorDiaMap.values()).slice(-7);
 
-    // Histórico de peso estritamente de EVOLUCOES_CLINICAS / PRONTUARIOS_PACIENTE
+    // Histórico de peso (EVOLUCOES_CLINICAS / PRONTUARIOS_PACIENTES)
     const historicoPeso: Array<{ data: string; peso: number }> =
       evolucoesComPeso.map((ev) => {
-        const d = new Date(ev.dataAtendimento);
-        const dia = String(d.getDate()).padStart(2, "0");
-        const mes = String(d.getMonth() + 1).padStart(2, "0");
+        const partes = getPartesDataHoraBR(new Date(ev.dataAtendimento));
+        const dia = String(partes.day).padStart(2, "0");
+        const mes = String(partes.month).padStart(2, "0");
         return {
           data: `${dia}/${mes}`,
           peso: Number(ev.pesoAtual),
@@ -284,8 +366,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         const refDate = prontuario?.updatedAt
           ? new Date(prontuario.updatedAt)
           : new Date();
-        const dia = String(refDate.getDate()).padStart(2, "0");
-        const mes = String(refDate.getMonth() + 1).padStart(2, "0");
+        const partes = getPartesDataHoraBR(refDate);
+        const dia = String(partes.day).padStart(2, "0");
+        const mes = String(partes.month).padStart(2, "0");
         historicoPeso.push({
           data: `${dia}/${mes}`,
           peso: pesoAtualNum,
@@ -295,7 +378,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     const pesoInicial =
       historicoPeso.length > 0 ? historicoPeso[0].peso : pesoAtualNum;
-    const perdaTotal =
+    const variacaoTotalKg =
       pesoAtualNum > 0 && pesoInicial > 0
         ? Math.round((pesoAtualNum - pesoInicial) * 10) / 10
         : 0;
@@ -304,31 +387,179 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       pesoInicialKg: pesoInicial,
       pesoAtualKg: pesoAtualNum,
       pesoAlvoKg,
-      perdaTotalKg: perdaTotal,
+      perdaTotalKg: variacaoTotalKg,
       distanciaAlvoKg:
         pesoAtualNum > 0 && pesoAlvoKg > 0
-          ? Math.max(0, Math.round((pesoAtualNum - pesoAlvoKg) * 10) / 10)
+          ? Math.round(Math.abs(pesoAtualNum - pesoAlvoKg) * 10) / 10
           : 0,
       imcAtual,
       historico: historicoPeso,
     };
 
-    // Treinos registrados hoje no Oracle (WORKOUT_LOGS)
-    const treinosHojeLogs = workoutLogs.filter(
-      (w) => w.date && new Date(w.date).toDateString() === hojeStr,
-    );
-    const caloriasPorTreino = caloriasBonusNum > 0 ? caloriasBonusNum : 0;
-    const caloriasGastasTreino =
-      treinosHojeLogs.length > 0 ? caloriasPorTreino : 0;
-    const treinosHoje = treinosHojeLogs.map((w, idx) => ({
-      id: w.id,
-      titulo: `Sessão de Treino #${idx + 1}`,
-      calorias: caloriasPorTreino,
-      data: w.date,
-    }));
+    // =========================================================================
+    // CONSTÂNCIA ALIMENTAR (DIETA · 30D) — mesma regra do Termômetro/Dashboard
+    // SEGUI + FIZ_TROCA = 100%, sem penalizar refeições OPCIONAL = 1
+    // =========================================================================
+    let obrigatoriosTotal = 0;
+    let obrigatoriosAderentes = 0;
+    let opcionaisConcluidos = 0;
+    let seguiuCount = 0;
+    let fizTrocaCount = 0;
+    let naoFezCount = 0;
+    const diasComCheckinDieta = new Set<string>();
 
-    const objetivoAtivo =
-      paciente.treatmentObjective || paciente.clinicalFocus || "";
+    const porRefeicaoObrigatoria = new Map<
+      string,
+      {
+        refeicaoId: string;
+        nome: string;
+        horario: string | null;
+        total: number;
+        naoFez: number;
+        aderentes: number;
+      }
+    >();
+
+    for (const c of checkinsRefeicoes30d) {
+      if (c.dataDia) diasComCheckinDieta.add(c.dataDia);
+      const isOpcional = Boolean(c.refeicao?.opcional);
+      const isAderente = c.status === "SEGUI" || c.status === "FIZ_TROCA";
+
+      if (c.status === "SEGUI") seguiuCount += 1;
+      else if (c.status === "FIZ_TROCA") fizTrocaCount += 1;
+      else if (c.status === "NAO_FIZ") naoFezCount += 1;
+
+      if (isOpcional) {
+        if (isAderente) opcionaisConcluidos += 1;
+      } else {
+        obrigatoriosTotal += 1;
+        if (isAderente) obrigatoriosAderentes += 1;
+
+        const key = c.refeicaoId;
+        const atual = porRefeicaoObrigatoria.get(key) || {
+          refeicaoId: c.refeicaoId,
+          nome: c.refeicao?.nome || "Refeição",
+          horario: formatHorarioCurto(c.refeicao?.horario),
+          total: 0,
+          naoFez: 0,
+          aderentes: 0,
+        };
+        atual.total += 1;
+        if (c.status === "NAO_FIZ") atual.naoFez += 1;
+        if (isAderente) atual.aderentes += 1;
+        porRefeicaoObrigatoria.set(key, atual);
+      }
+    }
+
+    let percentualDieta: number | null = null;
+    if (obrigatoriosTotal > 0) {
+      percentualDieta = Math.min(
+        100,
+        Math.round(
+          ((obrigatoriosAderentes + opcionaisConcluidos) / obrigatoriosTotal) *
+            100,
+        ),
+      );
+    } else if (opcionaisConcluidos > 0) {
+      percentualDieta = 100;
+    }
+
+    let gargalo: {
+      refeicaoId: string;
+      nome: string;
+      horario: string | null;
+      label: string;
+      totalRegistros: number;
+      naoFez: number;
+      percentualNaoFez: number;
+      percentualAdesao: number;
+    } | null = null;
+
+    for (const stats of porRefeicaoObrigatoria.values()) {
+      if (stats.naoFez <= 0) continue;
+      const propNaoFez: number = stats.naoFez / stats.total;
+      const melhorProp: number = gargalo
+        ? gargalo.naoFez / gargalo.totalRegistros
+        : -1;
+
+      if (
+        !gargalo ||
+        propNaoFez > melhorProp ||
+        (propNaoFez === melhorProp && stats.naoFez > gargalo.naoFez)
+      ) {
+        gargalo = {
+          refeicaoId: stats.refeicaoId,
+          nome: stats.nome,
+          horario: stats.horario,
+          label: stats.horario ? `${stats.nome} ${stats.horario}` : stats.nome,
+          totalRegistros: stats.total,
+          naoFez: stats.naoFez,
+          percentualNaoFez: Math.round(propNaoFez * 100),
+          percentualAdesao: Math.round((stats.aderentes / stats.total) * 100),
+        };
+      }
+    }
+
+    const constanciaAlimentar30d = {
+      temDados: checkinsRefeicoes30d.length > 0,
+      percentualAdesao: percentualDieta,
+      totalCheckins: checkinsRefeicoes30d.length,
+      diasRegistrados: diasComCheckinDieta.size,
+      seguiu: seguiuCount,
+      trocasInteligentes: fizTrocaCount,
+      naoFez: naoFezCount,
+      opcionaisBonus: opcionaisConcluidos,
+      gargalo,
+    };
+
+    // =========================================================================
+    // ADESÃO AOS TREINOS (30D) — WORKOUT_LOGS + diretriz em PATIENTS
+    // =========================================================================
+    const diasTreinoUnicos = new Set<string>();
+    const treinosHojeLogs: typeof workoutLogs30d = [];
+
+    for (const w of workoutLogs30d) {
+      if (!w.date) continue;
+      const diaIso = getDataDiaBR(new Date(w.date));
+      diasTreinoUnicos.add(diaIso);
+      if (diaIso === hojeIso) {
+        treinosHojeLogs.push(w);
+      }
+    }
+
+    const frequenciaSemanal = paciente.workoutFrequency ?? 3;
+    const metaEsperada30d = Math.max(
+      1,
+      Math.round((frequenciaSemanal / 7) * 30),
+    );
+    const diasAtivos30d = diasTreinoUnicos.size;
+    const percentualTreinos =
+      workoutLogs30d.length > 0
+        ? Math.min(100, Math.round((diasAtivos30d / metaEsperada30d) * 100))
+        : 0;
+
+    const adesaoTreinos30d = {
+      temDados: workoutLogs30d.length > 0,
+      percentualAdesao: percentualTreinos,
+      diasAtivos: diasAtivos30d,
+      metaEsperada: metaEsperada30d,
+      frequenciaSemanal,
+      duracaoMin: paciente.workoutDuration ?? null,
+      modalidade: paciente.workoutType || null,
+      totalLogs: workoutLogs30d.length,
+      treinouHoje: treinosHojeLogs.length > 0,
+      checkinsHojeCount: treinosHojeLogs.length,
+      ultimoTreinoEm: workoutLogs30d[0]?.date
+        ? new Date(workoutLogs30d[0].date).toISOString()
+        : null,
+    };
+
+    // Fonte única de verdade do Objetivo do Tratamento
+    const objetivoAtivo = resolverObjetivoAtivo(
+      paciente.treatmentObjective,
+      paciente.clinicalFocus,
+      prontuario?.objetivo,
+    );
 
     return NextResponse.json(
       {
@@ -337,6 +568,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           aguaMlAlvo: metaAguaMl,
           pesoAlvoKg,
           passosAlvo: 0,
+          workoutFrequency: frequenciaSemanal,
+          workoutType: paciente.workoutType || null,
+          workoutDuration: paciente.workoutDuration ?? null,
           caloriasAlvo: caloriasAlvoNum,
           caloriasBonusAlvo: caloriasBonusNum,
           pontosAlvo: caloriasAlvoNum,
@@ -368,9 +602,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         },
         hidratacaoHistorico,
         pesoEvolucao,
-        caloriasConsumidasHoje: 0,
-        caloriasGastasTreino,
-        treinosHoje,
+        constanciaAlimentar30d,
+        adesaoTreinos30d,
       },
       {
         headers: {
@@ -391,13 +624,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
 /**
  * PUT / POST /api/pacientes/[id]/metas
- * Faz o Upsert transacional das 6 metas clínicas no Oracle Autonomous Database:
+ * Faz o Upsert transacional das metas clínicas ativas no Oracle Autonomous Database:
  *  1. Meta de Sono (horas/noite)              -> PATIENT_GOALS ("QUALIDADE DO SONO", unit="h")
  *  2. Meta de Água (ml/dia)                   -> PATIENTS.META_DIARIA_ML + PATIENT_GOALS ("META DE HIDRATAÇÃO DIÁRIA", category="HYDRATION")
  *  3. Peso Alvo Desejado (kg)                 -> PATIENT_GOALS ("META DE PESO CORPORAL", unit="kg")
- *  4. Meta Calórica Diária (kcal)             -> PATIENT_GOALS ("META CALÓRICA DIÁRIA (ALIMENTAÇÃO)", unit="kcal")
- *  5. Meta de Gasto Calórico via Treino (kcal)-> PATIENT_GOALS ("META DE GASTO CALÓRICO (TREINO)", unit="kcal")
- *  6. Objetivo do Tratamento (string)         -> PATIENTS.TREATMENT_OBJECTIVE & CLINICAL_FOCUS
+ *  4. Frequência Semanal de Treinos (dias/sem)-> PATIENTS.WORKOUT_FREQUENCY
+ *  5. Objetivo do Tratamento (string)         -> PATIENTS.TREATMENT_OBJECTIVE, PATIENTS.CLINICAL_FOCUS e PRONTUARIOS_PACIENTES.OBJETIVO (sincronizados)
+ *  (Campos calóricos legados permanecem aceitos para retrocompatibilidade sem alterar schema)
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
@@ -419,6 +652,8 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       sonoHorasAlvo,
       aguaMlAlvo,
       pesoAlvoKg,
+      workoutFrequency,
+      frequenciaTreinosSemanal,
       caloriasAlvo,
       caloriasBonusAlvo,
       pontosAlvo,
@@ -430,17 +665,22 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     const parsedAgua = parseFiniteNumber(aguaMlAlvo);
     const parsedSono = parseFiniteNumber(sonoHorasAlvo);
     const parsedPeso = parseFiniteNumber(pesoAlvoKg);
+    const parsedWorkoutFreq = parseFiniteNumber(
+      workoutFrequency ?? frequenciaTreinosSemanal,
+    );
     const parsedCalorias = parseFiniteNumber(caloriasAlvo ?? pontosAlvo);
     const parsedBonus = parseFiniteNumber(caloriasBonusAlvo ?? pontosBonusAlvo);
+
     const rawObjetivo =
       typeof treatmentObjective === "string" && treatmentObjective.trim()
-        ? treatmentObjective.trim()
+        ? normalizarObjetivoClinicoValor(treatmentObjective)
         : typeof focoMetabolico === "string" && focoMetabolico.trim()
-          ? focoMetabolico.trim()
+          ? normalizarObjetivoClinicoValor(focoMetabolico)
           : undefined;
 
     const resultado = await withTransaction(async (manager) => {
       const patientRepo = manager.getRepository(PatientEntity);
+      const prontuarioRepo = manager.getRepository(ProntuarioPacienteEntity);
       const goalRepo = manager.getRepository(PatientGoalEntity);
 
       const paciente = await patientRepo.findOne({
@@ -451,11 +691,15 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         return null;
       }
 
-      // Carrega todas as metas existentes do paciente em uma única consulta
-      const existingGoals = await goalRepo.find({
-        where: { patientId: id, deletedAt: IsNull() },
-        order: { updatedAt: "DESC" },
-      });
+      const [existingGoals, existingProntuario] = await Promise.all([
+        goalRepo.find({
+          where: { patientId: id, deletedAt: IsNull() },
+          order: { updatedAt: "DESC" },
+        }),
+        prontuarioRepo.findOne({
+          where: { pacienteId: id },
+        }),
+      ]);
 
       const prevHidra = existingGoals.find(isHydrationGoal);
       const aguaFinal =
@@ -463,16 +707,27 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
           ? Math.round(parsedAgua)
           : prevHidra
             ? Math.round(Number(prevHidra.targetValue))
-            : 0;
+            : paciente.metaDiariaMl || 0;
+
+      const workoutFreqFinal =
+        parsedWorkoutFreq !== undefined
+          ? Math.min(7, Math.max(1, Math.round(parsedWorkoutFreq)))
+          : paciente.workoutFrequency ?? 3;
+
       const objetivoFinal =
         rawObjetivo ||
-        paciente.treatmentObjective ||
-        paciente.clinicalFocus ||
-        "";
+        resolverObjetivoAtivo(
+          paciente.treatmentObjective,
+          paciente.clinicalFocus,
+          existingProntuario?.objetivo,
+        );
 
-      // 1. Atualiza PATIENTS (META_DIARIA_ML, TREATMENT_OBJECTIVE, CLINICAL_FOCUS)
+      // 1. Atualiza PATIENTS (META_DIARIA_ML, WORKOUT_FREQUENCY, TREATMENT_OBJECTIVE, CLINICAL_FOCUS)
       if (parsedAgua !== undefined) {
         paciente.metaDiariaMl = aguaFinal;
+      }
+      if (parsedWorkoutFreq !== undefined) {
+        paciente.workoutFrequency = workoutFreqFinal;
       }
       if (rawObjetivo) {
         paciente.treatmentObjective = rawObjetivo;
@@ -482,6 +737,21 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         paciente.updatedBy = sessao.userId;
       }
       await patientRepo.save(paciente);
+
+      // 2. Sincroniza PRONTUARIOS_PACIENTES.OBJETIVO na mesma transação (fonte única de verdade)
+      if (rawObjetivo) {
+        if (existingProntuario) {
+          existingProntuario.objetivo = rawObjetivo;
+          await prontuarioRepo.save(existingProntuario);
+        } else {
+          await prontuarioRepo.save(
+            prontuarioRepo.create({
+              pacienteId: id,
+              objetivo: rawObjetivo,
+            }),
+          );
+        }
+      }
 
       const upsertGoal = async (
         matcher: (g: PatientGoal) => boolean,
@@ -507,7 +777,6 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
           }
           await goalRepo.save(primary);
 
-          // Se existirem duplicatas legadas para a mesma meta, pausa as antigas para não conflitar no GET
           for (let i = 1; i < matches.length; i++) {
             if (matches[i].status === "ACTIVE") {
               matches[i].status = "REPLACED";
@@ -575,7 +844,6 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         bonusRaw === 0 || bonusRaw > 50 ? bonusRaw : bonusRaw * 30,
       );
 
-      // Upsert apenas das metas enviadas (ou todas quando submeter o formulário completo)
       if (parsedAgua !== undefined) {
         await upsertGoal(isHydrationGoal, {
           category: "HYDRATION",
@@ -625,11 +893,14 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         sonoHorasAlvo: sonoFinal,
         aguaMlAlvo: aguaFinal,
         pesoAlvoKg: pesoFinal,
+        workoutFrequency: workoutFreqFinal,
+        workoutType: paciente.workoutType || null,
+        workoutDuration: paciente.workoutDuration ?? null,
         caloriasAlvo: caloriasFinal,
         caloriasBonusAlvo: bonusFinal,
         pontosAlvo: caloriasFinal,
         pontosBonusAlvo: bonusFinal,
-        passosAlvo: 8000,
+        passosAlvo: 0,
         focoMetabolico: objetivoFinal,
         treatmentObjective: objetivoFinal,
       };
@@ -645,6 +916,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     try {
       revalidatePath(`/pacientes/${id}`);
       revalidatePath("/dashboard/pacientes");
+      revalidatePath("/dashboard");
     } catch {
       // ignora erro de revalidação fora de contexto RSC
     }

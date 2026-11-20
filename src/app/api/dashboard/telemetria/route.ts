@@ -27,6 +27,10 @@ import {
   getPartesDataHoraBR,
   subtrairDiasDataBR,
 } from "@/lib/date-br";
+import {
+  classificarObjetivoClinico,
+  resolverObjetivoAtivo,
+} from "@/lib/objetivo-clinico";
 import type {
   ConsultaProximaItem,
   DetalheDietaPaciente,
@@ -68,35 +72,13 @@ function classificarObjetivoPaciente(
   clinicalFocus?: string | null,
   prontuarioObjetivo?: string | null
 ): "HIPERTROFIA" | "EMAGRECIMENTO" | "MANUTENCAO" {
-  const joined = normalizarTexto(
-    [treatmentObjective, clinicalFocus, prontuarioObjetivo]
-      .filter(Boolean)
-      .join(" ")
+  // Prioriza PATIENTS.TREATMENT_OBJECTIVE -> CLINICAL_FOCUS -> PRONTUARIOS_PACIENTES.OBJETIVO
+  // sem concatenar strings antigas em conflito
+  return classificarObjetivoClinico(
+    treatmentObjective,
+    clinicalFocus,
+    prontuarioObjetivo
   );
-
-  if (
-    joined.includes("hipertrofia") ||
-    joined.includes("ganho de massa") ||
-    joined.includes("massa muscular") ||
-    joined.includes("bulking") ||
-    joined.includes("anabolism")
-  ) {
-    return "HIPERTROFIA";
-  }
-
-  if (
-    joined.includes("emagrec") ||
-    joined.includes("perda de peso") ||
-    joined.includes("reducao ponderal") ||
-    joined.includes("deficit") ||
-    joined.includes("obesidade") ||
-    joined.includes("definicao") ||
-    joined.includes("sobrepeso")
-  ) {
-    return "EMAGRECIMENTO";
-  }
-
-  return "MANUTENCAO";
 }
 
 function normalizarCategoriaBristol(
@@ -1655,7 +1637,12 @@ export async function GET(req: NextRequest) {
             diasSemSinal !== null
               ? `${diasSemSinal} dias sem check-in no app`
               : "Sem check-ins registrados nos últimos 7+ dias",
-          detalhe: p.treatmentObjective || p.clinicalFocus || "Acompanhamento ativo",
+          detalhe:
+            resolverObjetivoAtivo(
+              p.treatmentObjective,
+              p.clinicalFocus,
+              p.prontuario?.objetivo
+            ) || "Acompanhamento ativo",
           ultimoSinalEm: ultimo ? ultimo.toISOString() : null,
         });
       }

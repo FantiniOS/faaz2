@@ -65,6 +65,11 @@ const DocumentosTab = dynamic(
 );
 import { CLINICAL_OBJECTIVES } from "@/lib/clinical-objectives";
 import {
+  normalizarObjetivoClinicoValor,
+  resolverObjetivoAtivo,
+} from "@/lib/objetivo-clinico";
+import { invalidateClientCache } from "@/lib/client-swr-cache";
+import {
   ResponsiveContainer,
   AreaChart,
   Area,
@@ -107,6 +112,7 @@ interface PacienteApiData {
   telefoneWhatsapp?: string;
   heightCm?: number | null;
   clinicalFocus?: string | null;
+  treatmentObjective?: string | null;
   avatarUrl?: string | null;
   photoUrl?: string | null;
   glicemiaRecente?: number | null;
@@ -460,6 +466,8 @@ export function ProntuarioModal({
   const [pesoAtual, setPesoAtual] = useState<string>("");
   const [altura, setAltura] = useState<string>("");
   const [objetivo, setObjetivo] = useState<string>("");
+  const [salvandoObjetivoProntuario, setSalvandoObjetivoProntuario] = useState(false);
+  const [objetivoProntuarioSalvo, setObjetivoProntuarioSalvo] = useState(false);
   const [comorbidades, setComorbidades] = useState<string>("");
   const [alergias, setAlergias] = useState<string>("");
   const [medicacoes, setMedicacoes] = useState<string>("");
@@ -593,7 +601,13 @@ export function ProntuarioModal({
             const p = json.prontuario;
             setPesoAtual(p.pesoAtualKg ? String(p.pesoAtualKg) : "");
             setAltura(p.alturaCm ? String(p.alturaCm) : "");
-            setObjetivo(p.objetivo || "");
+            setObjetivo(
+              resolverObjetivoAtivo(
+                json.paciente?.treatmentObjective,
+                json.paciente?.clinicalFocus,
+                p.objetivo
+              )
+            );
             setComorbidades(p.comorbidades || "");
             setAlergias(p.alergias || "");
             setMedicacoes(p.medicacoes || "");
@@ -820,7 +834,11 @@ export function ProntuarioModal({
       : null;
 
   const objetivoHeader =
-    objetivo || pacienteApiData?.clinicalFocus || null;
+    resolverObjetivoAtivo(
+      objetivo,
+      pacienteApiData?.treatmentObjective,
+      pacienteApiData?.clinicalFocus
+    ) || null;
 
   // Badge da faixa do IMC no cabeçalho premium
   const imcFaixaHeaderBadge = useMemo(() => {
@@ -1727,6 +1745,81 @@ export function ProntuarioModal({
     return timelineUnificada.filter((entry) => !entry.isAutoApp);
   }, [timelineUnificada, filtroHistorico]);
 
+  // Atualização imediata e sincronizada do Objetivo do Tratamento (Prontuário, Metas, Dashboard e App)
+  async function handleChangeObjetivoProntuario(novoValorRaw: string) {
+    const novoValor = normalizarObjetivoClinicoValor(novoValorRaw);
+    if (!novoValor) return;
+
+    const anterior = resolverObjetivoAtivo(
+      objetivo,
+      pacienteApiData?.treatmentObjective,
+      pacienteApiData?.clinicalFocus
+    );
+
+    setObjetivo(novoValor);
+    setPacienteApiData((prev) =>
+      prev
+        ? {
+            ...prev,
+            clinicalFocus: novoValor,
+            treatmentObjective: novoValor,
+          }
+        : prev
+    );
+
+    if (!paciente?.id) return;
+
+    try {
+      setSalvandoObjetivoProntuario(true);
+      const res = await fetch(`/api/pacientes/${paciente.id}/metas`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          treatmentObjective: novoValor,
+          focoMetabolico: novoValor,
+        }),
+      });
+
+      if (res.ok) {
+        invalidateClientCache("telemetria:");
+        invalidateClientCache("pacientes:");
+        setObjetivoProntuarioSalvo(true);
+        setSuccessToast(
+          "Objetivo do tratamento sincronizado com Metas, Dashboard e App!"
+        );
+        setTimeout(() => setSuccessToast(null), 3000);
+        setTimeout(() => setObjetivoProntuarioSalvo(false), 3000);
+      } else if (anterior) {
+        setObjetivo(anterior);
+        setPacienteApiData((prev) =>
+          prev
+            ? {
+                ...prev,
+                clinicalFocus: anterior,
+                treatmentObjective: anterior,
+              }
+            : prev
+        );
+      }
+    } catch (err) {
+      console.error("Erro ao sincronizar objetivo do tratamento:", err);
+      if (anterior) {
+        setObjetivo(anterior);
+        setPacienteApiData((prev) =>
+          prev
+            ? {
+                ...prev,
+                clinicalFocus: anterior,
+                treatmentObjective: anterior,
+              }
+            : prev
+        );
+      }
+    } finally {
+      setSalvandoObjetivoProntuario(false);
+    }
+  }
+
   // Salvar Ficha e Registrar Novo Atendimento na Linha do Tempo
   async function handleSalvarERegistrarAtendimento(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -1734,13 +1827,14 @@ export function ProntuarioModal({
 
     try {
       setIsSaving(true);
+      const objetivoNormalizado = normalizarObjetivoClinicoValor(objetivo);
       const res = await fetch(`/api/pacientes/${paciente.id}/prontuario`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pesoAtualKg: pesoAtual,
           alturaCm: altura,
-          objetivo: objetivo ? objetivo.trim().toUpperCase() : objetivo,
+          objetivo: objetivoNormalizado || objetivo,
           comorbidades: comorbidades ? comorbidades.trim().toUpperCase() : comorbidades,
           alergias: alergias ? alergias.trim().toUpperCase() : alergias,
           medicacoes: medicacoes ? medicacoes.trim().toUpperCase() : medicacoes,
@@ -1754,6 +1848,22 @@ export function ProntuarioModal({
         alert(json.error || "Erro ao salvar prontuário.");
         return;
       }
+
+      if (objetivoNormalizado) {
+        setObjetivo(objetivoNormalizado);
+        setPacienteApiData((prev) =>
+          prev
+            ? {
+                ...prev,
+                clinicalFocus: objetivoNormalizado,
+                treatmentObjective: objetivoNormalizado,
+              }
+            : prev
+        );
+      }
+
+      invalidateClientCache("telemetria:");
+      invalidateClientCache("pacientes:");
 
       setUltimaAtualizacao(new Date().toISOString());
       if (Array.isArray(json.historico)) {
@@ -2541,21 +2651,45 @@ export function ProntuarioModal({
 
                     {/* Objetivo Principal */}
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                        <Target className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                        <span>Objetivo do Tratamento (Diretriz Clínica)</span>
-                      </label>
+                      <div className="flex items-center justify-between gap-1.5 mb-1">
+                        <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                          <Target className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                          <span>Objetivo do Tratamento (Diretriz Clínica)</span>
+                        </label>
+                        {salvandoObjetivoProntuario && (
+                          <span className="text-[10px] font-bold text-teal-700 inline-flex items-center gap-1 shrink-0">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            <span>Salvando...</span>
+                          </span>
+                        )}
+                        {objetivoProntuarioSalvo && !salvandoObjetivoProntuario && (
+                          <span className="text-[10px] font-bold text-emerald-700 inline-flex items-center gap-0.5 shrink-0">
+                            <CheckCircle2 className="w-2.5 h-2.5" />
+                            <span>Sincronizado</span>
+                          </span>
+                        )}
+                      </div>
                       <select
-                        value={objetivo || "Otimização Metabólica & Saúde Integrativa"}
-                        onChange={(e) => setObjetivo(e.target.value)}
-                        className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 transition-all bg-white cursor-pointer"
+                        value={objetivoHeader || "Otimização Metabólica & Saúde Integrativa"}
+                        onChange={(e) => void handleChangeObjetivoProntuario(e.target.value)}
+                        disabled={salvandoObjetivoProntuario}
+                        className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 transition-all bg-white cursor-pointer disabled:opacity-60"
                       >
                         {CLINICAL_OBJECTIVES.map((opt) => (
                           <option key={opt} value={opt}>
                             {opt}
                           </option>
                         ))}
+                        {objetivoHeader &&
+                          !(CLINICAL_OBJECTIVES as readonly string[]).includes(
+                            objetivoHeader
+                          ) && (
+                            <option value={objetivoHeader}>{objetivoHeader}</option>
+                          )}
                       </select>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Sincroniza automaticamente com Metas, Dashboard e App do paciente.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2998,6 +3132,23 @@ export function ProntuarioModal({
             pacienteNome={paciente?.nome || "Paciente"}
             pacientePesoAtualKg={pesoAtual}
             pacienteAlturaCm={altura}
+            objetivoAtual={objetivoHeader}
+            onObjetivoUpdated={(novoObjetivo) => {
+              const norm = normalizarObjetivoClinicoValor(novoObjetivo);
+              setObjetivo(norm);
+              setPacienteApiData((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      clinicalFocus: norm,
+                      treatmentObjective: norm,
+                    }
+                  : prev
+              );
+            }}
+            onMetasUpdated={() => {
+              setTermometroRefreshKey((k) => k + 1);
+            }}
           />
         ) : activeTab === "treinos" ? (
           /* CONTEÚDO DA ABA TREINOS & HABIT TRACKER */

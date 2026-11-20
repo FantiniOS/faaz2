@@ -17,6 +17,10 @@ import {
   podeCadastrarPacientes,
   podeExcluirPacientes,
 } from "@/lib/auth-rbac";
+import {
+  normalizarObjetivoClinicoValor,
+  resolverObjetivoAtivo,
+} from "@/lib/objetivo-clinico";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -51,18 +55,28 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 
     let medicacoes: string | null = null;
+    let prontuarioObjetivo: string | null = null;
     if (!sessao || podeAcessarDadosClinicos(sessao.cargo)) {
       const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
       const prontuario = await prontuarioRepo.findOne({
         where: { pacienteId: paciente.id },
-        select: { id: true, medicacoes: true },
+        select: { id: true, medicacoes: true, objetivo: true },
       });
       medicacoes = prontuario?.medicacoes?.trim() || null;
+      prontuarioObjetivo = prontuario?.objetivo?.trim() || null;
     }
+
+    const objetivoUnificado = resolverObjetivoAtivo(
+      paciente.treatmentObjective,
+      paciente.clinicalFocus,
+      prontuarioObjetivo,
+    );
 
     return NextResponse.json({
       paciente: {
         ...paciente,
+        treatmentObjective: objetivoUnificado || paciente.treatmentObjective,
+        clinicalFocus: objetivoUnificado || paciente.clinicalFocus,
         medicacoes,
       },
     });
@@ -153,6 +167,17 @@ async function handleUpdate(
 
     const patientRepo = await getRepository(PatientEntity);
 
+    const objetivoInformado =
+      treatmentObjective !== undefined
+        ? treatmentObjective
+          ? normalizarObjetivoClinicoValor(String(treatmentObjective))
+          : null
+        : clinicalFocus !== undefined
+          ? clinicalFocus
+            ? normalizarObjetivoClinicoValor(String(clinicalFocus))
+            : null
+          : undefined;
+
     await patientRepo.update(
       { id },
       {
@@ -241,25 +266,12 @@ async function handleUpdate(
         ...(photoUrl !== undefined && avatarUrl === undefined
           ? { photoUrl: photoUrl || null, avatarUrl: photoUrl || null }
           : {}),
-        ...(treatmentObjective !== undefined
+        ...(objetivoInformado !== undefined
           ? {
-              treatmentObjective: treatmentObjective
-                ? String(treatmentObjective).trim()
-                : null,
-              clinicalFocus: treatmentObjective
-                ? String(treatmentObjective).trim()
-                : null,
+              treatmentObjective: objetivoInformado,
+              clinicalFocus: objetivoInformado,
             }
-          : clinicalFocus !== undefined
-            ? {
-                clinicalFocus: clinicalFocus
-                  ? String(clinicalFocus).trim()
-                  : null,
-                treatmentObjective: clinicalFocus
-                  ? String(clinicalFocus).trim()
-                  : null,
-              }
-            : {}),
+          : {}),
         ...(workoutType !== undefined
           ? { workoutType: workoutType ? String(workoutType).trim() : null }
           : {}),
@@ -286,6 +298,18 @@ async function handleUpdate(
           : {}),
       },
     );
+
+    // Sincroniza PRONTUARIOS_PACIENTES.OBJETIVO quando o objetivo for atualizado pela rota de paciente
+    if (objetivoInformado !== undefined) {
+      const prontuarioRepo = await getRepository(ProntuarioPacienteEntity);
+      const existingProntuario = await prontuarioRepo.findOne({
+        where: { pacienteId: id },
+      });
+      if (existingProntuario) {
+        existingProntuario.objetivo = objetivoInformado;
+        await prontuarioRepo.save(existingProntuario);
+      }
+    }
 
     const pacienteAtualizado = await patientRepo.findOne({ where: { id } });
 
