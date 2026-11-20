@@ -287,8 +287,23 @@ export async function POST(req: NextRequest) {
       ? String(body.descricao).trim().slice(0, 300)
       : null;
 
-    const conteudo = body?.conteudo;
-    if (!conteudo || typeof conteudo !== "object") {
+    const rawConteudo =
+      body?.conteudo !== undefined ? body.conteudo : body?.conteudoJson;
+    let conteudo: Record<string, unknown> | null = null;
+    if (typeof rawConteudo === "string") {
+      try {
+        const parsed = JSON.parse(rawConteudo);
+        if (parsed && typeof parsed === "object") {
+          conteudo = parsed as Record<string, unknown>;
+        }
+      } catch {
+        conteudo = null;
+      }
+    } else if (rawConteudo && typeof rawConteudo === "object") {
+      conteudo = rawConteudo as Record<string, unknown>;
+    }
+
+    if (!conteudo) {
       return NextResponse.json(
         { error: "Conteúdo nutricional do modelo inválido." },
         { status: 400 },
@@ -314,7 +329,7 @@ export async function POST(req: NextRequest) {
       );
       if (refeicoes.length === 0 || totalItens === 0) {
         return NextResponse.json(
-          { error: "A variação precisa ter ao menos 1 alimento para salvar como modelo completo." },
+          { error: "O plano completo precisa ter ao menos 1 refeição e 1 alimento." },
           { status: 400 },
         );
       }

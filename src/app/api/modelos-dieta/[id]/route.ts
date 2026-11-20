@@ -95,9 +95,95 @@ function autorizarClinico(sessao: Awaited<ReturnType<typeof getSessao>>) {
   return null;
 }
 
+function validarConteudoModelo(
+  escopo: "REFEICAO" | "PLANO_COMPLETO",
+  rawConteudo: unknown,
+): { ok: true; conteudo: ModeloDietaConteudo } | { ok: false; erro: string } {
+  let obj: unknown = rawConteudo;
+  if (typeof rawConteudo === "string") {
+    try {
+      obj = JSON.parse(rawConteudo);
+    } catch {
+      return { ok: false, erro: "Formato JSON do conteúdo é inválido." };
+    }
+  }
+
+  if (!obj || typeof obj !== "object") {
+    return { ok: false, erro: "Conteúdo nutricional do modelo inválido." };
+  }
+
+  const record = obj as Record<string, unknown>;
+
+  if (escopo === "PLANO_COMPLETO") {
+    const refeicoes = Array.isArray(record.refeicoes) ? record.refeicoes : [];
+    if (refeicoes.length === 0) {
+      return {
+        ok: false,
+        erro: "O plano completo precisa ter ao menos 1 refeição.",
+      };
+    }
+    const totalItens = refeicoes.reduce((acc: number, r: unknown) => {
+      const refObj = (r && typeof r === "object" ? r : {}) as {
+        itens?: unknown[];
+      };
+      return acc + (Array.isArray(refObj.itens) ? refObj.itens.length : 0);
+    }, 0);
+    if (totalItens === 0) {
+      return {
+        ok: false,
+        erro: "Adicione ao menos 1 alimento nas refeições do modelo.",
+      };
+    }
+    return {
+      ok: true,
+      conteudo: record as unknown as ModeloDietaConteudo,
+    };
+  }
+
+  // Escopo REFEICAO (aceita { itens: [...] } ou { refeicoes: [{ itens: [...] }] })
+  let itens = Array.isArray(record.itens) ? record.itens : [];
+  if (
+    itens.length === 0 &&
+    Array.isArray(record.refeicoes) &&
+    record.refeicoes.length > 0
+  ) {
+    const first = record.refeicoes[0] as Record<string, unknown>;
+    if (first && Array.isArray(first.itens)) {
+      itens = first.itens;
+      return {
+        ok: true,
+        conteudo: {
+          nome: typeof first.nome === "string" ? first.nome : undefined,
+          horario:
+            typeof first.horario === "string" ? first.horario : null,
+          opcional: Boolean(first.opcional),
+          observacoes:
+            typeof first.observacoes === "string" ? first.observacoes : null,
+          itens: itens as ModeloDietaConteudo extends { itens: infer I }
+            ? I
+            : never,
+        },
+      };
+    }
+  }
+
+  if (itens.length === 0) {
+    return {
+      ok: false,
+      erro: "A refeição precisa conter ao menos 1 alimento.",
+    };
+  }
+
+  return {
+    ok: true,
+    conteudo: record as unknown as ModeloDietaConteudo,
+  };
+}
+
 /**
  * PATCH /api/modelos-dieta/[id]
- * Renomeia título, altera descrição, tag de objetivo ou categoria do modelo.
+ * Atualiza metadados (título, descrição, objetivo, categoria) e/ou o CONTEUDO_JSON completo
+ * (refeições, alimentos, quantidades, medidas caseiras, substituições 1:N e observações).
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
@@ -163,9 +249,27 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    if (body?.conteudo && typeof body.conteudo === "object") {
-      existente.conteudoJson = JSON.stringify(body.conteudo);
+    const rawConteudo =
+      body?.conteudo !== undefined ? body.conteudo : body?.conteudoJson;
+
+    if (rawConteudo !== undefined && rawConteudo !== null) {
+      const validacao = validarConteudoModelo(existente.escopo, rawConteudo);
+      if (!validacao.ok) {
+        return NextResponse.json({ error: validacao.erro }, { status: 400 });
+      }
+      existente.conteudoJson = JSON.stringify(validacao.conteudo);
     }
+
+    // Quando um modelo padrão do sistema ("Sugestão FAAZ") é personalizado pela médica,
+    // marca padraoSistema = false para que também apareça no filtro "Meus Modelos".
+    if (existente.padraoSistema) {
+      existente.padraoSistema = false;
+      if (sessao?.userId && !existente.medicoId) {
+        existente.medicoId = sessao.userId;
+      }
+    }
+
+    existente.updatedAt = new Date();
 
     const atualizado = await withRepositoryRetry(
       ModeloDietaEntity,

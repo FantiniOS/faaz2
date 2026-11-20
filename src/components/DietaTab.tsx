@@ -1876,6 +1876,8 @@ export function DietaTab({
       titulo: string;
       descricao: string | null;
       objetivoTag: ObjetivoTagModelo;
+      categoriaRefeicao?: CategoriaRefeicaoModelo;
+      conteudo?: unknown;
     }
   ) => {
     const res = await fetch(`/api/modelos-dieta/${encodeURIComponent(id)}`, {
@@ -1890,6 +1892,16 @@ export function DietaTab({
     setModelosDieta((prev) =>
       prev.map((m) => (m.id === id ? (json.modelo as ModeloDietaDTO) : m))
     );
+  };
+
+  const handleUpsertModeloLocal = (modeloSalvo: ModeloDietaDTO) => {
+    setModelosDieta((prev) => {
+      const exists = prev.some((m) => m.id === modeloSalvo.id);
+      if (exists) {
+        return prev.map((m) => (m.id === modeloSalvo.id ? modeloSalvo : m));
+      }
+      return [modeloSalvo, ...prev];
+    });
   };
 
   const handleExcluirModelo = async (id: string) => {
@@ -2842,6 +2854,7 @@ export function DietaTab({
           onAplicarPlanoCompleto={handleAplicarModeloPlanoCompleto}
           onEditarModelo={handleEditarModelo}
           onExcluirModelo={handleExcluirModelo}
+          onUpsertModelo={handleUpsertModeloLocal}
         />
       )}
 

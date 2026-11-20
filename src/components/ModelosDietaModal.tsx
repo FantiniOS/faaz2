@@ -9,7 +9,10 @@ import {
   Flame,
   ArrowLeftRight,
   Check,
+  CheckCircle2,
+  Copy,
   Pencil,
+  Plus,
   Trash2,
   Loader2,
   BookmarkPlus,
@@ -19,6 +22,10 @@ import {
   ListPlus,
   AlertCircle,
 } from "lucide-react";
+import {
+  ModeloDietaEditorModal,
+  type ModeloDietaEditorSavePayload,
+} from "@/components/ModeloDietaEditorModal";
 import {
   CATEGORIAS_REFEICAO_OPCOES,
   OBJETIVOS_TAG_OPCOES,
@@ -66,9 +73,12 @@ export interface ModelosDietaLibraryModalProps {
       titulo: string;
       descricao: string | null;
       objetivoTag: ObjetivoTagModelo;
+      categoriaRefeicao?: CategoriaRefeicaoModelo;
+      conteudo?: unknown;
     },
   ) => Promise<void>;
   onExcluirModelo: (id: string) => Promise<void>;
+  onUpsertModelo?: (modelo: ModeloDietaDTO) => void;
 }
 
 export function ModelosDietaLibraryModal({
@@ -85,6 +95,7 @@ export function ModelosDietaLibraryModal({
   onAplicarPlanoCompleto,
   onEditarModelo,
   onExcluirModelo,
+  onUpsertModelo,
 }: ModelosDietaLibraryModalProps) {
   const isMealPickerMode = Boolean(targetRefeicao);
 
@@ -104,18 +115,39 @@ export function ModelosDietaLibraryModal({
     string | null
   >(null);
 
-  // Edição inline (renomear/editar) + exclusão
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitulo, setEditTitulo] = useState("");
-  const [editDescricao, setEditDescricao] = useState("");
-  const [editObjetivo, setEditObjetivo] = useState<ObjetivoTagModelo>("GERAL");
-  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  // Estado do Editor Completo (criação do zero, edição total ou duplicação)
+  const [editorState, setEditorState] = useState<{
+    open: boolean;
+    key: number;
+    modeloInicial: ModeloDietaDTO | null;
+    escopoInicial: EscopoModeloDieta;
+    categoriaInicial: CategoriaRefeicaoModelo;
+  }>({
+    open: false,
+    key: 1,
+    modeloInicial: null,
+    escopoInicial: "PLANO_COMPLETO",
+    categoriaInicial: "DESJEJUM",
+  });
+
+  const [duplicandoId, setDuplicandoId] = useState<string | null>(null);
   const [excluindoId, setExcluindoId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [toastSucesso, setToastSucesso] = useState<string | null>(null);
+
+  // Evita warning de prop não usada caso onEditarModelo seja fornecido pelo pai
+  void onEditarModelo;
 
   const escopoAtivo: EscopoModeloDieta = isMealPickerMode
     ? "REFEICAO"
     : abaBiblioteca;
+
+  const showToast = (msg: string) => {
+    setToastSucesso(msg);
+    setTimeout(() => {
+      setToastSucesso((prev) => (prev === msg ? null : prev));
+    }, 3400);
+  };
 
   const modelosFiltrados = useMemo(() => {
     const q = busca
@@ -161,35 +193,126 @@ export function ModelosDietaLibraryModal({
 
   if (!isOpen) return null;
 
-  const startEditing = (m: ModeloDietaDTO) => {
+  const handleAbrirNovoModelo = () => {
     setActionError(null);
-    setEditingId(m.id);
-    setEditTitulo(m.titulo);
-    setEditDescricao(m.descricao || "");
-    setEditObjetivo(m.objetivoTag || "GERAL");
+    const catDefault: CategoriaRefeicaoModelo =
+      categoriaFiltro !== "TODAS"
+        ? categoriaFiltro
+        : targetRefeicao?.categoriaInicial ?? "DESJEJUM";
+    setEditorState((prev) => ({
+      open: true,
+      key: prev.key + 1,
+      modeloInicial: null,
+      escopoInicial: escopoAtivo,
+      categoriaInicial: catDefault,
+    }));
   };
 
-  const handleConfirmEdit = async () => {
-    if (!editingId || editTitulo.trim().length < 2) {
-      setActionError("Informe um título com pelo menos 2 caracteres.");
-      return;
-    }
+  const handleAbrirEditorCompleto = (m: ModeloDietaDTO) => {
+    setActionError(null);
+    setEditorState((prev) => ({
+      open: true,
+      key: prev.key + 1,
+      modeloInicial: m,
+      escopoInicial: m.escopo,
+      categoriaInicial: m.categoriaRefeicao || "DESJEJUM",
+    }));
+  };
+
+  const handleDuplicarModelo = async (m: ModeloDietaDTO) => {
     try {
-      setSalvandoEdicao(true);
+      setDuplicandoId(m.id);
       setActionError(null);
-      await onEditarModelo(editingId, {
-        titulo: editTitulo.trim(),
-        descricao: editDescricao.trim() || null,
-        objetivoTag: editObjetivo,
+      const novoTitulo = `${m.titulo} (Cópia)`.slice(0, 140);
+      const res = await fetch("/api/modelos-dieta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          escopo: m.escopo,
+          titulo: novoTitulo,
+          categoriaRefeicao: m.categoriaRefeicao || "GERAL",
+          objetivoTag: m.objetivoTag || "GERAL",
+          descricao: m.descricao,
+          conteudo: m.conteudo,
+        }),
       });
-      setEditingId(null);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.modelo) {
+        throw new Error(
+          json?.error || "Não foi possível duplicar o modelo.",
+        );
+      }
+      const copiaCriada = json.modelo as ModeloDietaDTO;
+      if (onUpsertModelo) {
+        onUpsertModelo(copiaCriada);
+      } else {
+        onRecarregar();
+      }
+      showToast(`Cópia "${copiaCriada.titulo}" criada! Personalize abaixo.`);
+      setEditorState((prev) => ({
+        open: true,
+        key: prev.key + 1,
+        modeloInicial: copiaCriada,
+        escopoInicial: copiaCriada.escopo,
+        categoriaInicial: copiaCriada.categoriaRefeicao || "DESJEJUM",
+      }));
     } catch (err: unknown) {
       setActionError(
-        err instanceof Error ? err.message : "Erro ao salvar alterações.",
+        err instanceof Error ? err.message : "Erro ao duplicar modelo.",
       );
     } finally {
-      setSalvandoEdicao(false);
+      setDuplicandoId(null);
     }
+  };
+
+  const handleSalvarEditorCompleto = async (
+    payload: ModeloDietaEditorSavePayload,
+  ): Promise<ModeloDietaDTO> => {
+    setActionError(null);
+    const isPatch = Boolean(payload.id);
+    const url = isPatch
+      ? `/api/modelos-dieta/${encodeURIComponent(payload.id!)}`
+      : "/api/modelos-dieta";
+    const method = isPatch ? "PATCH" : "POST";
+
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        escopo: payload.escopo,
+        titulo: payload.titulo,
+        categoriaRefeicao: payload.categoriaRefeicao,
+        objetivoTag: payload.objetivoTag,
+        descricao: payload.descricao,
+        conteudo: payload.conteudo,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.modelo) {
+      throw new Error(
+        json?.error || "Não foi possível salvar o modelo de dieta.",
+      );
+    }
+
+    const modeloSalvo = json.modelo as ModeloDietaDTO;
+    if (onUpsertModelo) {
+      onUpsertModelo(modeloSalvo);
+    } else {
+      onRecarregar();
+    }
+
+    // Se o usuário criou um modelo de escopo diferente da aba atual, muda para a aba correspondente
+    if (!isMealPickerMode && modeloSalvo.escopo !== abaBiblioteca) {
+      setAbaBiblioteca(modeloSalvo.escopo);
+    }
+
+    showToast(
+      isPatch
+        ? `Modelo "${modeloSalvo.titulo}" atualizado com sucesso!`
+        : `Novo modelo "${modeloSalvo.titulo}" adicionado à biblioteca!`,
+    );
+    return modeloSalvo;
   };
 
   const handleDelete = async (m: ModeloDietaDTO) => {
@@ -203,6 +326,7 @@ export function ModelosDietaLibraryModal({
       setExcluindoId(m.id);
       setActionError(null);
       await onExcluirModelo(m.id);
+      showToast(`Modelo "${m.titulo}" removido da biblioteca.`);
     } catch (err: unknown) {
       setActionError(
         err instanceof Error ? err.message : "Erro ao excluir modelo.",
@@ -314,16 +438,27 @@ export function ModelosDietaLibraryModal({
               </div>
             )}
 
-            {/* Busca */}
-            <div className="relative flex-1 min-w-[200px] max-w-xs">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="text"
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar modelo ou alimento..."
-                className="cl-input w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-white"
-              />
+            {/* Busca + Botão + Novo Modelo */}
+            <div className="flex items-center gap-2 flex-1 justify-end min-w-[240px]">
+              <div className="relative flex-1 max-w-xs">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={busca}
+                  onChange={(e) => setBusca(e.target.value)}
+                  placeholder="Buscar modelo ou alimento..."
+                  className="cl-input w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-white"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAbrirNovoModelo}
+                className="cl-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Novo Modelo</span>
+              </button>
             </div>
           </div>
 
@@ -384,6 +519,13 @@ export function ModelosDietaLibraryModal({
             ))}
           </div>
 
+          {toastSucesso && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>{toastSucesso}</span>
+            </div>
+          )}
+
           {actionError && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -436,7 +578,6 @@ export function ModelosDietaLibraryModal({
             modelosFiltrados.map((modelo) => {
               const resumo = calcularResumoModelo(modelo);
               const objMeta = getObjetivoTagMeta(modelo.objetivoTag);
-              const isEditing = editingId === modelo.id;
               const isShowingMealChoice = pendingApplyId === modelo.id;
               const isShowingPlanConfirm = pendingPlanConfirmId === modelo.id;
 
@@ -445,278 +586,232 @@ export function ModelosDietaLibraryModal({
                   key={modelo.id}
                   className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs hover:border-teal-300/80 transition-all space-y-2.5"
                 >
-                  {isEditing ? (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                        <div className="sm:col-span-2">
-                          <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                            Título do Modelo
-                          </label>
-                          <input
-                            type="text"
-                            value={editTitulo}
-                            onChange={(e) => setEditTitulo(e.target.value)}
-                            className="cl-input w-full px-3 py-1.5 text-xs rounded-xl"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                            Objetivo
-                          </label>
-                          <select
-                            value={editObjetivo}
-                            onChange={(e) =>
-                              setEditObjetivo(
-                                e.target.value as ObjetivoTagModelo,
-                              )
-                            }
-                            className="cl-input w-full px-2.5 py-1.5 text-xs rounded-xl bg-white"
-                          >
-                            {OBJETIVOS_TAG_OPCOES.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-xs sm:text-sm font-extrabold text-slate-900">
+                          {modelo.titulo}
+                        </h4>
+                        <span
+                          className={`${objMeta.badgeClass} text-[10px] font-bold px-2 py-0.5 rounded-full`}
+                        >
+                          {objMeta.label}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                          {modelo.padraoSistema ? "Sugestão FAAZ" : "Meu Modelo"}
+                        </span>
+                        {modelo.escopo === "REFEICAO" &&
+                          modelo.categoriaRefeicao && (
+                            <span className="text-[10px] font-semibold text-slate-500">
+                              • {getCategoriaRefeicaoLabel(modelo.categoriaRefeicao).split(" / ")[0]}
+                            </span>
+                          )}
                       </div>
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                          Descrição (opcional)
-                        </label>
-                        <input
-                          type="text"
-                          value={editDescricao}
-                          onChange={(e) => setEditDescricao(e.target.value)}
-                          placeholder="Resumo clínico do modelo..."
-                          className="cl-input w-full px-3 py-1.5 text-xs rounded-xl"
-                        />
-                      </div>
-                      <div className="flex items-center justify-end gap-2">
+
+                      {modelo.descricao && (
+                        <p className="text-[11px] text-slate-500 leading-snug">
+                          {modelo.descricao}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Ações: Editar Completo + Duplicar + Excluir + Aplicar */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleAbrirEditorCompleto(modelo)}
+                        title="Editar refeições, alimentos, quantidades, trocas e observações"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={duplicandoId === modelo.id}
+                        onClick={() => void handleDuplicarModelo(modelo)}
+                        title="Duplicar modelo e personalizar"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {duplicandoId === modelo.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={excluindoId === modelo.id}
+                        onClick={() => void handleDelete(modelo)}
+                        title="Excluir modelo da biblioteca"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {excluindoId === modelo.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+
+                      {modelo.escopo === "REFEICAO" && isMealPickerMode && (
                         <button
                           type="button"
-                          onClick={() => setEditingId(null)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
+                          onClick={() => {
+                            if (targetRefeicao?.possuiItens) {
+                              setPendingApplyId((prev) =>
+                                prev === modelo.id ? null : modelo.id,
+                              );
+                            } else {
+                              onAplicarRefeicao(modelo, "substituir");
+                            }
+                          }}
+                          className="cl-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Aplicar</span>
+                        </button>
+                      )}
+
+                      {modelo.escopo === "PLANO_COMPLETO" && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (variacaoAtivaPossuiItens) {
+                              setPendingPlanConfirmId((prev) =>
+                                prev === modelo.id ? null : modelo.id,
+                              );
+                            } else {
+                              onAplicarPlanoCompleto(modelo);
+                            }
+                          }}
+                          className="cl-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Aplicar no dia</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Prévia de alimentos / refeições + resumo nutricional */}
+                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 min-w-0 flex-1">
+                      {isConteudoPlanoCompleto(modelo.conteudo) ? (
+                        <span className="truncate">
+                          <strong>
+                            {resumo.totalRefeicoes} refeições ({resumo.totalItens}{" "}
+                            itens):
+                          </strong>{" "}
+                          {modelo.conteudo.refeicoes
+                            .map((r) => r.nome.split(" / ")[0])
+                            .join(" · ")}
+                        </span>
+                      ) : (
+                        <span className="truncate">
+                          {resumo.nomesAlimentos.slice(0, 4).join(" · ")}
+                          {resumo.nomesAlimentos.length > 4
+                            ? ` +${resumo.nomesAlimentos.length - 4}`
+                            : ""}
+                        </span>
+                      )}
+
+                      {resumo.totalTrocas > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200/80 text-[10px] font-bold shrink-0">
+                          <ArrowLeftRight className="w-2.5 h-2.5" />
+                          {resumo.totalTrocas}{" "}
+                          {resumo.totalTrocas === 1 ? "troca" : "trocas"}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 text-[11px] font-mono shrink-0">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+                        <Flame className="w-3 h-3 text-amber-500" />
+                        {resumo.calorias} kcal
+                      </span>
+                      <span className="text-slate-500 hidden sm:inline">
+                        P <strong className="text-emerald-700">{resumo.proteinas}g</strong> · C{" "}
+                        <strong className="text-amber-700">{resumo.carboidratos}g</strong> · G{" "}
+                        <strong className="text-rose-700">{resumo.gorduras}g</strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Escolha rápida quando a refeição já tem itens */}
+                  {isShowingMealChoice && (
+                    <div className="mt-2 p-2.5 rounded-xl bg-teal-50/80 border border-teal-200 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-teal-900">
+                        Esta refeição já possui alimentos. Como deseja aplicar?
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onAplicarRefeicao(modelo, "substituir")
+                          }
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-700 hover:bg-teal-800 text-white cursor-pointer"
+                        >
+                          <Replace className="w-3 h-3" />
+                          <span>Substituir refeição</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onAplicarRefeicao(modelo, "adicionar")
+                          }
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white hover:bg-teal-100 text-teal-800 border border-teal-300 cursor-pointer"
+                        >
+                          <ListPlus className="w-3 h-3" />
+                          <span>Adicionar aos itens</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Confirmação rápida para Plano Completo */}
+                  {isShowingPlanConfirm && (
+                    <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-amber-900">
+                        Substituir as refeições de &quot;{variacaoAtivaNome}&quot; por este protocolo?
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPendingPlanConfirmId(null)}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-600 hover:bg-amber-100 cursor-pointer"
                         >
                           Cancelar
                         </button>
                         <button
                           type="button"
-                          disabled={salvandoEdicao}
-                          onClick={handleConfirmEdit}
-                          className="cl-btn-primary inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
+                          onClick={() => onAplicarPlanoCompleto(modelo)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-700 hover:bg-teal-800 text-white cursor-pointer"
                         >
-                          {salvandoEdicao ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Check className="w-3.5 h-3.5" />
-                          )}
-                          <span>Salvar</span>
+                          <Check className="w-3 h-3" />
+                          <span>Confirmar e aplicar</span>
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <h4 className="text-xs sm:text-sm font-extrabold text-slate-900">
-                              {modelo.titulo}
-                            </h4>
-                            <span
-                              className={`${objMeta.badgeClass} text-[10px] font-bold px-2 py-0.5 rounded-full`}
-                            >
-                              {objMeta.label}
-                            </span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                              {modelo.padraoSistema ? "Sugestão FAAZ" : "Meu Modelo"}
-                            </span>
-                            {modelo.escopo === "REFEICAO" &&
-                              modelo.categoriaRefeicao && (
-                                <span className="text-[10px] font-semibold text-slate-500">
-                                  • {getCategoriaRefeicaoLabel(modelo.categoriaRefeicao).split(" / ")[0]}
-                                </span>
-                              )}
-                          </div>
-
-                          {modelo.descricao && (
-                            <p className="text-[11px] text-slate-500 leading-snug">
-                              {modelo.descricao}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Ações: Gerenciar + Aplicar */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => startEditing(modelo)}
-                            title="Renomear ou editar metadados"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={excluindoId === modelo.id}
-                            onClick={() => handleDelete(modelo)}
-                            title="Excluir modelo da biblioteca"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
-                          >
-                            {excluindoId === modelo.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-
-                          {modelo.escopo === "REFEICAO" && isMealPickerMode && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (targetRefeicao?.possuiItens) {
-                                  setPendingApplyId((prev) =>
-                                    prev === modelo.id ? null : modelo.id,
-                                  );
-                                } else {
-                                  onAplicarRefeicao(modelo, "substituir");
-                                }
-                              }}
-                              className="cl-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Aplicar</span>
-                            </button>
-                          )}
-
-                          {modelo.escopo === "PLANO_COMPLETO" && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (variacaoAtivaPossuiItens) {
-                                  setPendingPlanConfirmId((prev) =>
-                                    prev === modelo.id ? null : modelo.id,
-                                  );
-                                } else {
-                                  onAplicarPlanoCompleto(modelo);
-                                }
-                              }}
-                              className="cl-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Aplicar no dia</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Prévia de alimentos / refeições + resumo nutricional */}
-                      <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 min-w-0 flex-1">
-                          {isConteudoPlanoCompleto(modelo.conteudo) ? (
-                            <span className="truncate">
-                              <strong>
-                                {resumo.totalRefeicoes} refeições ({resumo.totalItens}{" "}
-                                itens):
-                              </strong>{" "}
-                              {modelo.conteudo.refeicoes
-                                .map((r) => r.nome.split(" / ")[0])
-                                .join(" · ")}
-                            </span>
-                          ) : (
-                            <span className="truncate">
-                              {resumo.nomesAlimentos.slice(0, 4).join(" · ")}
-                              {resumo.nomesAlimentos.length > 4
-                                ? ` +${resumo.nomesAlimentos.length - 4}`
-                                : ""}
-                            </span>
-                          )}
-
-                          {resumo.totalTrocas > 0 && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200/80 text-[10px] font-bold shrink-0">
-                              <ArrowLeftRight className="w-2.5 h-2.5" />
-                              {resumo.totalTrocas}{" "}
-                              {resumo.totalTrocas === 1 ? "troca" : "trocas"}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 text-[11px] font-mono shrink-0">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-bold">
-                            <Flame className="w-3 h-3 text-amber-500" />
-                            {resumo.calorias} kcal
-                          </span>
-                          <span className="text-slate-500 hidden sm:inline">
-                            P <strong className="text-emerald-700">{resumo.proteinas}g</strong> · C{" "}
-                            <strong className="text-amber-700">{resumo.carboidratos}g</strong> · G{" "}
-                            <strong className="text-rose-700">{resumo.gorduras}g</strong>
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Escolha rápida quando a refeição já tem itens */}
-                      {isShowingMealChoice && (
-                        <div className="mt-2 p-2.5 rounded-xl bg-teal-50/80 border border-teal-200 flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold text-teal-900">
-                            Esta refeição já possui alimentos. Como deseja aplicar?
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onAplicarRefeicao(modelo, "substituir")
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-700 hover:bg-teal-800 text-white cursor-pointer"
-                            >
-                              <Replace className="w-3 h-3" />
-                              <span>Substituir refeição</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onAplicarRefeicao(modelo, "adicionar")
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white hover:bg-teal-100 text-teal-800 border border-teal-300 cursor-pointer"
-                            >
-                              <ListPlus className="w-3 h-3" />
-                              <span>Adicionar aos itens</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Confirmação rápida para Plano Completo */}
-                      {isShowingPlanConfirm && (
-                        <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold text-amber-900">
-                            Substituir as refeições de &quot;{variacaoAtivaNome}&quot; por este protocolo?
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setPendingPlanConfirmId(null)}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-600 hover:bg-amber-100 cursor-pointer"
-                            >
-                              Cancelar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onAplicarPlanoCompleto(modelo)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-teal-700 hover:bg-teal-800 text-white cursor-pointer"
-                            >
-                              <Check className="w-3 h-3" />
-                              <span>Confirmar e aplicar</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </>
                   )}
                 </div>
               );
             })
           )}
         </div>
+
+        {/* EDITOR COMPLETO DE MODELOS (CRIAÇÃO DO ZERO / EDIÇÃO / DUPLICAÇÃO) */}
+        {editorState.open && (
+          <ModeloDietaEditorModal
+            key={editorState.key}
+            isOpen={editorState.open}
+            onClose={() =>
+              setEditorState((prev) => ({ ...prev, open: false }))
+            }
+            modeloInicial={editorState.modeloInicial}
+            escopoInicial={editorState.escopoInicial}
+            categoriaInicial={editorState.categoriaInicial}
+            onSave={handleSalvarEditorCompleto}
+          />
+        )}
       </div>
     </div>
   );
