@@ -4,9 +4,14 @@ import {
   Page,
   View,
   Text,
-  Image,
   StyleSheet,
 } from "@react-pdf/renderer";
+import { CLINICA_PDF_COLORS } from "@/lib/pdf-clinica-template";
+import {
+  ClinicaPdfFooter,
+  ClinicaPdfHeader,
+  ClinicaPdfTopAccent,
+} from "@/components/PdfClinicaChrome";
 
 export type TipoDocumentoMedico = "RECEITUARIO" | "EXAMES" | "ATESTADO";
 
@@ -46,99 +51,12 @@ const DOC_BADGES: Record<TipoDocumentoMedico, { label: string; title: string }> 
 const styles = StyleSheet.create({
   page: {
     fontFamily: "Helvetica",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: CLINICA_PDF_COLORS.white,
     paddingTop: 34,
     paddingBottom: 128,
     paddingHorizontal: 40,
-    color: "#1E293B",
+    color: CLINICA_PDF_COLORS.slate800,
     position: "relative",
-  },
-  topAccentPrimary: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 6,
-    backgroundColor: "#0F766E",
-  },
-  topAccentSecondary: {
-    position: "absolute",
-    top: 6,
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: "#C8A45D",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingBottom: 14,
-    marginBottom: 16,
-    borderBottomWidth: 1.5,
-    borderBottomColor: "#0F766E",
-  },
-  brandBlock: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    maxWidth: "48%",
-  },
-  logoWrap: {
-    width: 44,
-    height: 52,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#F0FDFA",
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#CCFBF1",
-    padding: 4,
-  },
-  logo: {
-    width: 34,
-    height: 41,
-  },
-  brandTextGroup: {
-    flexDirection: "column",
-    justifyContent: "center",
-  },
-  clinicTitle: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 15,
-    letterSpacing: 1.1,
-    color: "#0F766E",
-  },
-  clinicSubtitle: {
-    fontSize: 8.5,
-    color: "#475569",
-    marginTop: 2,
-    letterSpacing: 0.3,
-  },
-  doctorBlock: {
-    flexDirection: "column",
-    alignItems: "flex-end",
-    maxWidth: "50%",
-  },
-  doctorName: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 11.5,
-    color: "#0F172A",
-    textAlign: "right",
-  },
-  doctorCrm: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 9,
-    color: "#0F766E",
-    marginTop: 3,
-    textAlign: "right",
-  },
-  doctorSpecialties: {
-    fontSize: 8.2,
-    color: "#475569",
-    marginTop: 2,
-    textAlign: "right",
-    lineHeight: 1.3,
   },
   docBannerRow: {
     flexDirection: "row",
@@ -147,9 +65,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   docTypePill: {
-    backgroundColor: "#F0FDFA",
+    backgroundColor: CLINICA_PDF_COLORS.tealBg,
     borderWidth: 1,
-    borderColor: "#99F6E4",
+    borderColor: CLINICA_PDF_COLORS.tealPillBorder,
     borderRadius: 4,
     paddingVertical: 4,
     paddingHorizontal: 9,
@@ -157,22 +75,22 @@ const styles = StyleSheet.create({
   docTypePillText: {
     fontFamily: "Helvetica-Bold",
     fontSize: 8.5,
-    color: "#0F766E",
+    color: CLINICA_PDF_COLORS.primary,
     letterSpacing: 0.8,
   },
   recordCodeBadge: {
     fontSize: 8.5,
-    color: "#64748B",
+    color: CLINICA_PDF_COLORS.slate500,
   },
   patientCard: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    backgroundColor: "#F8FAFC",
+    backgroundColor: CLINICA_PDF_COLORS.slate50,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: CLINICA_PDF_COLORS.slate200,
     borderLeftWidth: 3.5,
-    borderLeftColor: "#0F766E",
+    borderLeftColor: CLINICA_PDF_COLORS.primary,
     borderRadius: 6,
     paddingVertical: 10,
     paddingHorizontal: 14,
@@ -189,36 +107,36 @@ const styles = StyleSheet.create({
   metaLabel: {
     fontFamily: "Helvetica-Bold",
     fontSize: 7.5,
-    color: "#64748B",
+    color: CLINICA_PDF_COLORS.slate500,
     letterSpacing: 0.7,
     marginBottom: 2,
   },
   patientNameValue: {
     fontFamily: "Helvetica-Bold",
     fontSize: 11.5,
-    color: "#0F172A",
+    color: CLINICA_PDF_COLORS.slate900,
   },
   patientSubValue: {
     fontSize: 8.5,
-    color: "#475569",
+    color: CLINICA_PDF_COLORS.slate600,
     marginTop: 3,
   },
   dateValue: {
     fontFamily: "Helvetica-Bold",
     fontSize: 10,
-    color: "#0F172A",
+    color: CLINICA_PDF_COLORS.slate900,
     textAlign: "right",
   },
   contentTitleWrap: {
     marginBottom: 10,
     paddingBottom: 6,
     borderBottomWidth: 0.75,
-    borderBottomColor: "#E2E8F0",
+    borderBottomColor: CLINICA_PDF_COLORS.slate200,
   },
   contentTitle: {
     fontFamily: "Helvetica-Bold",
     fontSize: 12,
-    color: "#134E4A",
+    color: CLINICA_PDF_COLORS.primaryDark,
   },
   bodyContainer: {
     flexDirection: "column",
@@ -228,7 +146,7 @@ const styles = StyleSheet.create({
   bodyLine: {
     fontSize: 10.8,
     lineHeight: 1.55,
-    color: "#1E293B",
+    color: CLINICA_PDF_COLORS.slate800,
     marginBottom: 2,
   },
   paragraphSpacer: {
@@ -236,64 +154,13 @@ const styles = StyleSheet.create({
   },
   emptyBodyNotice: {
     fontSize: 10,
-    color: "#94A3B8",
+    color: CLINICA_PDF_COLORS.slate400,
     fontStyle: "italic",
   },
   locationDateNote: {
     marginTop: 24,
     fontSize: 9.5,
-    color: "#475569",
-    textAlign: "right",
-  },
-  footer: {
-    position: "absolute",
-    bottom: 24,
-    left: 40,
-    right: 40,
-    flexDirection: "column",
-  },
-  signatureSection: {
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  signatureLine: {
-    width: 245,
-    borderTopWidth: 1,
-    borderTopColor: "#334155",
-    marginBottom: 5,
-  },
-  signatureDoctor: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 10,
-    color: "#0F172A",
-  },
-  signatureDetails: {
-    fontSize: 8.2,
-    color: "#475569",
-    marginTop: 1.5,
-    textAlign: "center",
-  },
-  signatureHint: {
-    fontSize: 7.2,
-    color: "#94A3B8",
-    marginTop: 2,
-  },
-  footerContactBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#CBD5E1",
-  },
-  footerContactText: {
-    fontSize: 7.8,
-    color: "#64748B",
-    maxWidth: "82%",
-  },
-  pageNumberText: {
-    fontSize: 7.8,
-    color: "#64748B",
+    color: CLINICA_PDF_COLORS.slate600,
     textAlign: "right",
   },
 });
@@ -307,8 +174,8 @@ export function PrescriptionPDF({
   pacienteRecordCode,
   dataEmissao,
   localCidade,
-  medicoNome = "Dra. Maria Luiza",
-  crm = "CRM-MG XXXXX",
+  medicoNome = "Corpo Clínico",
+  crm = "",
   especialidades = "Endocrinologia, Metabologia & Saúde Integrativa",
   clinicaNome = "Clínica FAAZ",
   clinicaSubtitulo = "Medicina & Saúde Integrativa",
@@ -318,8 +185,8 @@ export function PrescriptionPDF({
   const badgeConfig = DOC_BADGES[tipo] || DOC_BADGES.RECEITUARIO;
   const resolvedTitle = tituloDocumento?.trim() || badgeConfig.title;
   const resolvedClinic = clinicaNome.trim() || "Clínica FAAZ";
-  const resolvedDoctor = medicoNome.trim() || "Dra. Maria Luiza";
-  const resolvedCrm = crm.trim() || "CRM-MG XXXXX";
+  const resolvedDoctor = medicoNome.trim() || "Corpo Clínico";
+  const resolvedCrm = crm.trim();
   const resolvedSpecialties =
     especialidades.trim() || "Endocrinologia, Metabologia & Saúde Integrativa";
 
@@ -335,32 +202,17 @@ export function PrescriptionPDF({
     >
       <Page size="A4" style={styles.page}>
         {/* Faixa institucional fixa no topo de todas as páginas */}
-        <View fixed style={styles.topAccentPrimary} />
-        <View fixed style={styles.topAccentSecondary} />
+        <ClinicaPdfTopAccent />
 
-        {/* CABEÇALHO FIXO: Logo Clínica FAAZ + Dra. Maria Luiza (Malu) */}
-        <View fixed style={styles.header}>
-          <View style={styles.brandBlock}>
-            {logoSrc ? (
-              <View style={styles.logoWrap}>
-                {/* eslint-disable-next-line jsx-a11y/alt-text */}
-                <Image src={logoSrc} style={styles.logo} />
-              </View>
-            ) : null}
-            <View style={styles.brandTextGroup}>
-              <Text style={styles.clinicTitle}>
-                {resolvedClinic.toUpperCase()}
-              </Text>
-              <Text style={styles.clinicSubtitle}>{clinicaSubtitulo}</Text>
-            </View>
-          </View>
-
-          <View style={styles.doctorBlock}>
-            <Text style={styles.doctorName}>{resolvedDoctor}</Text>
-            <Text style={styles.doctorCrm}>{resolvedCrm}</Text>
-            <Text style={styles.doctorSpecialties}>{resolvedSpecialties}</Text>
-          </View>
-        </View>
+        {/* CABEÇALHO FIXO: Logo Clínica FAAZ + Profissional Responsável */}
+        <ClinicaPdfHeader
+          clinicaNome={resolvedClinic}
+          clinicaSubtitulo={clinicaSubtitulo}
+          logoSrc={logoSrc}
+          medicoNome={resolvedDoctor}
+          crm={resolvedCrm}
+          especialidades={resolvedSpecialties}
+        />
 
         {/* IDENTIFICAÇÃO DO DOCUMENTO */}
         <View style={styles.docBannerRow}>
@@ -423,26 +275,14 @@ export function PrescriptionPDF({
         </View>
 
         {/* RODAPÉ FIXO: Assinatura / Carimbo e Contato da Clínica */}
-        <View fixed style={styles.footer}>
-          <View style={styles.signatureSection}>
-            <View style={styles.signatureLine} />
-            <Text style={styles.signatureDoctor}>{resolvedDoctor}</Text>
-            <Text style={styles.signatureDetails}>
-              {resolvedCrm}  •  {resolvedSpecialties}
-            </Text>
-            <Text style={styles.signatureHint}>Assinatura e Carimbo Médico</Text>
-          </View>
-
-          <View style={styles.footerContactBar}>
-            <Text style={styles.footerContactText}>{clinicaContato}</Text>
-            <Text
-              style={styles.pageNumberText}
-              render={({ pageNumber, totalPages }) =>
-                `Página ${pageNumber} de ${totalPages}`
-              }
-            />
-          </View>
-        </View>
+        <ClinicaPdfFooter
+          clinicaContato={clinicaContato}
+          signature={{
+            medicoNome: resolvedDoctor,
+            crm: resolvedCrm,
+            especialidades: resolvedSpecialties,
+          }}
+        />
       </Page>
     </Document>
   );

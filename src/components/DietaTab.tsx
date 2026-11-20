@@ -1,6 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useContext,
+} from "react";
 import {
   Utensils,
   Plus,
@@ -23,7 +30,21 @@ import {
   ArrowLeftRight,
   MessageSquareText,
   X,
+  FileDown,
+  MessageCircle,
 } from "lucide-react";
+import AuthContext, { type UsuarioLogado } from "@/contexts/AuthContext";
+import { formatarDataBR } from "@/lib/date-br";
+import {
+  buildWhatsAppPlanoUrl,
+  formatarNomeArquivoPlanoAlimentar,
+  getClinicaLogoUrl,
+  resolveDoctorProfile,
+} from "@/lib/pdf-clinica-template";
+import type {
+  DietPlanPDFProps,
+  DietPlanPdfVariacao,
+} from "@/components/DietPlanPDF";
 import {
   AlimentoCombobox,
   AlimentoOption,
@@ -110,6 +131,9 @@ export interface PlanoAlimentarState {
 interface DietaTabProps {
   pacienteId: string;
   pacienteNome: string;
+  pacienteRecordCode?: string | null;
+  pacienteObjetivo?: string | null;
+  pacienteTelefone?: string | null;
 }
 
 const PRESETS_NOVA_REFEICAO = [
@@ -208,7 +232,73 @@ export function calcularNutrientesItem(
   };
 }
 
-export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
+function buildDietSnapshotSignature(
+  nome: string,
+  vars: VariacaoDietaState[]
+): string {
+  return JSON.stringify({
+    n: nome.trim(),
+    v: vars.map((v) => ({
+      id: v.id,
+      nome: v.nome,
+      r: v.refeicoes.map((r) => ({
+        id: r.id,
+        nome: r.nome,
+        h: r.horario ?? null,
+        op: Boolean(r.opcional),
+        obs: r.observacoes ?? null,
+        i: r.itens.map((it) => ({
+          id: it.id,
+          q: it.quantidadeGramas,
+          u: it.unidade || "g",
+          m: it.medidaCaseira ?? null,
+          s: (it.substituicoes || []).map((sub) => ({
+            id: sub.id,
+            q: sub.quantidade,
+            u: sub.unidade || "g",
+            m: sub.medidaCaseira ?? null,
+          })),
+        })),
+      })),
+    })),
+  });
+}
+
+export function DietaTab({
+  pacienteId,
+  pacienteNome,
+  pacienteRecordCode,
+  pacienteObjetivo,
+  pacienteTelefone,
+}: DietaTabProps) {
+  const authContext = useContext(AuthContext);
+  const [fetchedSessionUser, setFetchedSessionUser] =
+    useState<UsuarioLogado | null>(null);
+
+  useEffect(() => {
+    if (authContext?.usuario) return;
+    let active = true;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data?.autenticado && data?.usuario) {
+          setFetchedSessionUser(data.usuario as UsuarioLogado);
+        }
+      })
+      .catch(() => {
+        // Segue com perfil institucional neutro caso a sessão não esteja disponível
+      });
+    return () => {
+      active = false;
+    };
+  }, [authContext?.usuario]);
+
+  const activeUser = authContext?.usuario ?? fetchedSessionUser;
+  const doctorProfile = useMemo(
+    () => resolveDoctorProfile(activeUser),
+    [activeUser]
+  );
+
   const [plano, setPlano] = useState<PlanoAlimentarState | null>(null);
   const [nomePlano, setNomePlano] = useState("Plano Alimentar Individualizado");
   const [variacoes, setVariacoes] = useState<VariacaoDietaState[]>([]);
@@ -218,6 +308,16 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const pendingRenamesRef = useRef<Record<string, string>>({});
+  const [savedSnapshot, setSavedSnapshot] = useState<string>("");
+
+  // Modal de Exportação em PDF do Plano Alimentar
+  const [isExportPdfModalOpen, setIsExportPdfModalOpen] = useState(false);
+  const [pdfEscopoVariacoes, setPdfEscopoVariacoes] = useState<
+    "atual" | "todas"
+  >("atual");
+  const [pdfIncluirMacros, setPdfIncluirMacros] = useState(false);
+  const [exportandoPdf, setExportandoPdf] = useState(false);
+  const [pdfErro, setPdfErro] = useState<string | null>(null);
 
   // Modal para Criar Nova Variação
   const [isNovaVariacaoModalOpen, setIsNovaVariacaoModalOpen] = useState(false);
@@ -245,14 +345,16 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
         ? dataPlano.plano.variacoes
         : [];
       setPlano(dataPlano.plano ?? null);
+      const loadedNome = dataPlano.plano
+        ? dataPlano.plano.nome ||
+          dataPlano.plano.titulo ||
+          "Plano Alimentar Individualizado"
+        : "Plano Alimentar Individualizado";
       if (dataPlano.plano) {
-        setNomePlano(
-          dataPlano.plano.nome ||
-            dataPlano.plano.titulo ||
-            "Plano Alimentar Individualizado"
-        );
+        setNomePlano(loadedNome);
       }
       setVariacoes(loadedVariacoes);
+      setSavedSnapshot(buildDietSnapshotSignature(loadedNome, loadedVariacoes));
 
       if (loadedVariacoes.length > 0) {
         setActiveVariacaoId((prev) => {
@@ -1039,6 +1141,7 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
         delete pendingRenamesRef.current[variacaoId];
       }
 
+      setSavedSnapshot(buildDietSnapshotSignature(nomePlanoLimpo, variacoes));
       setMensagemSucesso("Plano, refeições, medidas e trocas salvos com sucesso!");
       setTimeout(() => setMensagemSucesso(null), 3000);
     } catch (err) {
@@ -1159,6 +1262,170 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
     );
   }, [variacaoAtiva]);
 
+  const currentSnapshot = useMemo(
+    () => buildDietSnapshotSignature(nomePlano, variacoes),
+    [nomePlano, variacoes]
+  );
+  const hasUnsavedChanges =
+    Boolean(savedSnapshot) && currentSnapshot !== savedSnapshot;
+
+  const variacoesComAlimentos = useMemo(
+    () =>
+      variacoes.filter((v) =>
+        v.refeicoes.some((r) => r.itens.length > 0)
+      ),
+    [variacoes]
+  );
+
+  const whatsappUrl = useMemo(
+    () =>
+      buildWhatsAppPlanoUrl(
+        pacienteTelefone,
+        pacienteNome,
+        doctorProfile.clinicaNome
+      ),
+    [pacienteTelefone, pacienteNome, doctorProfile.clinicaNome]
+  );
+
+  const handleAbrirExportPdfModal = () => {
+    setPdfErro(null);
+    setPdfEscopoVariacoes(variacoesComAlimentos.length > 1 ? "todas" : "atual");
+    setPdfIncluirMacros(false);
+    setIsExportPdfModalOpen(true);
+  };
+
+  const handleBaixarPlanoPdf = async () => {
+    const selecionadas =
+      pdfEscopoVariacoes === "todas"
+        ? variacoesComAlimentos.length > 0
+          ? variacoesComAlimentos
+          : variacaoAtiva
+            ? [variacaoAtiva]
+            : []
+        : variacaoAtiva
+          ? [variacaoAtiva]
+          : [];
+
+    if (selecionadas.length === 0) {
+      setPdfErro("Nenhuma variação de cardápio disponível para exportar.");
+      return;
+    }
+
+    try {
+      setExportandoPdf(true);
+      setPdfErro(null);
+
+      const variacoesPdf: DietPlanPdfVariacao[] = selecionadas.map((v) => {
+        const refeicoesPdf = v.refeicoes.map((ref) => {
+          let refKcal = 0;
+          let refProt = 0;
+          let refCarb = 0;
+          let refGord = 0;
+
+          const itensPdf = ref.itens.map((item) => {
+            const nut = calcularNutrientesItem(
+              item.alimento,
+              item.quantidadeGramas
+            );
+            refKcal += nut.calorias;
+            refProt += nut.proteinas;
+            refCarb += nut.carboidratos;
+            refGord += nut.gorduras;
+
+            return {
+              nome: item.alimento?.nome || "Alimento",
+              quantidade: item.quantidadeGramas,
+              unidade: item.unidade || "g",
+              medidaCaseira: item.medidaCaseira ?? null,
+              calorias: nut.calorias,
+              proteinas: nut.proteinas,
+              carboidratos: nut.carboidratos,
+              gorduras: nut.gorduras,
+              substituicoes: (item.substituicoes || []).map((sub) => ({
+                nome: sub.nomeExibicao,
+                quantidade: sub.quantidade,
+                unidade: sub.unidade || "g",
+                medidaCaseira: sub.medidaCaseira ?? null,
+              })),
+            };
+          });
+
+          return {
+            nome: ref.nome,
+            horario: ref.horario ?? null,
+            opcional: Boolean(ref.opcional),
+            observacoes: ref.observacoes ?? null,
+            itens: itensPdf,
+            totais: {
+              calorias: Math.round(refKcal),
+              proteinas: Number(refProt.toFixed(1)),
+              carboidratos: Number(refCarb.toFixed(1)),
+              gorduras: Number(refGord.toFixed(1)),
+            },
+          };
+        });
+
+        const totaisVar = refeicoesPdf.reduce(
+          (acc, ref) => ({
+            calorias: acc.calorias + ref.totais.calorias,
+            proteinas: Number((acc.proteinas + ref.totais.proteinas).toFixed(1)),
+            carboidratos: Number(
+              (acc.carboidratos + ref.totais.carboidratos).toFixed(1)
+            ),
+            gorduras: Number((acc.gorduras + ref.totais.gorduras).toFixed(1)),
+          }),
+          { calorias: 0, proteinas: 0, carboidratos: 0, gorduras: 0 }
+        );
+
+        return {
+          nome: v.nome,
+          descricao: v.descricao ?? null,
+          refeicoes: refeicoesPdf,
+          totais: totaisVar,
+        };
+      });
+
+      const agora = new Date();
+      const fileName = formatarNomeArquivoPlanoAlimentar(pacienteNome, agora);
+      const pdfProps: DietPlanPDFProps = {
+        nomePlano: nomePlano.trim() || "Plano Alimentar Individualizado",
+        pacienteNome: pacienteNome.trim() || "Paciente",
+        pacienteRecordCode: pacienteRecordCode ?? null,
+        objetivoTratamento:
+          pacienteObjetivo?.trim() || plano?.objetivo?.trim() || null,
+        dataEmissao: formatarDataBR(agora),
+        localCidade: doctorProfile.localCidade,
+        medicoNome: doctorProfile.medicoNome,
+        crm: doctorProfile.crm,
+        especialidades: doctorProfile.especialidades,
+        clinicaNome: doctorProfile.clinicaNome,
+        clinicaSubtitulo: doctorProfile.clinicaSubtitulo,
+        clinicaContato: doctorProfile.clinicaContato,
+        logoSrc: getClinicaLogoUrl(),
+        incluirMacros: pdfIncluirMacros,
+        variacoes: variacoesPdf,
+      };
+
+      const { downloadDietPlanPdf } = await import(
+        "@/components/DietPlanPdfExporter"
+      );
+      await downloadDietPlanPdf(pdfProps, fileName);
+
+      setIsExportPdfModalOpen(false);
+      setMensagemSucesso(`PDF "${fileName}" baixado com sucesso!`);
+      setTimeout(() => setMensagemSucesso(null), 3500);
+    } catch (err: unknown) {
+      console.error("[DietaTab] Erro ao exportar plano alimentar em PDF:", err);
+      setPdfErro(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível gerar o PDF do plano alimentar."
+      );
+    } finally {
+      setExportandoPdf(false);
+    }
+  };
+
   if (carregando) {
     return (
       <div className="flex-1 min-h-[360px] flex flex-col items-center justify-center p-8 text-slate-500">
@@ -1238,6 +1505,16 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
               {mensagemSucesso}
             </span>
           )}
+
+          <button
+            type="button"
+            onClick={handleAbrirExportPdfModal}
+            disabled={!variacaoAtiva}
+            className="cl-btn-secondary inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+          >
+            <FileDown className="w-3.5 h-3.5 text-teal-700" />
+            <span>Exportar PDF</span>
+          </button>
 
           <button
             type="button"
@@ -2011,6 +2288,206 @@ export function DietaTab({ pacienteId, pacienteNome }: DietaTabProps) {
           </div>
         </div>
       </div>
+
+      {/* ======================================================== */}
+      {/* MODAL DE EXPORTAÇÃO DO PLANO ALIMENTAR EM PDF (CLINICAL LIGHT) */}
+      {/* ======================================================== */}
+      {isExportPdfModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="cl-card bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200/90 overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="cl-modal-header px-5 py-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center shrink-0">
+                  <FileDown className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    Exportar Plano Alimentar (PDF)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Padrão oficial {doctorProfile.clinicaNome} • Vetorial A4
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExportPdfModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Fechar modal de exportação"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Variações a incluir */}
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block mb-2">
+                  Variações a incluir no documento
+                </span>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPdfEscopoVariacoes("atual")}
+                    className={`flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      pdfEscopoVariacoes === "atual"
+                        ? "bg-teal-50/70 border-teal-600 ring-1 ring-teal-600/20"
+                        : "bg-slate-50/60 border-slate-200 hover:bg-slate-100/70"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <span
+                        className={`text-xs font-bold block truncate ${
+                          pdfEscopoVariacoes === "atual"
+                            ? "text-teal-950"
+                            : "text-slate-800"
+                        }`}
+                      >
+                        Apenas variação atual ({variacaoAtiva?.nome || "Opção 1"})
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Exporta somente o cardápio selecionado agora na tela
+                      </span>
+                    </div>
+                    <span
+                      className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                        pdfEscopoVariacoes === "atual"
+                          ? "border-teal-600"
+                          : "border-slate-300"
+                      }`}
+                    >
+                      {pdfEscopoVariacoes === "atual" && (
+                        <span className="w-2 h-2 rounded-full bg-teal-600" />
+                      )}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={variacoesComAlimentos.length === 0}
+                    onClick={() => setPdfEscopoVariacoes("todas")}
+                    className={`flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                      pdfEscopoVariacoes === "todas"
+                        ? "bg-teal-50/70 border-teal-600 ring-1 ring-teal-600/20"
+                        : "bg-slate-50/60 border-slate-200 hover:bg-slate-100/70"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <span
+                        className={`text-xs font-bold block truncate ${
+                          pdfEscopoVariacoes === "todas"
+                            ? "text-teal-950"
+                            : "text-slate-800"
+                        }`}
+                      >
+                        Todas as variações com alimentos (
+                        {variacoesComAlimentos.length})
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Inclui cada opção de cardápio preenchida com separador
+                      </span>
+                    </div>
+                    <span
+                      className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                        pdfEscopoVariacoes === "todas"
+                          ? "border-teal-600"
+                          : "border-slate-300"
+                      }`}
+                    >
+                      {pdfEscopoVariacoes === "todas" && (
+                        <span className="w-2 h-2 rounded-full bg-teal-600" />
+                      )}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Checkbox calorias/macros */}
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200/80 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={pdfIncluirMacros}
+                  onChange={(e) => setPdfIncluirMacros(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                />
+                <div>
+                  <span className="text-xs font-bold text-slate-800 block">
+                    Exibir calorias e macronutrientes no PDF
+                  </span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    Opcional. Desmarcado gera um documento mais leve e focado em
+                    medidas caseiras para o paciente.
+                  </span>
+                </div>
+              </label>
+
+              {/* Aviso discreto sobre o estado atual da tela */}
+              <div
+                className={`flex items-start gap-2 px-3 py-2 rounded-xl text-[11px] border ${
+                  hasUnsavedChanges
+                    ? "bg-amber-50 border-amber-200 text-amber-800"
+                    : "bg-slate-50 border-slate-200/70 text-slate-500"
+                }`}
+              >
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>
+                  {hasUnsavedChanges
+                    ? "Há alterações não salvas na tela — o PDF usará exatamente o cardápio exibido agora."
+                    : "O PDF usará o cardápio exibido agora na tela, incluindo medidas caseiras, substituições e orientações de preparo."}
+                </span>
+              </div>
+
+              {pdfErro && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{pdfErro}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              {whatsappUrl ? (
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="cl-btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>Abrir WhatsApp do Paciente</span>
+                </a>
+              ) : (
+                <span className="text-[11px] text-slate-400">
+                  Arquivo: {formatarNomeArquivoPlanoAlimentar(pacienteNome)}
+                </span>
+              )}
+
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsExportPdfModalOpen(false)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-200/60 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={exportandoPdf}
+                  onClick={handleBaixarPlanoPdf}
+                  className="cl-btn-primary inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  {exportandoPdf ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <FileDown className="w-3.5 h-3.5" />
+                  )}
+                  <span>{exportandoPdf ? "Gerando PDF..." : "Baixar PDF"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ======================================================== */}
       {/* MODAL PARA ADICIONAR NOVA VARIAÇÃO DE DIETA */}

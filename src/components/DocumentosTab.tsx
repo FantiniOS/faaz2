@@ -29,6 +29,10 @@ import {
 import AuthContext, { UsuarioLogado } from "@/contexts/AuthContext";
 import { formatarDataBR, getDataDiaBR } from "@/lib/date-br";
 import {
+  getClinicaLogoUrl,
+  resolveDoctorProfile,
+} from "@/lib/pdf-clinica-template";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -88,25 +92,6 @@ export interface DocumentosTabProps {
   pacienteCpf?: string | null;
   pacienteRecordCode?: string | null;
 }
-
-interface ResolvedDoctorProfile {
-  medicoNome: string;
-  crm: string;
-  especialidades: string;
-  clinicaNome: string;
-  localCidade: string;
-  clinicaContato: string;
-}
-
-const FALLBACK_DOCTOR_PROFILE: ResolvedDoctorProfile = {
-  medicoNome: "Dra. Maria Luiza",
-  crm: "CRM-MG XXXXX",
-  especialidades: "Endocrinologia, Metabologia & Saúde Integrativa",
-  clinicaNome: "Clínica FAAZ",
-  localCidade: "Belo Horizonte - MG",
-  clinicaContato:
-    "Clínica FAAZ Medicina & Saúde Integrativa  •  WhatsApp: (31) 98440-0076",
-};
 
 const DOC_TYPES: Array<{
   id: TipoDocumentoMedico;
@@ -231,42 +216,6 @@ function buildSafeFileName(
   return `Clinica-FAAZ-${cleanType}-${normalizedName || "paciente"}-${dateStamp}.pdf`;
 }
 
-function resolveDoctorProfile(
-  usuario: UsuarioLogado | null
-): ResolvedDoctorProfile {
-  if (!usuario) return FALLBACK_DOCTOR_PROFILE;
-
-  const rawName = (usuario.fullName || usuario.nome || "").trim();
-  const hasMappedCouncil = Boolean(usuario.councilNumber?.trim());
-  const hasExplicitTitle = Boolean(usuario.title?.trim());
-
-  // Se o cadastro do médico já possuir título/CRM mapeados, monta o nome completo automaticamente;
-  // caso contrário, usa o fallback provisório da Dra. Malu.
-  const medicoNome =
-    hasExplicitTitle || hasMappedCouncil
-      ? `${usuario.title?.trim() ? `${usuario.title.trim()} ` : ""}${rawName || FALLBACK_DOCTOR_PROFILE.medicoNome}`
-      : FALLBACK_DOCTOR_PROFILE.medicoNome;
-
-  const crm = hasMappedCouncil
-    ? `${usuario.councilType?.trim() || "CRM"} ${usuario.councilNumber!.trim()}`
-    : FALLBACK_DOCTOR_PROFILE.crm;
-
-  const clinicaNome =
-    usuario.clinicaNome?.trim() || FALLBACK_DOCTOR_PROFILE.clinicaNome;
-
-  const especialidades =
-    usuario.specialty?.trim() || FALLBACK_DOCTOR_PROFILE.especialidades;
-
-  return {
-    medicoNome,
-    crm,
-    especialidades,
-    clinicaNome,
-    localCidade: FALLBACK_DOCTOR_PROFILE.localCidade,
-    clinicaContato: `${clinicaNome} Medicina & Saúde Integrativa  •  WhatsApp: (31) 98440-0076`,
-  };
-}
-
 export function DocumentosTab({
   pacienteId,
   pacienteNome,
@@ -339,11 +288,7 @@ export function DocumentosTab({
 
   const [showPdfPreview, setShowPdfPreview] = useState<boolean>(false);
   const [downloadFeedback, setDownloadFeedback] = useState<boolean>(false);
-  const [logoSrc] = useState<string>(() =>
-    typeof window !== "undefined"
-      ? `${window.location.origin}/logo-faaz.png`
-      : "/logo-faaz.png"
-  );
+  const [logoSrc] = useState<string>(() => getClinicaLogoUrl());
 
   const currentTypeConfig = useMemo(
     () => DOC_TYPES.find((item) => item.id === tipo) || DOC_TYPES[0],

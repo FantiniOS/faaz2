@@ -3317,7 +3317,14 @@ export function ProntuarioModal({
           /* CONTEÚDO ATIVO DA ABA DIETA (DATA-DRIVEN) */
           <DietaTab
             pacienteId={paciente?.id || ""}
-            pacienteNome={paciente?.nome || "Paciente"}
+            pacienteNome={pacienteNome}
+            pacienteRecordCode={pacienteRecordCode}
+            pacienteObjetivo={objetivoHeader}
+            pacienteTelefone={
+              pacienteApiData?.telefoneWhatsapp ||
+              paciente?.telefoneWhatsapp ||
+              null
+            }
           />
         ) : activeTab === "metas" ? (
           /* CONTEÚDO ATIVO DA ABA METAS */
