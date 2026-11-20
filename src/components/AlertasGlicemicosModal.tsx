@@ -78,15 +78,25 @@ export function AlertasGlicemicosModal({
   }, []);
 
   useEffect(() => {
-    if (liveData?.alertasHoje) {
-      setAlertas(liveData.alertasHoje);
-    }
+    if (!liveData?.alertasHoje) return;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) setAlertas(liveData.alertasHoje);
+    });
+    return () => {
+      ativo = false;
+    };
   }, [liveData]);
 
   useEffect(() => {
-    if (isOpen) {
-      fetchAlertas();
-    }
+    if (!isOpen) return;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) void fetchAlertas();
+    });
+    return () => {
+      ativo = false;
+    };
   }, [isOpen, fetchAlertas]);
 
   useEffect(() => {
@@ -103,29 +113,29 @@ export function AlertasGlicemicosModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
-        className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 flex flex-col max-h-[88vh] overflow-hidden animate-in zoom-in-95 duration-150"
+        className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200/90 flex flex-col max-h-[88vh] overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* CABEÇALHO DO MODAL ESTÁTICO */}
-        <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+        {/* CABEÇALHO CLINICAL LIGHT GLASS */}
+        <div className="cl-modal-header px-5 py-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-sm sm:text-base font-black text-white tracking-tight truncate">
+                <h2 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight truncate">
                   Alertas Glicêmicos Críticos — Hoje
                 </h2>
-                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-500 text-white shrink-0">
+                <span className="cl-badge-rose text-[10px] px-2 py-0.5 shrink-0 tabular-nums">
                   {alertas.length} {alertas.length === 1 ? "Alerta" : "Alertas"}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-300 truncate mt-0.5">
+              <p className="text-[11px] text-slate-500 truncate mt-0.5">
                 Pacientes com glicemia fora da zona de segurança (&lt; 70 ou &gt; 180 mg/dL)
               </p>
             </div>
@@ -136,17 +146,17 @@ export function AlertasGlicemicosModal({
               type="button"
               onClick={fetchAlertas}
               disabled={isLoading}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
               title="Atualizar alertas"
             >
               <RefreshCw
-                className={`w-4 h-4 ${isLoading ? "animate-spin text-rose-400" : ""}`}
+                className={`w-4 h-4 ${isLoading ? "animate-spin text-rose-600" : ""}`}
               />
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
               title="Fechar (ESC)"
             >
               <X className="w-5 h-5" />
@@ -221,7 +231,7 @@ export function AlertasGlicemicosModal({
                   <button
                     type="button"
                     onClick={() => onOpenProntuario(alerta)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-slate-900 hover:bg-teal-700 text-white transition-colors shadow-2xs cursor-pointer shrink-0"
+                    className="cl-btn-primary px-3.5 py-2 text-xs shrink-0"
                   >
                     <FileText className="w-3.5 h-3.5" />
                     <span>Abrir Prontuário</span>

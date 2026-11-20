@@ -178,17 +178,24 @@ export function MetasTab({
   );
 
   useEffect(() => {
-    setMounted(true);
-    carregarMetas(false);
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (!ativo) return;
+      setMounted(true);
+      void carregarMetas(false);
+    });
 
     // Sincronização em tempo real (polling silencioso) sem sobrescrever digitação ativa no modal
     const interval = setInterval(() => {
       if (!isModalAjusteOpenRef.current) {
-        carregarMetas(true);
+        void carregarMetas(true);
       }
     }, 3500);
 
-    return () => clearInterval(interval);
+    return () => {
+      ativo = false;
+      clearInterval(interval);
+    };
   }, [carregarMetas]);
 
   function handleOpenModalAjuste() {
@@ -433,10 +440,10 @@ export function MetasTab({
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-7 space-y-6 bg-slate-50/50">
-      {/* TOAST DE FEEDBACK */}
+      {/* TOAST DE FEEDBACK — CLINICAL LIGHT */}
       {toastMensagem && (
-        <div className="fixed top-16 right-8 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-xl animate-in fade-in slide-in-from-top-4">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+        <div className="fixed top-16 right-8 z-50 cl-toast flex items-center gap-2 px-4 py-2.5 text-xs font-bold animate-in fade-in slide-in-from-top-4">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           <span>{toastMensagem}</span>
         </div>
       )}
@@ -562,14 +569,14 @@ export function MetasTab({
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: "#0f172a",
-                        borderRadius: "10px",
-                        border: "none",
-                        color: "#fff",
+                        backgroundColor: "rgba(255, 255, 255, 0.96)",
+                        borderRadius: "12px",
+                        border: "1px solid #e2e8f0",
+                        color: "#0f172a",
                         fontSize: "11px",
-                        boxShadow: "0 10px 15px -3px rgba(0,0,0,0.3)",
+                        boxShadow: "0 10px 25px -5px rgba(15, 23, 42, 0.12)",
                       }}
-                      formatter={(val: any) => [`${val} horas`, "Sono"]}
+                      formatter={(val) => [`${val ?? ""} horas`, "Sono"]}
                       labelFormatter={(label) => `Dia: ${label}`}
                     />
                     {metas.sonoHorasAlvo > 0 && (
@@ -694,13 +701,14 @@ export function MetasTab({
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: "#0f172a",
-                        borderRadius: "10px",
-                        border: "none",
-                        color: "#fff",
+                        backgroundColor: "rgba(255, 255, 255, 0.96)",
+                        borderRadius: "12px",
+                        border: "1px solid #e2e8f0",
+                        color: "#0f172a",
                         fontSize: "11px",
+                        boxShadow: "0 10px 25px -5px rgba(15, 23, 42, 0.12)",
                       }}
-                      formatter={(val: any) => [`${val} ml`, "Consumo"]}
+                      formatter={(val) => [`${val ?? ""} ml`, "Consumo"]}
                       labelFormatter={(label) => `Dia: ${label}`}
                     />
                     {metas.aguaMlAlvo > 0 && (
@@ -815,13 +823,14 @@ export function MetasTab({
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: "#0f172a",
-                        borderRadius: "10px",
-                        border: "none",
-                        color: "#fff",
+                        backgroundColor: "rgba(255, 255, 255, 0.96)",
+                        borderRadius: "12px",
+                        border: "1px solid #e2e8f0",
+                        color: "#0f172a",
                         fontSize: "11px",
+                        boxShadow: "0 10px 25px -5px rgba(15, 23, 42, 0.12)",
                       }}
-                      formatter={(val: any) => [`${val} kg`, "Peso"]}
+                      formatter={(val) => [`${val ?? ""} kg`, "Peso"]}
                       labelFormatter={(label) => `Data: ${label}`}
                     />
                     {pesoEvolucao.pesoAlvoKg > 0 && (
@@ -1127,20 +1136,22 @@ export function MetasTab({
       {/* MODAL: AJUSTAR METAS DO PACIENTE                          */}
       {/* ======================================================== */}
       {isModalAjusteOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-150">
-            {/* Header do Modal */}
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
-              <div className="flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-teal-400" />
-                <h3 className="text-sm font-extrabold tracking-wide uppercase">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/90 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Header Clinical Light Glass */}
+            <div className="cl-modal-header px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                  <Sliders className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">
                   Ajustar Metas Clínicas de {pacienteNome}
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={handleCloseModalAjuste}
-                className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+                className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-1.5 rounded-xl transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>

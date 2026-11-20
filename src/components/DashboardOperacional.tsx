@@ -84,7 +84,13 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
   }, [hojeIso]);
 
   useEffect(() => {
-    carregarAgendamentos();
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) void carregarAgendamentos();
+    });
+    return () => {
+      ativo = false;
+    };
   }, [carregarAgendamentos]);
 
   // Cálculos consolidados da operação do dia
@@ -130,10 +136,10 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
   });
 
   return (
-    <div className="min-h-screen bg-slate-50/70 flex flex-col font-sans">
+    <div className="min-h-screen cl-page flex flex-col font-sans">
       <TopMenu activePath="/dashboard" />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-5">
         {/* CABEÇALHO DO PAINEL OPERACIONAL */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -311,13 +317,13 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
 
             {/* Filtros em formato de Pílulas */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1 bg-white border border-slate-200 p-1 rounded-xl shadow-2xs">
+              <div className="cl-segmented gap-1">
                 <button
                   type="button"
                   onClick={() => setFiltroEspecialidade("TODAS")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                     filtroEspecialidade === "TODAS"
-                      ? "bg-slate-900 text-white"
+                      ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
@@ -326,7 +332,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 <button
                   type="button"
                   onClick={() => setFiltroEspecialidade("ENDOCRINOLOGIA")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                     filtroEspecialidade === "ENDOCRINOLOGIA"
                       ? "bg-emerald-600 text-white"
                       : "text-slate-600 hover:text-slate-900"
@@ -337,7 +343,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 <button
                   type="button"
                   onClick={() => setFiltroEspecialidade("CIRURGIA_PLASTICA")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                     filtroEspecialidade === "CIRURGIA_PLASTICA"
                       ? "bg-blue-600 text-white"
                       : "text-slate-600 hover:text-slate-900"
@@ -347,13 +353,13 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 </button>
               </div>
 
-              <div className="flex items-center gap-1 bg-white border border-slate-200 p-1 rounded-xl shadow-2xs">
+              <div className="cl-segmented gap-1">
                 <button
                   type="button"
                   onClick={() => setFiltroStatus("TODOS")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                     filtroStatus === "TODOS"
-                      ? "bg-slate-900 text-white"
+                      ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
@@ -362,7 +368,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 <button
                   type="button"
                   onClick={() => setFiltroStatus("CONFIRMADOS")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                     filtroStatus === "CONFIRMADOS"
                       ? "bg-emerald-600 text-white"
                       : "text-slate-600 hover:text-slate-900"
@@ -373,7 +379,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 <button
                   type="button"
                   onClick={() => setFiltroStatus("PENDENTES")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                     filtroStatus === "PENDENTES"
                       ? "bg-amber-600 text-white"
                       : "text-slate-600 hover:text-slate-900"
@@ -384,7 +390,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 <button
                   type="button"
                   onClick={() => setFiltroStatus("ENCAIXES")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                     filtroStatus === "ENCAIXES"
                       ? "bg-amber-600 text-white"
                       : "text-slate-600 hover:text-slate-900"
@@ -414,7 +420,7 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
               <div className="pt-2">
                 <Link
                   href="/agenda"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 text-white text-xs font-bold rounded-xl hover:bg-slate-800 transition-colors"
+                  className="cl-btn-primary px-4 py-2 text-xs"
                 >
                   <span>Abrir Agenda</span>
                   <ArrowRight className="w-3.5 h-3.5" />

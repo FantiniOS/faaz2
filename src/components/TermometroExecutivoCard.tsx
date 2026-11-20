@@ -167,19 +167,19 @@ export function TermometroExecutivoCard({
   return (
     <section
       aria-label="Termômetro do Paciente"
-      className="bg-slate-50/75 rounded-2xl border border-slate-200/90 px-4 py-3.5 shadow-2xs"
+      className="cl-card px-4 py-3.5"
     >
       {/* Cabeçalho compacto */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-teal-50 border border-teal-200/70 text-teal-700">
+          <div className="p-1.5 rounded-lg bg-emerald-50 border border-emerald-200/80 text-emerald-700">
             <Gauge className="w-3.5 h-3.5" />
           </div>
           <div className="flex flex-wrap items-baseline gap-1.5">
-            <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
               Termômetro do Paciente
             </h3>
-            <span className="text-[11px] font-semibold text-slate-500">
+            <span className="text-[11px] font-semibold text-slate-500 tabular-nums">
               · Últimos {dados?.periodoDias ?? dias} dias
             </span>
           </div>
@@ -195,7 +195,7 @@ export function TermometroExecutivoCard({
           {[0, 1, 2, 3, 4].map((idx) => (
             <div
               key={idx}
-              className="bg-white border border-slate-200/80 rounded-xl p-3 h-[84px] animate-pulse flex flex-col justify-between"
+              className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3 h-[84px] animate-pulse flex flex-col justify-between"
             >
               <div className="h-2.5 w-24 bg-slate-200/80 rounded" />
               <div className="h-5 w-16 bg-slate-200 rounded" />
@@ -206,7 +206,7 @@ export function TermometroExecutivoCard({
       ) : dados ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
           {/* 1. CONSTÂNCIA DIETA */}
-          <div className="bg-white border border-slate-200/85 rounded-xl p-3 flex flex-col justify-between gap-1.5">
+          <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
             <div className="flex items-center justify-between gap-1">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                 <Utensils className="w-3 h-3 text-teal-600 shrink-0" />
@@ -256,7 +256,7 @@ export function TermometroExecutivoCard({
           </div>
 
           {/* 2. GLICEMIA 30D */}
-          <div className="bg-white border border-slate-200/85 rounded-xl p-3 flex flex-col justify-between gap-1.5">
+          <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
             <div className="flex items-center justify-between gap-1">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                 <HeartPulse className="w-3 h-3 text-rose-500 shrink-0" />
@@ -302,7 +302,9 @@ export function TermometroExecutivoCard({
                       ]
                         .filter(Boolean)
                         .join(" · ") + ` (${dados.glicemia.totalMedicoes} med.)`
-                    : `${dados.glicemia.totalMedicoes} medição(ões) · na faixa`}
+                    : `${dados.glicemia.totalMedicoes} ${
+                        dados.glicemia.totalMedicoes === 1 ? "medição" : "medições"
+                      } · na faixa`}
                 </p>
               </>
             ) : (
@@ -313,7 +315,7 @@ export function TermometroExecutivoCard({
           </div>
 
           {/* 3. INTESTINO (BRISTOL) */}
-          <div className="bg-white border border-slate-200/85 rounded-xl p-3 flex flex-col justify-between gap-1.5">
+          <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
             <div className="flex items-center justify-between gap-1">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                 <Activity className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -364,7 +366,7 @@ export function TermometroExecutivoCard({
           </div>
 
           {/* 4. TREINOS 30D */}
-          <div className="bg-white border border-slate-200/85 rounded-xl p-3 flex flex-col justify-between gap-1.5">
+          <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
             <div className="flex items-center justify-between gap-1">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                 <Dumbbell className="w-3 h-3 text-teal-600 shrink-0" />
@@ -400,7 +402,7 @@ export function TermometroExecutivoCard({
           </div>
 
           {/* 5. FITA MÉTRICA */}
-          <div className="bg-white border border-slate-200/85 rounded-xl p-3 flex flex-col justify-between gap-1.5">
+          <div className="bg-slate-50/75 border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between gap-1.5">
             <div className="flex items-center justify-between gap-1">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                 <Ruler className="w-3 h-3 text-sky-600 shrink-0" />

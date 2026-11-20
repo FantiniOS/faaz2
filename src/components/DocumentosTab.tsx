@@ -650,8 +650,8 @@ export function DocumentosTab({
             onClick={handleToggleRealPreview}
             className={`inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
               showPdfPreview
-                ? "bg-slate-900 text-white border-slate-900"
-                : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs"
+                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-emerald-300"
             }`}
           >
             <Eye className="w-4 h-4" />

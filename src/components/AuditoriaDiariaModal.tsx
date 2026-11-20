@@ -59,9 +59,14 @@ export function AuditoriaDiariaModal({
   const [pendentesHoje, setPendentesHoje] = useState<AuditoriaPendenteItem[]>([]);
 
   useEffect(() => {
-    if (initialModulo) {
-      setModulo(initialModulo);
-    }
+    if (!initialModulo) return;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) setModulo(initialModulo);
+    });
+    return () => {
+      ativo = false;
+    };
   }, [initialModulo]);
 
   const loadData = useCallback(async () => {
@@ -85,9 +90,14 @@ export function AuditoriaDiariaModal({
   }, [modulo]);
 
   useEffect(() => {
-    if (isOpen) {
-      loadData();
-    }
+    if (!isOpen) return;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) void loadData();
+    });
+    return () => {
+      ativo = false;
+    };
   }, [isOpen, loadData]);
 
   if (!isOpen) return null;
@@ -114,13 +124,13 @@ export function AuditoriaDiariaModal({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
       <div
-        className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[92vh] overflow-hidden"
+        className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-200/90 flex flex-col max-h-[92vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* CABEÇALHO COMPACTO */}
-        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        {/* CABEÇALHO CLINICAL LIGHT GLASS */}
+        <div className="cl-modal-header px-5 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div
               className={`w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-2xs ${

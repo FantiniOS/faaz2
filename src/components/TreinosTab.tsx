@@ -129,8 +129,12 @@ export function TreinosTab({ pacienteId, pacienteNome }: TreinosTabProps) {
       } else {
         setMensagemErro(json.error || "Erro ao salvar as diretrizes.");
       }
-    } catch (err: any) {
-      setMensagemErro(err.message || "Falha na comunicação com o servidor.");
+    } catch (err: unknown) {
+      setMensagemErro(
+        err instanceof Error
+          ? err.message
+          : "Falha na comunicação com o servidor."
+      );
     } finally {
       setSalvando(false);
     }
@@ -167,18 +171,18 @@ export function TreinosTab({ pacienteId, pacienteNome }: TreinosTabProps) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 bg-slate-50/50">
       {/* 1. CABEÇALHO DO MÓDULO */}
-      <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="cl-card p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0">
+          <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
             <Dumbbell className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base sm:text-lg font-bold text-slate-900">
+              <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
                 Diretrizes de Atividade Física & Treinos
               </h2>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 border border-teal-200 text-teal-800 text-[10px] font-bold">
-                <Sparkles className="w-3 h-3 text-teal-600" />
+              <span className="cl-badge-emerald px-2.5 py-0.5 text-[10px]">
+                <Sparkles className="w-3 h-3 text-emerald-600" />
                 Habit Tracker
               </span>
             </div>

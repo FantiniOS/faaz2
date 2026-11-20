@@ -51,14 +51,21 @@ export function CommandPalette({
 
   // Foco automático ao abrir
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (!ativo) return;
       setQuery("");
       setResultados([]);
       setSelectedIndex(0);
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 50);
-    }
+    });
+    const focusTimer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+    return () => {
+      ativo = false;
+      clearTimeout(focusTimer);
+    };
   }, [isOpen]);
 
   // Debounced search (300ms)
@@ -69,14 +76,22 @@ export function CommandPalette({
       clearTimeout(debounceTimerRef.current);
     }
 
+    let ativo = true;
     const trimmed = query.trim();
     if (!trimmed) {
-      setResultados([]);
-      setCarregando(false);
-      return;
+      void Promise.resolve().then(() => {
+        if (!ativo) return;
+        setResultados([]);
+        setCarregando(false);
+      });
+      return () => {
+        ativo = false;
+      };
     }
 
-    setCarregando(true);
+    void Promise.resolve().then(() => {
+      if (ativo) setCarregando(true);
+    });
     debounceTimerRef.current = setTimeout(async () => {
       try {
         const res = await fetch(`/api/busca?q=${encodeURIComponent(trimmed)}`, {
@@ -95,6 +110,7 @@ export function CommandPalette({
     }, 280);
 
     return () => {
+      ativo = false;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -177,7 +193,7 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center pt-16 sm:pt-24 p-3 sm:p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-xs flex items-start justify-center pt-16 sm:pt-24 p-3 sm:p-4 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div

@@ -947,10 +947,10 @@ export default function AgendaPage() {
         <TopMenu user={mockUserSession} activePath="/agenda" />
       </div>
 
-      {/* TOAST DE FEEDBACK */}
+      {/* TOAST DE FEEDBACK — CLINICAL LIGHT */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 text-xs font-semibold animate-in fade-in duration-150">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+        <div className="fixed bottom-6 right-6 z-50 cl-toast px-4 py-2.5 flex items-center gap-2 text-xs font-semibold animate-in fade-in duration-150">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -1169,11 +1169,11 @@ export default function AgendaPage() {
                   {viewMode === "dia" ? col.weekdayLong : col.weekdayShort}
                 </span>
                 <span
-                  className={`w-7 h-7 rounded-full text-xs font-black flex items-center justify-center ${
+                  className={`w-7 h-7 rounded-full text-xs font-black font-mono tabular-nums flex items-center justify-center ${
                     col.isToday
                       ? "bg-emerald-600 text-white shadow-2xs"
                       : col.isSelected
-                      ? "bg-slate-900 text-white"
+                      ? "bg-emerald-50 text-emerald-800 border border-emerald-300"
                       : "text-slate-800"
                   }`}
                 >
@@ -1488,30 +1488,30 @@ export default function AgendaPage() {
       {/* ======================================================== */}
       {selectedCard && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-xs flex items-center justify-center p-4"
           onClick={() => setSelectedCard(null)}
         >
           <div
-            className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+            <div className="cl-modal-header px-5 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-300 shrink-0">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
                   <Clock className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 font-mono tabular-nums block">
                     {selectedCard.horario} ({selectedCard.duracaoMinutos || 30}{" "}
                     min) • {selectedCard.tipoLegivel}
                   </span>
                   <div className="flex items-center gap-2 min-w-0">
-                    <h3 className="text-sm sm:text-base font-extrabold truncate">
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
                       {selectedCard.pacienteNome}
                     </h3>
                     {(selectedCard.pacientePlanoFaaz ||
                       selectedCard.paciente?.planoFaaz) && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[10px] font-black uppercase tracking-wider shrink-0">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black uppercase tracking-wider shrink-0">
                         FAAZ ✨
                       </span>
                     )}
@@ -1522,7 +1522,7 @@ export default function AgendaPage() {
               <button
                 type="button"
                 onClick={() => setSelectedCard(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1663,20 +1663,20 @@ export default function AgendaPage() {
       {/* MODAL DE AGENDAMENTO FLEXÍVEL (HORÁRIOS QUEBRADOS + DURAÇÃO) */}
       {/* ======================================================== */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="cl-modal-header px-6 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-300">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
                   <Sparkles className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-extrabold tracking-tight">
+                  <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">
                     {editingAgendamento
                       ? "Editar Agendamento"
                       : "Novo Agendamento Flexível"}
                   </h3>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[11px] text-slate-500 font-mono tabular-nums">
                     Horário: {horarioForm} ({duracaoForm} min) •{" "}
                     {dataForm.split("-").reverse().join("/")}
                   </p>
@@ -1686,7 +1686,7 @@ export default function AgendaPage() {
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>

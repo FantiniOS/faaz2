@@ -501,17 +501,21 @@ export function AlimentoCombobox({
 
       {/* MINI-MODAL DE CADASTRO RÁPIDO DE SUPLEMENTO / ITEM PRÓPRIO */}
       {isQuickCreateOpen && (
-        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-900/55 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150">
-            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-teal-400" />
-                <h3 className="text-sm font-bold">Cadastrar Suplemento / Item Próprio</h3>
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200/90 overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="cl-modal-header px-5 py-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  Cadastrar Suplemento / Item Próprio
+                </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsQuickCreateOpen(false)}
-                className="text-slate-400 hover:text-white cursor-pointer"
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>

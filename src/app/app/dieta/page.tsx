@@ -120,12 +120,13 @@ export default function AppDietaPage() {
             setErro(data.error || "Não foi possível carregar seu plano.");
           }
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (isMounted) {
           console.error("Erro ao carregar dieta do paciente:", err);
           setErro(
-            err.message ||
-              "Erro de conexão ao sincronizar com a Clínica FAAZ."
+            err instanceof Error
+              ? err.message
+              : "Erro de conexão ao sincronizar com a Clínica FAAZ."
           );
         }
       } finally {
@@ -166,29 +167,29 @@ export default function AppDietaPage() {
       {/* CONTAINER RESPONSIVO MOBILE-FIRST (Estilo Aplicativo Nativo) */}
       <div className="w-full max-w-md min-h-screen bg-slate-50 flex flex-col border-x border-slate-200/80 shadow-2xl relative pb-24">
         {/* ======================================================== */}
-        {/* 1. HEADER DO APP (PADRÃO CLÍNICA FAAZ) */}
+        {/* 1. HEADER DO APP (CLINICAL LIGHT) */}
         {/* ======================================================== */}
-        <header className="sticky top-0 z-30 bg-slate-900 text-white px-4 py-3 shadow-md flex items-center justify-between">
+        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md text-slate-900 border-b border-slate-200/80 px-4 py-3 shadow-2xs flex items-center justify-between">
           <Link
             href="/app"
-            className="flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors py-1 px-1.5 -ml-1 rounded-lg active:bg-slate-800"
+            className="flex items-center gap-1.5 text-slate-600 hover:text-slate-900 transition-colors py-1 px-1.5 -ml-1 rounded-lg hover:bg-slate-100"
           >
-            <ChevronLeft className="w-5 h-5 text-teal-400" />
+            <ChevronLeft className="w-5 h-5 text-emerald-600" />
             <span className="text-xs font-semibold">Voltar</span>
           </Link>
 
           <div className="flex flex-col items-center">
-            <span className="text-[10px] font-bold tracking-widest text-teal-400 uppercase">
+            <span className="text-[10px] font-bold tracking-widest text-emerald-700 uppercase">
               Clínica FAAZ
             </span>
-            <span className="text-xs font-bold text-white tracking-tight">
+            <span className="text-xs font-extrabold text-slate-900 tracking-tight">
               Meu Plano Alimentar
             </span>
           </div>
 
           <div className="w-12 flex justify-end">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
-              <ShieldCheck className="w-3 h-3 text-teal-400" />
+            <span className="cl-badge-emerald px-2 py-0.5 text-[10px]">
+              <ShieldCheck className="w-3 h-3 text-emerald-600" />
               Médico
             </span>
           </div>
@@ -198,39 +199,37 @@ export default function AppDietaPage() {
         {/* 2. CONTEÚDO PRINCIPAL (LEITURA LIMPA E CONSUMO) */}
         {/* ======================================================== */}
         <main className="flex-1 px-4 pt-4 pb-6 space-y-4">
-          {/* BANNER DO PLANO & MÉDICO RESPONSÁVEL */}
+          {/* BANNER CLINICAL LIGHT GLASS DO PLANO & MÉDICO RESPONSÁVEL */}
           {paciente && (
-            <div className="bg-gradient-to-br from-slate-900 via-teal-950 to-slate-900 rounded-2xl p-4 text-white shadow-lg border border-teal-800/40 relative overflow-hidden">
-              <div className="absolute top-0 right-0 -mr-6 -mt-6 w-28 h-28 bg-teal-500/10 rounded-full blur-2xl pointer-events-none" />
-
+            <div className="cl-hero rounded-2xl p-4">
               <div className="flex items-center gap-2 mb-2">
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-400/30">
-                  <Sparkles className="w-3 h-3 text-teal-300" />
+                <span className="cl-badge-emerald px-2.5 py-0.5 text-[10px]">
+                  <Sparkles className="w-3 h-3 text-emerald-600" />
                   Prescrição Médica Ativa
                 </span>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-slate-500 font-medium">
                   {paciente.nome}
                 </span>
               </div>
 
-              <h1 className="text-base font-bold text-white leading-snug">
+              <h1 className="text-base font-extrabold text-slate-900 leading-snug">
                 {plano?.nome || plano?.titulo || "Plano Alimentar Individualizado"}
               </h1>
 
               {plano?.objetivo && (
-                <p className="text-xs text-teal-100/90 mt-1.5 leading-relaxed font-normal">
+                <p className="text-xs text-slate-600 mt-1.5 leading-relaxed font-normal">
                   {plano.objetivo}
                 </p>
               )}
 
-              <div className="mt-3 pt-3 border-t border-teal-800/40 flex items-center justify-between text-[11px]">
-                <span className="text-slate-400">
+              <div className="mt-3 pt-3 border-t border-slate-200/80 flex items-center justify-between text-[11px]">
+                <span className="text-slate-500">
                   Médico:{" "}
-                  <strong className="text-slate-200">
+                  <strong className="text-slate-800">
                     {paciente.medico}
                   </strong>
                 </span>
-                <span className="text-teal-400 font-medium">
+                <span className="text-emerald-700 font-semibold">
                   {paciente.especialidade}
                 </span>
               </div>

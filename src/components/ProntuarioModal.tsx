@@ -283,15 +283,15 @@ function CustomChartTooltip({
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     return (
-      <div className="bg-slate-900 text-white px-3 py-2 rounded-xl shadow-xl border border-slate-700 text-xs">
-        <span className="text-[10px] text-slate-400 block font-medium">
+      <div className="bg-white/95 backdrop-blur-md text-slate-900 px-3 py-2 rounded-xl shadow-lg border border-slate-200 text-xs">
+        <span className="text-[10px] text-slate-500 block font-medium">
           {data.data} ({data.dataFormatada})
         </span>
         <div className="flex items-baseline gap-1 mt-0.5">
-          <span className="text-base font-black font-mono text-teal-300">
+          <span className="text-base font-black font-mono text-emerald-700 tabular-nums">
             {data.valor}
           </span>
-          <span className="text-xs font-bold text-slate-300">
+          <span className="text-xs font-bold text-slate-600">
             {data.unidade}
           </span>
         </div>
@@ -299,17 +299,17 @@ function CustomChartTooltip({
           <span
             className={`text-[10px] font-bold block mt-0.5 ${
               data.variacao && data.variacao < 0
-                ? "text-emerald-400"
+                ? "text-emerald-600"
                 : data.variacao && data.variacao > 0
-                ? "text-amber-400"
-                : "text-slate-400"
+                ? "text-amber-600"
+                : "text-slate-500"
             }`}
           >
             Variação: {data.variacaoTexto}
           </span>
         )}
         {data.secundario && (
-          <span className="text-[10px] text-blue-300 block">
+          <span className="text-[10px] text-sky-700 block">
             {data.secundario}
           </span>
         )}
@@ -700,41 +700,41 @@ export function ProntuarioModal({
   const imcFaixaHeaderBadge = useMemo(() => {
     if (imcHeader === null || isNaN(imcHeader)) {
       return (
-        <span className="text-[10px] font-bold px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded">
+        <span className="text-[10px] font-bold px-1.5 py-0.2 bg-slate-100 text-slate-500 border border-slate-200 rounded">
           Sem dados
         </span>
       );
     }
     if (imcHeader < 18.5) {
       return (
-        <span className="text-[10px] font-black px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
+        <span className="text-[10px] font-black px-1.5 py-0.2 bg-amber-50 text-amber-700 border border-amber-200 rounded">
           Abaixo
         </span>
       );
     }
     if (imcHeader <= 24.9) {
       return (
-        <span className="text-[10px] font-black px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded">
+        <span className="text-[10px] font-black px-1.5 py-0.2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">
           Normal
         </span>
       );
     }
     if (imcHeader <= 29.9) {
       return (
-        <span className="text-[10px] font-black px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
+        <span className="text-[10px] font-black px-1.5 py-0.2 bg-amber-50 text-amber-700 border border-amber-200 rounded">
           Sobrepeso
         </span>
       );
     }
     if (imcHeader <= 34.9) {
       return (
-        <span className="text-[10px] font-black px-1.5 py-0.2 bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded">
+        <span className="text-[10px] font-black px-1.5 py-0.2 bg-orange-50 text-orange-700 border border-orange-200 rounded">
           Obesidade I
         </span>
       );
     }
     return (
-      <span className="text-[10px] font-black px-1.5 py-0.2 bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded">
+      <span className="text-[10px] font-black px-1.5 py-0.2 bg-rose-50 text-rose-700 border border-rose-200 rounded">
         Obesidade II/III
       </span>
     );
@@ -1460,9 +1460,9 @@ export function ProntuarioModal({
   if (!isOpen || !paciente) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 md:p-4 lg:p-6 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 md:p-4 lg:p-6 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-200">
       {/* CONTAINER PRINCIPAL FULL-WIDTH (EDGE-TO-EDGE) SEM TRAVAS DE LARGURA */}
-      <div className="bg-white w-full flex-1 h-full min-h-[580px] max-h-screen sm:max-h-[96vh] md:max-h-full rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 relative">
+      <div className="bg-white w-full flex-1 h-full min-h-[580px] max-h-screen sm:max-h-[96vh] md:max-h-full rounded-2xl shadow-2xl border border-slate-200/90 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 relative">
         {/* TOAST DE SUCESSO FLUTUANTE */}
         {successToast && (
           <div className="absolute top-4 right-4 z-70 bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-top-2 duration-150">
@@ -1472,22 +1472,38 @@ export function ProntuarioModal({
         )}
 
         {/* ======================================================== */}
-        {/* 1. CABEÇALHO PREMIUM FIXO NO TOPO (HEADER DE RESUMO)     */}
+        {/* 1. CABEÇALHO CLINICAL LIGHT GLASS (HEADER DE RESUMO)     */}
         {/* ======================================================== */}
-        <div className="bg-slate-900 text-white border-b border-slate-800 shrink-0">
+        <div className="cl-modal-header shrink-0">
+          {/* Brilho radial esmeralda/ciano claro sutil */}
+          <div
+            className="pointer-events-none absolute -top-20 -left-16 w-72 h-72 rounded-full blur-3xl"
+            style={{
+              background:
+                "radial-gradient(circle, rgba(16,185,129,0.13) 0%, rgba(20,184,166,0.04) 55%, transparent 75%)",
+            }}
+          />
+          <div
+            className="pointer-events-none absolute -bottom-24 right-10 w-72 h-72 rounded-full blur-3xl"
+            style={{
+              background:
+                "radial-gradient(circle, rgba(6,182,212,0.10) 0%, rgba(16,185,129,0.03) 55%, transparent 75%)",
+            }}
+          />
+
           {/* LINHA SUPERIOR: IDENTIFICAÇÃO DO PACIENTE + STATUS + BOTÃO FECHAR */}
-          <div className="px-4 md:px-6 lg:px-8 py-2.5 sm:py-3 flex flex-row items-center justify-between gap-4 sm:gap-6">
-            <div className="flex flex-row items-center gap-4 sm:gap-6 min-w-0 flex-1">
-              {/* AVATAR DO PACIENTE COM ACABAMENTO PREMIUM */}
+          <div className="relative z-10 px-4 md:px-6 lg:px-8 py-3 sm:py-3.5 flex flex-row items-center justify-between gap-4 sm:gap-6">
+            <div className="flex flex-row items-center gap-4 sm:gap-5 min-w-0 flex-1">
+              {/* AVATAR DO PACIENTE — CLINICAL LIGHT */}
               {pacienteAvatarUrl ? (
                 <img
                   src={pacienteAvatarUrl}
                   alt={pacienteNome}
-                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover border-2 border-emerald-500/50 shadow-lg ring-2 ring-emerald-500/20 shrink-0"
+                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-2 border-emerald-300/80 shadow-sm ring-4 ring-emerald-500/10 shrink-0"
                 />
               ) : (
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-2 border-emerald-500/50 shadow-lg ring-2 ring-emerald-500/20 bg-gradient-to-br from-emerald-950/60 via-slate-800 to-slate-900 flex items-center justify-center text-emerald-400 shrink-0">
-                  <User className="w-10 h-10 sm:w-12 sm:h-12 text-emerald-400/80" />
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-emerald-200 shadow-sm ring-4 ring-emerald-500/10 bg-gradient-to-br from-emerald-50 via-teal-50/70 to-white flex items-center justify-center text-emerald-600 shrink-0">
+                  <User className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-600/85" />
                 </div>
               )}
 
@@ -1495,50 +1511,50 @@ export function ProntuarioModal({
               <div className="min-w-0 flex-1 flex flex-col justify-center">
                 {/* LINHA 1: NOME DO PACIENTE EM DESTAQUE + TAGS */}
                 <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
-                  <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight truncate">
+                  <h2 className="text-lg sm:text-2xl font-extrabold text-slate-900 tracking-tight truncate">
                     {pacienteNome}
                   </h2>
-                  <span className="text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-800 text-teal-300 border border-slate-700 shrink-0">
+                  <span className="text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 tabular-nums shrink-0">
                     {pacienteRecordCode}
                   </span>
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 shrink-0">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     <span>{pacienteStatus}</span>
                   </span>
-                  <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-800/90 text-slate-300 border border-slate-700/80 shrink-0">
+                  <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-slate-600 border border-slate-200 shrink-0">
                     {pacienteConvenio}
                   </span>
                 </div>
 
                 {/* LINHA 2: DADOS SECUNDÁRIOS COMPACTOS (CPF, GÊNERO, IDADE, ATENDIMENTO, OBJETIVO) */}
-                <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs sm:text-sm text-slate-300 font-medium mt-1">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs sm:text-[13px] text-slate-500 font-medium mt-1.5">
                   <span>
-                    CPF: <strong className="font-mono text-slate-100 font-normal">{formatarCpf(pacienteCpf)}</strong>
+                    CPF: <strong className="font-mono tabular-nums text-slate-800 font-semibold">{formatarCpf(pacienteCpf)}</strong>
                   </span>
-                  <span className="text-slate-600 hidden sm:inline">•</span>
+                  <span className="text-slate-300 hidden sm:inline">•</span>
                   <span>
-                    Gênero: <strong className="text-slate-100">{generoDisplay}</strong>
+                    Gênero: <strong className="text-slate-800 font-semibold">{generoDisplay}</strong>
                   </span>
-                  <span className="text-slate-600 hidden sm:inline">•</span>
+                  <span className="text-slate-300 hidden sm:inline">•</span>
                   <span>
-                    Idade: <strong className="text-emerald-300 font-semibold">{idadeDisplay}</strong>
+                    Idade: <strong className="text-emerald-700 font-bold">{idadeDisplay}</strong>
                   </span>
                   {ultimaAtualizacao && (
                     <>
-                      <span className="text-slate-600 hidden sm:inline">•</span>
-                      <span className="text-slate-300 flex items-center gap-1.5">
+                      <span className="text-slate-300 hidden sm:inline">•</span>
+                      <span className="text-slate-500 flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span>Último atendimento: <strong className="text-slate-200">{formatarDataBR(ultimaAtualizacao)}</strong></span>
+                        <span>Último atendimento: <strong className="text-slate-800 font-semibold tabular-nums">{formatarDataBR(ultimaAtualizacao)}</strong></span>
                       </span>
                     </>
                   )}
                   {objetivoHeader && (
                     <>
-                      <span className="text-slate-600 hidden sm:inline">•</span>
-                      <span className="text-slate-300 flex items-center gap-1.5">
-                        <Target className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span className="text-slate-400">Objetivo:</span>
-                        <span className="text-emerald-300 font-semibold truncate max-w-xs md:max-w-md" title={objetivoHeader}>
+                      <span className="text-slate-300 hidden sm:inline">•</span>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50/90 border border-emerald-200/80 text-emerald-800 text-xs font-semibold">
+                        <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="text-emerald-700/80 font-medium">Objetivo:</span>
+                        <span className="font-bold truncate max-w-xs md:max-w-md" title={objetivoHeader}>
                           {objetivoHeader}
                         </span>
                       </span>
@@ -1548,14 +1564,14 @@ export function ProntuarioModal({
               </div>
             </div>
 
-            {/* BOTÃO FECHAR */}
+            {/* BOTÃO FECHAR DISCRETO */}
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0 self-center"
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-colors cursor-pointer shrink-0 self-center"
               title="Fechar prontuário"
             >
-              <X className="w-5 h-5 sm:w-6 sm:h-6" />
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -1832,19 +1848,19 @@ export function ProntuarioModal({
         </div>
 
         {/* 3. BARRA DE NAVEGAÇÃO DE ABAS ESTRUTURAIS (FIXA NO TOPO) */}
-        <div className="bg-slate-100/90 px-4 md:px-6 lg:px-8 pt-2 border-b border-slate-200 shrink-0">
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <div className="bg-slate-50/90 px-4 md:px-6 lg:px-8 pt-2 border-b border-slate-200/80 shrink-0">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             {/* ABA 1: PRONTUÁRIO & HISTÓRICO (ATIVA) */}
             <button
               type="button"
               onClick={() => setActiveTab("prontuario")}
               className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t-2 shrink-0 ${
                 activeTab === "prontuario"
-                  ? "bg-white text-teal-800 border-teal-600 shadow-xs"
-                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-slate-200/60"
+                  ? "bg-white text-emerald-800 border-emerald-600 shadow-2xs"
+                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-white/70"
               }`}
             >
-              <FileText className="w-4 h-4 text-teal-600" />
+              <FileText className={`w-4 h-4 ${activeTab === "prontuario" ? "text-emerald-600" : "text-slate-400"}`} />
               <span>Prontuário & Histórico</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             </button>
@@ -1855,11 +1871,11 @@ export function ProntuarioModal({
               onClick={() => setActiveTab("dieta")}
               className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t-2 shrink-0 ${
                 activeTab === "dieta"
-                  ? "bg-white text-teal-800 border-teal-600 shadow-xs"
-                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-slate-200/60"
+                  ? "bg-white text-emerald-800 border-emerald-600 shadow-2xs"
+                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-white/70"
               }`}
             >
-              <Utensils className={`w-4 h-4 ${activeTab === "dieta" ? "text-teal-600" : "text-slate-400"}`} />
+              <Utensils className={`w-4 h-4 ${activeTab === "dieta" ? "text-emerald-600" : "text-slate-400"}`} />
               <span>Dieta</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             </button>
@@ -1870,11 +1886,11 @@ export function ProntuarioModal({
               onClick={() => setActiveTab("metas")}
               className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t-2 shrink-0 ${
                 activeTab === "metas"
-                  ? "bg-white text-teal-800 border-teal-600 shadow-xs"
-                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-slate-200/60"
+                  ? "bg-white text-emerald-800 border-emerald-600 shadow-2xs"
+                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-white/70"
               }`}
             >
-              <Target className={`w-4 h-4 ${activeTab === "metas" ? "text-teal-600" : "text-slate-400"}`} />
+              <Target className={`w-4 h-4 ${activeTab === "metas" ? "text-emerald-600" : "text-slate-400"}`} />
               <span>Metas</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             </button>
@@ -1885,11 +1901,11 @@ export function ProntuarioModal({
               onClick={() => setActiveTab("treinos")}
               className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t-2 shrink-0 ${
                 activeTab === "treinos"
-                  ? "bg-white text-slate-900 border-teal-600 shadow-xs"
-                  : "text-slate-400 hover:text-slate-600 border-transparent hover:bg-slate-200/60"
+                  ? "bg-white text-emerald-800 border-emerald-600 shadow-2xs"
+                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-white/70"
               }`}
             >
-              <Dumbbell className={`w-4 h-4 ${activeTab === "treinos" ? "text-teal-600" : "text-slate-400"}`} />
+              <Dumbbell className={`w-4 h-4 ${activeTab === "treinos" ? "text-emerald-600" : "text-slate-400"}`} />
               <span>Treinos</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             </button>
@@ -1900,13 +1916,13 @@ export function ProntuarioModal({
               onClick={() => setActiveTab("documentos")}
               className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t-2 shrink-0 ${
                 activeTab === "documentos"
-                  ? "bg-white text-slate-900 border-teal-600 shadow-xs"
-                  : "text-slate-400 hover:text-slate-600 border-transparent hover:bg-slate-200/60"
+                  ? "bg-white text-emerald-800 border-emerald-600 shadow-2xs"
+                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-white/70"
               }`}
             >
-              <ScrollText className={`w-4 h-4 ${activeTab === "documentos" ? "text-teal-600" : "text-slate-400"}`} />
+              <ScrollText className={`w-4 h-4 ${activeTab === "documentos" ? "text-emerald-600" : "text-slate-400"}`} />
               <span>Receitas & Atestados</span>
-              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-teal-100 text-teal-700">
+              <span className="px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/80">
                 PDF
               </span>
             </button>
@@ -1930,7 +1946,7 @@ export function ProntuarioModal({
             <button
               type="button"
               onClick={onClose}
-              className="mt-3 px-4 py-2 text-xs font-bold bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+              className="mt-3 cl-btn-primary px-4 py-2 text-xs"
             >
               Voltar à Lista de Pacientes
             </button>
@@ -2461,19 +2477,19 @@ export function ProntuarioModal({
         {/* MODAL LIMPO E ESTÁTICO DE EDIÇÃO DE ATENDIMENTO HISTÓRICO */}
         {/* ======================================================== */}
         {isEditModalOpen && editingItem && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
-              {/* Cabeçalho do Modal de Edição */}
-              <div className="bg-slate-900 text-white px-5 py-3.5 border-b border-slate-800 flex items-center justify-between shrink-0">
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200/90 flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
+              {/* Cabeçalho do Modal de Edição — Clinical Light Glass */}
+              <div className="cl-modal-header px-5 py-3.5 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-lg bg-teal-500/20 text-teal-400">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
                     <Edit2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-white tracking-tight">
+                    <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">
                       Editar Atendimento Histórico
                     </h3>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[11px] text-slate-500">
                       Modifique os parâmetros clínicos e a conduta registrada nesta consulta.
                     </p>
                   </div>
@@ -2482,7 +2498,7 @@ export function ProntuarioModal({
                 <button
                   type="button"
                   onClick={() => setIsEditModalOpen(false)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -2626,7 +2642,7 @@ export function ProntuarioModal({
         {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO DE ATENDIMENTO          */}
         {/* ======================================================== */}
         {itemToDelete && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
             <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 p-5 space-y-4 animate-in zoom-in-95 duration-150">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
@@ -2685,20 +2701,20 @@ export function ProntuarioModal({
         {/* MODAL DETALHADO INTERATIVO: NÚMEROS REAIS & SPARKLINE    */}
         {/* ======================================================== */}
         {activeModalConfig && (
-          <div className="fixed inset-0 z-70 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
-            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[88vh] animate-in zoom-in-95 duration-150">
-              {/* CABEÇALHO DO MODAL */}
-              <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+          <div className="fixed inset-0 z-70 bg-slate-900/35 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200/90 overflow-hidden flex flex-col max-h-[88vh] animate-in zoom-in-95 duration-150">
+              {/* CABEÇALHO CLINICAL LIGHT GLASS */}
+              <div className="cl-modal-header px-5 py-3.5 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-9 h-9 rounded-xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-300 shrink-0">
-                    <activeModalConfig.icon className="w-5 h-5 text-teal-400" />
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
+                    <activeModalConfig.icon className="w-5 h-5 text-emerald-600" />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-sm sm:text-base font-black text-white tracking-tight truncate">
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight truncate">
                       {activeModalConfig.titulo}
                     </h3>
-                    <p className="text-[11px] text-slate-300 truncate">
-                      {pacienteNome} • <span className="font-mono text-teal-300 font-bold">{pacienteRecordCode}</span> • {idadeDisplay}
+                    <p className="text-[11px] text-slate-500 truncate">
+                      {pacienteNome} • <span className="font-mono text-emerald-700 font-bold">{pacienteRecordCode}</span> • {idadeDisplay}
                     </p>
                   </div>
                 </div>
@@ -2706,7 +2722,7 @@ export function ProntuarioModal({
                 <button
                   type="button"
                   onClick={() => setModalMetricaAtiva(null)}
-                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
                   title="Fechar detalhes (ESC)"
                 >
                   <X className="w-5 h-5" />
@@ -2893,7 +2909,7 @@ export function ProntuarioModal({
                 <button
                   type="button"
                   onClick={() => setModalMetricaAtiva(null)}
-                  className="px-4 py-1.5 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors cursor-pointer shadow-xs"
+                  className="cl-btn-secondary px-4 py-1.5 text-xs"
                 >
                   Fechar Detalhes
                 </button>

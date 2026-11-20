@@ -128,29 +128,29 @@ export default function PatientAppDashboard() {
       {/* CONTAINER RESPONSIVO MOBILE-FIRST */}
       <div className="w-full max-w-md min-h-screen bg-slate-50 flex flex-col border-x border-slate-200/80 shadow-2xl relative pb-24">
         {/* ======================================================== */}
-        {/* 1. HEADER DO APP (PADRÃO CLÍNICA FAAZ) */}
+        {/* 1. HEADER DO APP (CLINICAL LIGHT) */}
         {/* ======================================================== */}
-        <header className="sticky top-0 z-30 bg-slate-900 text-white px-4 py-3 shadow-md flex items-center justify-between">
+        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md text-slate-900 border-b border-slate-200/80 px-4 py-3 shadow-2xs flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-teal-500/20 border border-teal-500/30 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-teal-400" />
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-emerald-600" />
             </div>
             <div>
-              <span className="text-[10px] font-bold tracking-widest text-teal-400 uppercase block leading-tight">
+              <span className="text-[10px] font-bold tracking-widest text-emerald-700 uppercase block leading-tight">
                 Clínica FAAZ
               </span>
-              <span className="text-xs font-semibold text-slate-300">
+              <span className="text-xs font-semibold text-slate-600">
                 Portal do Paciente
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
-              <ShieldCheck className="w-3 h-3 text-teal-400" />
+            <span className="cl-badge-emerald px-2 py-0.5 text-[10px]">
+              <ShieldCheck className="w-3 h-3 text-emerald-600" />
               Ativo
             </span>
-            <div className="w-8 h-8 rounded-full bg-teal-700 flex items-center justify-center text-white text-xs font-bold border border-teal-500/30">
+            <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white text-xs font-bold shadow-2xs">
               {pacienteInfo.nome.charAt(0)}
             </div>
           </div>
@@ -170,30 +170,30 @@ export default function PatientAppDashboard() {
             </p>
           </div>
 
-          {/* CARD DARK: FASE & PROTOCOLO */}
-          <div className="bg-gradient-to-br from-slate-900 via-teal-950 to-slate-900 rounded-2xl p-4 text-white shadow-lg border border-teal-800/40 relative overflow-hidden">
+          {/* CARD CLINICAL LIGHT GLASS: FASE & PROTOCOLO */}
+          <div className="cl-hero rounded-2xl p-4">
             <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-400/30">
-                <Sparkles className="w-3 h-3 text-teal-300" />
+              <div className="cl-badge-emerald px-2.5 py-0.5 text-[10px]">
+                <Sparkles className="w-3 h-3 text-emerald-600" />
                 FASE ATUAL: QUEIMA ACELERADA
               </div>
-              <span className="text-[10px] font-bold text-teal-400 bg-teal-900/60 px-2 py-0.5 rounded-full border border-teal-700/50">
+              <span className="cl-badge-teal text-[10px] px-2 py-0.5">
                 Confirmado
               </span>
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-400">
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700">
                 <Calendar className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider block">
+                <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">
                   Próxima Consulta • Retorno
                 </span>
-                <span className="text-sm font-bold text-white block mt-0.5">
+                <span className="text-sm font-extrabold text-slate-900 block mt-0.5">
                   15 de Novembro • 14:30
                 </span>
-                <span className="text-xs text-slate-400 block mt-0.5">
+                <span className="text-xs text-slate-500 block mt-0.5">
                   Dr. Carlos Fantini • Endocrinologia & Nutrologia
                 </span>
               </div>
@@ -378,7 +378,7 @@ export default function PatientAppDashboard() {
 
         {/* MODAL INTERATIVO DE CHECK-IN DE SONO */}
         {isModalSonoOpen && (
-          <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
             <div className="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border border-slate-200">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2">

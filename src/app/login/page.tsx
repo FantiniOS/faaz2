@@ -189,7 +189,7 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (res.ok && data.sucesso) {
-        window.location.href = "/dashboard";
+        window.location.assign("/dashboard");
       } else {
         setErro(data.error || "Credenciais inválidas. Verifique o usuário e a senha.");
         setCarregando(false);
@@ -223,7 +223,7 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (res.ok && data.sucesso) {
-        window.location.href = "/dashboard";
+        window.location.assign("/dashboard");
       } else {
         setErro(data.error || "Não foi possível autenticar o perfil de teste.");
         setCarregando(false);
@@ -237,14 +237,26 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row bg-slate-50">
+    <div className="min-h-screen flex flex-col lg:flex-row cl-page">
       {/* ======================================================== */}
-      {/* PAINEL ESQUERDO — BRANDING & INSTRUÇÕES DE HOMOLOGAÇÃO */}
+      {/* PAINEL ESQUERDO — CLINICAL LIGHT GLASS BRANDING          */}
       {/* ======================================================== */}
-      <div className="w-full lg:w-5/12 bg-gradient-to-br from-emerald-800 via-teal-800 to-slate-900 text-white p-8 lg:p-12 flex flex-col justify-between relative overflow-hidden">
-        {/* Glow suave decorativo */}
-        <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 rounded-full bg-emerald-400/10 blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 rounded-full bg-teal-300/10 blur-3xl pointer-events-none" />
+      <div className="w-full lg:w-5/12 bg-white border-b lg:border-b-0 lg:border-r border-slate-200/80 text-slate-900 p-8 lg:p-12 flex flex-col justify-between relative overflow-hidden">
+        {/* Aurora radial esmeralda/ciano claro sutil */}
+        <div
+          className="pointer-events-none absolute -top-24 -right-24 w-96 h-96 rounded-full blur-3xl"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(16,185,129,0.14) 0%, rgba(20,184,166,0.05) 55%, transparent 75%)",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute -bottom-28 -left-20 w-96 h-96 rounded-full blur-3xl"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(6,182,212,0.11) 0%, rgba(16,185,129,0.04) 55%, transparent 75%)",
+          }}
+        />
 
         <div className="relative z-10 space-y-6">
           {/* Logo e Título */}
@@ -260,65 +272,68 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <p className="text-xs text-emerald-200/90 font-bold tracking-wider uppercase">
+              <p className="text-xs text-emerald-700 font-extrabold tracking-wider uppercase">
                 Clínica FAAZ • Medicina & Saúde Integrativa
               </p>
             </div>
           </div>
 
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white leading-tight">
+            <span className="cl-badge-emerald px-2.5 py-0.5 text-[10px] uppercase tracking-widest mb-2.5">
+              Clinical Command Center • Oracle ADB
+            </span>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 leading-tight mt-2">
               Painel Clínico Inteligente
             </h1>
-            <p className="text-sm text-emerald-100/80 font-medium mt-2 leading-relaxed">
+            <p className="text-sm text-slate-500 font-medium mt-2 leading-relaxed">
               Sistema com isolamento rigoroso por perfil de acesso (RBAC), monitoramento de
               aderência hídrica coletiva e saúde intestinal em tempo real.
             </p>
           </div>
 
           {/* Banner de Credenciais Globais de Homologação */}
-          <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-4 space-y-2.5">
-            <div className="flex items-center gap-2 text-xs font-bold text-emerald-300 uppercase tracking-wider">
-              <Zap className="w-4 h-4 text-amber-300" />
+          <div className="bg-slate-50/90 border border-slate-200/80 rounded-2xl p-4 space-y-2.5 shadow-2xs">
+            <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-700 uppercase tracking-wider">
+              <Zap className="w-4 h-4 text-amber-500" />
               <span>Credenciais Padrão de Homologação</span>
             </div>
-            <p className="text-xs text-emerald-100/90 leading-relaxed">
+            <p className="text-xs text-slate-600 leading-relaxed">
               Senha padrão para todos os perfis web da equipe:{" "}
-              <code className="bg-slate-900/60 px-2 py-0.5 rounded font-mono font-bold text-amber-300 text-xs">
+              <code className="bg-white border border-slate-200 px-2 py-0.5 rounded-md font-mono font-bold text-emerald-700 text-xs shadow-2xs">
                 faaz123
               </code>
             </p>
-            <div className="text-[11px] text-emerald-200/70 pt-1 border-t border-white/10">
-              Ou utilize os botões de <strong>1 Clique</strong> ao lado para entrar diretamente sem digitar.
+            <div className="text-[11px] text-slate-500 pt-1.5 border-t border-slate-200/80">
+              Ou utilize os botões de <strong className="text-slate-800">1 Clique</strong> ao lado para entrar diretamente sem digitar.
             </div>
           </div>
 
           {/* Card informativo do App Mobile (Paciente) */}
-          <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
-              <Smartphone className="w-4 h-4 text-emerald-400" />
+          <div className="bg-emerald-50/55 border border-emerald-200/80 rounded-2xl p-4 space-y-2.5 shadow-2xs">
+            <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-800">
+              <Smartphone className="w-4 h-4 text-emerald-600" />
               <span>Acesso no App Mobile (Paciente)</span>
             </div>
-            <p className="text-xs text-emerald-100/80 leading-relaxed">
+            <p className="text-xs text-slate-600 leading-relaxed">
               Para testar o aplicativo no emulador Android, utilize um dos CPFs cadastrados:
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              <div className="bg-slate-900/50 p-2 rounded-xl border border-white/10">
-                <span className="text-[10px] text-emerald-400 font-bold block">Carlos Fantini (Meta 2.5L)</span>
-                <code className="text-xs font-mono font-bold text-white">111.222.333-44</code>
+              <div className="bg-white/90 p-2.5 rounded-xl border border-emerald-200/70 shadow-2xs">
+                <span className="text-[10px] text-emerald-700 font-bold block">Carlos Fantini (Meta 2.5L)</span>
+                <code className="text-xs font-mono font-bold text-slate-900 tabular-nums">111.222.333-44</code>
               </div>
-              <div className="bg-slate-900/50 p-2 rounded-xl border border-white/10">
-                <span className="text-[10px] text-teal-300 font-bold block">Maria Luiza (Meta 3.0L)</span>
-                <code className="text-xs font-mono font-bold text-white">222.333.444-55</code>
+              <div className="bg-white/90 p-2.5 rounded-xl border border-teal-200/70 shadow-2xs">
+                <span className="text-[10px] text-teal-700 font-bold block">Maria Luiza (Meta 3.0L)</span>
+                <code className="text-xs font-mono font-bold text-slate-900 tabular-nums">222.333.444-55</code>
               </div>
             </div>
           </div>
         </div>
 
         {/* Rodapé institucional */}
-        <div className="relative z-10 pt-6 border-t border-white/10 text-xs text-emerald-200/60 flex items-center justify-between">
+        <div className="relative z-10 pt-6 mt-6 border-t border-slate-200/80 text-xs text-slate-500 flex items-center justify-between">
           <span>Clínica FAAZ • Endocrinologia & Nutrologia</span>
-          <span>Versão 2.0.4</span>
+          <span className="font-mono text-slate-400">Versão 2.0.4</span>
         </div>
       </div>
 

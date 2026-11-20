@@ -1,8 +1,13 @@
 @import "tailwindcss" source("..");
 
 :root {
-  --background: #f9fafb;
-  --foreground: #111827;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --cl-surface: #ffffff;
+  --cl-surface-muted: #f8fafc;
+  --cl-border: rgba(226, 232, 240, 0.85);
+  --cl-accent: #059669;
+  --cl-accent-hover: #047857;
 }
 
 body {
@@ -11,6 +16,78 @@ body {
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ========================================================================== */
+/* CLINICAL LIGHT DESIGN SYSTEM — CLÍNICA FAAZ                                */
+/* ========================================================================== */
+@layer components {
+  .cl-page {
+    @apply bg-slate-50 text-slate-900;
+  }
+
+  .cl-card {
+    @apply bg-white border border-slate-200/80 rounded-2xl shadow-xs;
+  }
+
+  .cl-card-interactive {
+    @apply bg-white border border-slate-200/80 rounded-2xl shadow-xs transition-all hover:border-emerald-300/80 hover:shadow-md;
+  }
+
+  .cl-hero {
+    @apply relative overflow-hidden rounded-3xl border border-slate-200/80 bg-white text-slate-900;
+    box-shadow: 0 14px 40px -22px rgba(15, 23, 42, 0.12);
+    background-image:
+      radial-gradient(circle at 8% 0%, rgba(16, 185, 129, 0.09) 0%, transparent 45%),
+      radial-gradient(circle at 92% 100%, rgba(6, 182, 212, 0.08) 0%, transparent 48%);
+  }
+
+  .cl-modal-header {
+    @apply relative overflow-hidden bg-white text-slate-900 border-b border-slate-200/80;
+    background-image:
+      radial-gradient(circle at 0% 0%, rgba(16, 185, 129, 0.1) 0%, transparent 50%),
+      radial-gradient(circle at 100% 100%, rgba(20, 184, 166, 0.08) 0%, transparent 52%);
+  }
+
+  .cl-btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .cl-btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-emerald-300 text-slate-700 font-bold shadow-2xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .cl-input {
+    @apply w-full bg-slate-50/80 border border-slate-200 rounded-xl text-slate-800 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all;
+  }
+
+  .cl-segmented {
+    @apply inline-flex items-center p-1 rounded-xl bg-white border border-slate-200 shadow-2xs;
+  }
+
+  .cl-toast {
+    @apply bg-white/95 backdrop-blur-md text-slate-900 border border-slate-200 shadow-xl rounded-xl;
+  }
+
+  .cl-badge-emerald {
+    @apply inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold;
+  }
+
+  .cl-badge-teal {
+    @apply inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 border border-teal-200 font-bold;
+  }
+
+  .cl-badge-amber {
+    @apply inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-bold;
+  }
+
+  .cl-badge-rose {
+    @apply inline-flex items-center gap-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-bold;
+  }
+
+  .cl-badge-slate {
+    @apply inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-bold;
+  }
 }
 
 /* Scrollbar oculta ou ultrafina SaaS Premium */

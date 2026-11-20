@@ -153,9 +153,9 @@ export function TopMenu({
       : cargoExibicao;
 
   return (
-    <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-2xs">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        <div className="flex items-center justify-between h-12 sm:h-14 gap-3">
+    <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-2xs">
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-14 gap-3">
           {/* ESQUERDA: Logotipo Oficial da Clínica FAAZ */}
           <div className="flex items-center shrink-0">
             <Link href="/dashboard" className="flex items-center group shrink-0">
@@ -170,7 +170,7 @@ export function TopMenu({
                     priority
                   />
                 </div>
-                <span className="text-lg font-bold tracking-wider text-slate-700 group-hover:text-slate-900 transition-colors">
+                <span className="text-base sm:text-lg font-extrabold tracking-wider text-slate-800 group-hover:text-slate-950 transition-colors">
                   CLÍNICA FAAZ
                 </span>
               </div>
@@ -178,20 +178,21 @@ export function TopMenu({
           </div>
 
           {/* CENTRO: Links de Navegação Principal */}
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden md:flex items-center gap-1.5">
             {navLinks.map((link) => {
               const isActive =
                 activePath === link.href ||
                 (link.href === "/dashboard" && activePath === "/inicio") ||
-                (link.href === "/dashboard/pacientes" && activePath === "/pacientes");
+                (link.href === "/dashboard/pacientes" && activePath === "/pacientes") ||
+                (link.href === "/dashboard/equipe" && activePath === "/configuracoes/equipe");
               return (
                 <Link
                   key={link.label}
                   href={link.href}
-                  className={`relative px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
+                  className={`relative px-3.5 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1.5 border ${
                     isActive
-                      ? "text-emerald-700 bg-emerald-50/80 font-bold"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                      ? "text-emerald-800 bg-emerald-50 border-emerald-200/80 font-bold shadow-2xs"
+                      : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-slate-100/70 font-semibold"
                   }`}
                 >
                   <span>{link.label}</span>
@@ -205,30 +206,13 @@ export function TopMenu({
             })}
           </nav>
 
-          {/* DIREITA: Notificações e Perfil do Usuário */}
-          <div className="flex items-center gap-3 shrink-0">
-            {/* Sino de Notificações com Badge - Ocultado para minimalismo (Safe Hide) */}
-            {/*
-            <button
-              type="button"
-              className="relative p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
-              aria-label="Notificações"
-            >
-              <Bell className="w-5 h-5 stroke-[2]" />
-              <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500 border-2 border-white"></span>
-              </span>
-            </button>
-            <div className="h-6 w-px bg-slate-200 hidden sm:block" />
-            */}
-
+          {/* DIREITA: Perfil do Usuário e Ação Sair */}
+          <div className="flex items-center gap-2.5 shrink-0">
             {/* Avatar e Perfil do Usuário */}
-            <div className="flex items-center gap-2.5 pl-1">
+            <div className="flex items-center gap-2.5 pl-1 pr-1.5 py-1 rounded-xl">
               <div className="relative">
-                {/* Fallback Profissional (Iniciais com Tailwind) */}
                 <div
-                  className="h-8 w-8 rounded-full bg-emerald-700 ring-2 ring-emerald-500/20 flex items-center justify-center text-white text-xs font-bold uppercase select-none shadow-2xs"
+                  className="h-8 w-8 rounded-full bg-emerald-600 ring-2 ring-emerald-500/20 flex items-center justify-center text-white text-xs font-bold uppercase select-none shadow-2xs"
                   title={nomeExibicao}
                 >
                   {inicialUsuario}
@@ -237,16 +221,18 @@ export function TopMenu({
               </div>
 
               <div className="hidden lg:flex flex-col text-left">
-                <span className="text-xs font-bold text-slate-800 leading-tight">
+                <span className="text-xs font-bold text-slate-900 leading-tight">
                   {nomeExibicao}
                 </span>
-                <span className="text-[10px] font-semibold text-emerald-600 leading-none">
+                <span className="text-[10px] font-semibold text-emerald-600 leading-none mt-0.5">
                   {cargoLegivel}
                 </span>
               </div>
 
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 hidden lg:block" />
             </div>
+
+            <div className="hidden sm:block h-5 w-px bg-slate-200/80" />
 
             {/* Botão Sair / Trocar Usuário */}
             <button
@@ -257,7 +243,7 @@ export function TopMenu({
                 window.location.href = "/login";
               }}
               title="Sair do painel e trocar de perfil"
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors border border-transparent hover:border-rose-200"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors border border-transparent hover:border-rose-200 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Sair</span>
@@ -267,7 +253,7 @@ export function TopMenu({
             <button
               type="button"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors ml-1"
+              className="md:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors ml-1 cursor-pointer"
               aria-label="Abrir Menu"
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -277,22 +263,7 @@ export function TopMenu({
 
         {/* MENU SANDUÍCHE NO MOBILE */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-slate-100 py-3 space-y-3 animate-in fade-in slide-in-from-top-2 duration-150">
-            {/* Barra de busca mobile - Ocultada temporariamente */}
-            {/*
-            <button
-              type="button"
-              onClick={() => {
-                setMobileMenuOpen(false);
-                setIsCommandPaletteOpen(true);
-              }}
-              className="relative w-full flex items-center pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-400 text-left cursor-pointer"
-            >
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <span>Buscar paciente, prontuário...</span>
-            </button>
-            */}
-
+          <div className="md:hidden border-t border-slate-200/80 py-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-150">
             {/* Links mobile */}
             <div className="flex flex-col gap-1 pt-1">
               {navLinks.map((link) => {
@@ -300,20 +271,21 @@ export function TopMenu({
                 const isActive =
                   activePath === link.href ||
                   (link.href === "/dashboard" && activePath === "/inicio") ||
-                  (link.href === "/dashboard/pacientes" && activePath === "/pacientes");
+                  (link.href === "/dashboard/pacientes" && activePath === "/pacientes") ||
+                  (link.href === "/dashboard/equipe" && activePath === "/configuracoes/equipe");
                 return (
                   <Link
                     key={link.label}
                     href={link.href}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold ${
+                    className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs border transition-colors ${
                       isActive
-                        ? "bg-emerald-50 text-emerald-800 font-bold"
-                        : "text-slate-600 hover:bg-slate-50"
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200/80 font-bold"
+                        : "text-slate-600 border-transparent hover:bg-slate-50 font-semibold"
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <Icon className="w-4 h-4 text-slate-500" />
+                      <Icon className={`w-4 h-4 ${isActive ? "text-emerald-600" : "text-slate-500"}`} />
                       <span>{link.label}</span>
                     </div>
                     {link.badge && (

@@ -304,10 +304,10 @@ export function PacienteProntuarioView({
 
                 <Link
                   href={`/dashboard/pacientes?prontuarioId=${paciente.id}`}
-                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs"
+                  className="w-full cl-btn-primary px-4 py-2.5 text-xs"
                 >
                   <span>Abrir Atendimento Completo</span>
-                  <ExternalLink className="w-3.5 h-3.5 text-teal-400" />
+                  <ExternalLink className="w-3.5 h-3.5 text-emerald-100" />
                 </Link>
               </div>
             </aside>

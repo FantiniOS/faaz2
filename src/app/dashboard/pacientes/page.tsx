@@ -538,23 +538,27 @@ export default function PacientesPage() {
   }, [pacientes, searchQuery, apenasMembrosFaaz]);
 
   return (
-    <div className="min-h-screen bg-slate-50/70 flex flex-col font-sans">
+    <div className="min-h-screen cl-page flex flex-col font-sans">
       <TopMenu user={mockUserSession} activePath="/dashboard/pacientes" />
 
-      {/* ÁREA PRINCIPAL COM DESIGN DE ALTA DENSIDADE */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-4">
-        {/* CABEÇALHO ENXUTO */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-                Cadastro de Pacientes
-              </h1>
-              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+      {/* ÁREA PRINCIPAL — CLINICAL LIGHT */}
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-5">
+        {/* CABEÇALHO DE COMANDO */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="cl-badge-emerald px-2.5 py-0.5 text-[10px] uppercase tracking-widest">
+                <Users className="w-3 h-3" />
+                <span>Base Cadastral • Clínica FAAZ</span>
+              </span>
+              <span className="cl-badge-slate px-2.5 py-0.5 text-[11px] font-mono tabular-nums">
                 {pacientes.length} {pacientes.length === 1 ? "paciente" : "pacientes"}
               </span>
             </div>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+              Cadastro de Pacientes
+            </h1>
+            <p className="text-xs text-slate-500 font-medium">
               Gestão cadastral com dados pessoais, contatos e endereço integrado ao ViaCEP.
             </p>
           </div>
@@ -563,17 +567,17 @@ export default function PacientesPage() {
             <button
               type="button"
               onClick={() => setApenasMembrosFaaz((prev) => !prev)}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-2xs ${
                 apenasMembrosFaaz
-                  ? "bg-amber-50 text-amber-800 border-amber-300 shadow-2xs"
+                  ? "bg-amber-50 text-amber-800 border-amber-300"
                   : "bg-white text-slate-700 border-slate-200 hover:bg-amber-50/50 hover:border-amber-200"
               }`}
               title="Filtrar apenas pacientes Membros do Plano FAAZ"
             >
               <span className="text-amber-500">✨</span>
-              <span>Ver Membros FAAZ</span>
+              <span>Membros FAAZ</span>
               <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-black font-mono tabular-nums ${
                   apenasMembrosFaaz
                     ? "bg-amber-500 text-white"
                     : "bg-amber-100 text-amber-800"
@@ -589,7 +593,7 @@ export default function PacientesPage() {
                 invalidateClientCache("pacientes:list");
                 void loadPacientes(false, true);
               }}
-              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg border border-slate-200 transition-colors"
+              className="cl-btn-secondary px-2.5 py-2 text-xs"
               title="Recarregar pacientes"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-emerald-600" : ""}`} />
@@ -597,54 +601,54 @@ export default function PacientesPage() {
             <button
               type="button"
               onClick={handleOpenNewModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
+              className="cl-btn-primary px-4 py-2 text-xs"
             >
               <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>+ Novo Paciente</span>
+              <span>Novo Paciente</span>
             </button>
           </div>
         </div>
 
         {/* BARRA DE PESQUISA COMPACTA */}
-        <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs flex items-center gap-2">
-          <Search className="w-4 h-4 text-slate-400 shrink-0 ml-1" />
+        <div className="cl-card px-3.5 py-2.5 flex items-center gap-2.5 focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-500/15 transition-all">
+          <Search className="w-4 h-4 text-slate-400 shrink-0" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value.toUpperCase())}
             placeholder="PESQUISAR POR NOME, CPF, WHATSAPP, BAIRRO OU CIDADE..."
-            className="w-full text-xs text-slate-800 placeholder:text-slate-400 focus:outline-hidden uppercase"
+            className="w-full text-xs text-slate-800 placeholder:text-slate-400 focus:outline-hidden uppercase bg-transparent"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
-              className="text-slate-400 hover:text-slate-600 text-xs px-2"
+              className="text-slate-400 hover:text-slate-700 text-xs font-semibold px-2 py-0.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
             >
               Limpar
             </button>
           )}
         </div>
 
-        {/* TABELA DE ALTA DENSIDADE / LINHAS MENORES (py-1.5 px-3) */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        {/* TABELA DE ALTA DENSIDADE — CLINICAL LIGHT */}
+        <div className="cl-card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="bg-slate-50/90 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-200">
-                  <th className="py-2 px-3 font-semibold">Nome Completo</th>
-                  <th className="py-2 px-3 font-semibold">CPF</th>
-                  <th className="py-2 px-3 font-semibold">WhatsApp</th>
-                  <th className="py-2 px-3 font-semibold">Cidade / Bairro</th>
-                  <th className="py-2 px-3 font-semibold">Convênio</th>
-                  <th className="py-2 px-3 font-semibold text-center">Status</th>
-                  <th className="py-2 px-3 font-semibold text-right">Ações</th>
+                <tr className="bg-slate-50/90 text-[10px] uppercase tracking-wider font-bold text-slate-500 border-b border-slate-200/80">
+                  <th className="py-2.5 px-4 font-bold">Nome Completo</th>
+                  <th className="py-2.5 px-3 font-bold">CPF</th>
+                  <th className="py-2.5 px-3 font-bold">WhatsApp</th>
+                  <th className="py-2.5 px-3 font-bold">Cidade / Bairro</th>
+                  <th className="py-2.5 px-3 font-bold">Convênio</th>
+                  <th className="py-2.5 px-3 font-bold text-center">Status</th>
+                  <th className="py-2.5 px-4 font-bold text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={7} className="py-10 text-center text-slate-400">
                       <div className="flex items-center justify-center gap-2">
                         <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
                         <span>Carregando pacientes da clínica...</span>
@@ -653,7 +657,7 @@ export default function PacientesPage() {
                   </tr>
                 ) : filteredPacientes.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={7} className="py-10 text-center text-slate-400">
                       Nenhum paciente encontrado para esta busca.
                     </td>
                   </tr>
@@ -661,14 +665,14 @@ export default function PacientesPage() {
                   filteredPacientes.map((p) => (
                     <tr
                       key={p.id}
-                      className="hover:bg-slate-50/80 transition-colors"
+                      className="hover:bg-emerald-50/35 transition-colors"
                     >
                       {/* Nome + Selo FAAZ ✨ */}
-                      <td className="py-1.5 px-3 font-bold text-slate-900 whitespace-nowrap">
+                      <td className="py-2 px-4 font-bold text-slate-900 whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
                           <span>{p.nome}</span>
                           {p.planoFaaz && (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-600 text-[10px] font-black tracking-wider uppercase shadow-2xs">
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black tracking-wider uppercase">
                               FAAZ ✨
                             </span>
                           )}
@@ -676,12 +680,12 @@ export default function PacientesPage() {
                       </td>
 
                       {/* CPF */}
-                      <td className="py-1.5 px-3 text-slate-500 font-mono text-[11px] whitespace-nowrap">
+                      <td className="py-2 px-3 text-slate-500 font-mono tabular-nums text-[11px] whitespace-nowrap">
                         {p.cpf ? formatCpf(p.cpf) : "--"}
                       </td>
 
                       {/* WhatsApp com atalho direto e ícone */}
-                      <td className="py-1.5 px-3 text-slate-700 whitespace-nowrap">
+                      <td className="py-2 px-3 text-slate-700 whitespace-nowrap">
                         {p.telefoneWhatsapp ? (
                           <div className="flex items-center gap-1.5">
                             {getWhatsAppLink(p.telefoneWhatsapp) && (
@@ -702,7 +706,7 @@ export default function PacientesPage() {
                                 </svg>
                               </a>
                             )}
-                            <span className="font-mono text-slate-800 text-[11px]">
+                            <span className="font-mono tabular-nums text-slate-800 text-[11px]">
                               {formatPhone(p.telefoneWhatsapp)}
                             </span>
                           </div>
@@ -712,34 +716,34 @@ export default function PacientesPage() {
                       </td>
 
                       {/* Cidade / Bairro */}
-                      <td className="py-1.5 px-3 text-slate-500 whitespace-nowrap">
+                      <td className="py-2 px-3 text-slate-500 whitespace-nowrap">
                         {p.cidade ? `${p.cidade}${p.bairro ? ` - ${p.bairro}` : ""}` : "--"}
                       </td>
 
                       {/* Convênio */}
-                      <td className="py-1.5 px-3 whitespace-nowrap">
-                        <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
                           {p.convenio || "Particular"}
                         </span>
                       </td>
 
                       {/* Status */}
-                      <td className="py-1.5 px-3 text-center whitespace-nowrap">
+                      <td className="py-2 px-3 text-center whitespace-nowrap">
                         <span
-                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          className={`inline-block text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
                             p.status === "Ativo"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : "bg-slate-100 text-slate-500"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-slate-100 text-slate-500 border-slate-200"
                           }`}
                         >
                           {p.status || "Ativo"}
                         </span>
                       </td>
 
-                      {/* Ações (Prontuário para Médico/Admin, Agendamento para Secretária, Editar Cadastro, Apagar apenas Dono/Admin) */}
-                      <td className="py-1.5 px-3 text-right whitespace-nowrap">
+                      {/* Ações */}
+                      <td className="py-2 px-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* BOTÃO CLÍNICO: PRONTUÁRIO — Exclusivo MÉDICO / ADMIN (Oculto estritamente para Secretária) */}
+                          {/* BOTÃO CLÍNICO: PRONTUÁRIO — Exclusivo MÉDICO / ADMIN */}
                           {canAccessProntuario && (
                             <button
                               type="button"
@@ -747,10 +751,10 @@ export default function PacientesPage() {
                                 setSelectedPatientForProntuario(p);
                                 setIsProntuarioOpen(true);
                               }}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-extrabold text-white bg-teal-600 hover:bg-teal-700 active:scale-95 shadow-2xs rounded-lg transition-all cursor-pointer"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 shadow-2xs rounded-lg transition-all cursor-pointer"
                               title="Abrir Prontuário Clínico Digital"
                             >
-                              <FileText className="w-3.5 h-3.5 text-teal-100" />
+                              <FileText className="w-3.5 h-3.5 text-emerald-100" />
                               <span>Prontuário</span>
                             </button>
                           )}
@@ -759,7 +763,7 @@ export default function PacientesPage() {
                           {isSecretaria && (
                             <Link
                               href={`/agenda?pacienteId=${p.id}&pacienteNome=${encodeURIComponent(p.nome)}`}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 shadow-2xs rounded-lg transition-all cursor-pointer"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 shadow-2xs rounded-lg transition-all cursor-pointer"
                               title="Criar novo agendamento para este paciente na Agenda"
                             >
                               <Calendar className="w-3.5 h-3.5 text-emerald-100" />
@@ -771,7 +775,7 @@ export default function PacientesPage() {
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(p)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 hover:border-emerald-300 rounded-lg transition-colors cursor-pointer"
                             title="Editar cadastro do paciente"
                           >
                             <Edit2 className="w-3 h-3 text-slate-500" />
@@ -800,42 +804,43 @@ export default function PacientesPage() {
           </div>
 
           {/* RODAPÉ DA TABELA */}
-          <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-[11px] text-slate-400">
-            <span>
-              Exibindo <strong>{filteredPacientes.length}</strong> de{" "}
-              <strong>{pacientes.length}</strong> pacientes cadastrados
+          <div className="px-4 py-2.5 border-t border-slate-200/70 bg-slate-50/70 flex items-center justify-between text-[11px] text-slate-500">
+            <span className="tabular-nums">
+              Exibindo <strong className="text-slate-700">{filteredPacientes.length}</strong> de{" "}
+              <strong className="text-slate-700">{pacientes.length}</strong>{" "}
+              {pacientes.length === 1 ? "paciente cadastrado" : "pacientes cadastrados"}
             </span>
-            <span>Clínica FAAZ Medicina & Saúde Integrativa</span>
+            <span>Clínica FAAZ • Medicina & Saúde Integrativa</span>
           </div>
         </div>
       </main>
 
-      {/* TOAST DE FEEDBACK */}
+      {/* TOAST DE FEEDBACK — CLINICAL LIGHT */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2 rounded-xl shadow-xl flex items-center gap-2 text-xs font-semibold animate-in fade-in slide-in-from-bottom-2 duration-150">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+        <div className="fixed bottom-6 right-6 z-50 cl-toast px-4 py-2.5 flex items-center gap-2 text-xs font-semibold animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* MODAL COMPACTO "+ NOVO PACIENTE" / "EDITAR" (SEM ROLAGEM EXCESSIVA) */}
+      {/* MODAL COMPACTO "+ NOVO PACIENTE" / "EDITAR" */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
           <div
-            className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[94vh] overflow-hidden"
+            className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-200/90 flex flex-col max-h-[94vh] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* CABEÇALHO COMPACTO DO MODAL */}
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center">
+            {/* CABEÇALHO CLINICAL LIGHT GLASS */}
+            <div className="cl-modal-header px-5 py-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
                   <Users className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">
+                  <h3 className="text-sm font-extrabold text-slate-900">
                     {editingId ? "Editar Cadastro do Paciente" : "Novo Cadastro de Paciente"}
                   </h3>
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[11px] text-slate-500">
                     Preenchimento cadastral administrativo (Dados Pessoais, Contato e Endereço).
                   </p>
                 </div>
@@ -844,7 +849,7 @@ export default function PacientesPage() {
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1261,9 +1266,9 @@ export default function PacientesPage() {
 
       {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO (SOMENTE DONO / ADMIN) */}
       {patientToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/35 backdrop-blur-xs animate-in fade-in duration-150">
           <div
-            className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-100 p-5 space-y-4"
+            className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200/90 p-5 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
