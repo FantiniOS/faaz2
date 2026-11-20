@@ -552,6 +552,34 @@ export interface ResponderConsultaResponse {
   error?: string;
 }
 
+export interface PlanoResumoConsultaItem {
+  numero: number;
+  dataConsulta: string;
+  horaConsulta: string | null;
+  tipo: "PRESENCIAL" | "ONLINE" | "RETORNO" | "AVALIACAO" | string;
+  status: "REALIZADA" | "FALTA_COBRADA" | "BONIFICADA" | string;
+}
+
+export interface PlanoResumoPacoteItem {
+  nomePlano: string;
+  status: "ATIVO" | "CONCLUIDO";
+  qtdTotalConsultas: number;
+  consultasRealizadas: number;
+  consultasRestantes: number;
+  percentualUso: number;
+  dataInicio: string;
+  dataValidade: string | null;
+  alertaRenovacao: boolean;
+  consultas: PlanoResumoConsultaItem[];
+}
+
+export interface PlanoResumoResponse {
+  success: boolean;
+  possuiPacote: boolean;
+  planoLabel: string;
+  pacote: PlanoResumoPacoteItem | null;
+}
+
 /**
  * Executa requisição HTTP tipada com headers, auth token e CORS
  */
@@ -731,6 +759,18 @@ export const api = {
       return api.get<ProximaConsultaResponse>(
         `/pacientes/${encodeURIComponent(pacienteId)}/proxima-consulta`
       );
+    },
+    getPlanoResumo(pacienteId: string): Promise<PlanoResumoResponse> {
+      return api
+        .get<PlanoResumoResponse>(
+          `/pacientes/${encodeURIComponent(pacienteId)}/plano-resumo`
+        )
+        .catch(() => ({
+          success: false,
+          possuiPacote: false,
+          planoLabel: "",
+          pacote: null,
+        }));
     },
     responderConsulta(
       pacienteId: string,

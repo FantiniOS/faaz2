@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,8 @@ import {
   FileText,
   LogOut,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   HeartPulse,
   Calendar,
   Clock,
@@ -39,6 +41,7 @@ import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
 import {
   api,
   resolveAssetUrl,
+  type PlanoResumoResponse,
   type ProximaConsultaItem,
 } from "../services/api";
 import { getConfigObjetivoClinico } from "../utils/objetivoClinico";
@@ -152,6 +155,22 @@ function formatNomeTitleCase(nome?: string | null): string {
     .join(" ");
 }
 
+function formatDataIsoBr(iso?: string | null): string {
+  if (!iso) return "--/--/----";
+  const clean = iso.trim().slice(0, 10);
+  const parts = clean.split("-");
+  if (parts.length !== 3) return iso;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function formatTipoConsultaPacote(tipo?: string | null): string {
+  const upper = (tipo || "").trim().toUpperCase();
+  if (upper === "ONLINE") return "Online";
+  if (upper === "RETORNO") return "Retorno";
+  if (upper === "AVALIACAO") return "Avaliação";
+  return "Presencial";
+}
+
 export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
   const { paciente, logout, atualizarAvatarUrl } = usePatientAuth();
   const pacienteId = paciente?.id || "";
@@ -175,12 +194,18 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
     paciente?.metaDiariaMl || 2500
   );
   const [convenio, setConvenio] = useState<string>(
-    paciente?.convenio || "FAAZ Integrativo"
+    paciente?.convenio || "Particular"
   );
+  const [planoResumo, setPlanoResumo] = useState<PlanoResumoResponse | null>(
+    null
+  );
+  const [historicoPlanoAberto, setHistoricoPlanoAberto] =
+    useState<boolean>(false);
   const [telefone, setTelefone] = useState<string | null>(
     paciente?.telefoneWhatsapp ?? null
   );
   const [email, setEmail] = useState<string | null>(paciente?.email ?? null);
+  const inFlightRef = useRef<boolean>(false);
 
   const nomeExibicao = formatNomeTitleCase(
     paciente?.socialName || paciente?.nome
@@ -222,44 +247,61 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
       return;
     }
 
-    const [consultaRes, perfilRes, metasRes] = await Promise.allSettled([
-      api.pacientes.getProximaConsulta(pacienteId),
-      api.get(`/pacientes/${encodeURIComponent(pacienteId)}`),
-      api.pacientes.getMetas(pacienteId),
-    ]);
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
 
-    if (consultaRes.status === "fulfilled" && consultaRes.value) {
-      const c = consultaRes.value;
-      if (c.success && c.temProximaConsulta && c.proximaConsulta) {
-        setProximaConsulta(c.proximaConsulta);
-      } else {
-        setProximaConsulta(null);
-      }
-    }
-    setCarregandoConsulta(false);
+    try {
+      // Micro-onda 1 (máx. 2 queries concorrentes): próxima consulta + resumo do Plano FAAZ
+      const [consultaRes, planoRes] = await Promise.allSettled([
+        api.pacientes.getProximaConsulta(pacienteId),
+        api.pacientes.getPlanoResumo(pacienteId),
+      ]);
 
-    if (perfilRes.status === "fulfilled" && perfilRes.value?.paciente) {
-      const p = perfilRes.value.paciente;
-      if (p.treatmentObjective || p.clinicalFocus) {
-        setTreatmentObjective(p.treatmentObjective || p.clinicalFocus);
+      if (consultaRes.status === "fulfilled" && consultaRes.value) {
+        const c = consultaRes.value;
+        if (c.success && c.temProximaConsulta && c.proximaConsulta) {
+          setProximaConsulta(c.proximaConsulta);
+        } else {
+          setProximaConsulta(null);
+        }
       }
-      if (p.medicacoes !== undefined) {
-        setMedicacoes(p.medicacoes || null);
-      }
-      if (p.convenio) setConvenio(p.convenio);
-      if (p.phoneWhatsapp) setTelefone(p.phoneWhatsapp);
-      if (p.email) setEmail(p.email);
-      if (p.metaDiariaMl) setMetaAguaMl(Number(p.metaDiariaMl));
-    }
+      setCarregandoConsulta(false);
 
-    if (metasRes.status === "fulfilled" && metasRes.value?.metas) {
-      const m = metasRes.value.metas;
-      if (m.treatmentObjective || m.focoMetabolico) {
-        setTreatmentObjective(m.treatmentObjective || m.focoMetabolico);
+      if (planoRes.status === "fulfilled" && planoRes.value?.success) {
+        setPlanoResumo(planoRes.value);
       }
-      if (Number(m.aguaMlAlvo) > 0) {
-        setMetaAguaMl(Number(m.aguaMlAlvo));
+
+      // Micro-onda 2 (máx. 2 queries concorrentes): perfil cadastral + metas
+      const [perfilRes, metasRes] = await Promise.allSettled([
+        api.get(`/pacientes/${encodeURIComponent(pacienteId)}`),
+        api.pacientes.getMetas(pacienteId),
+      ]);
+
+      if (perfilRes.status === "fulfilled" && perfilRes.value?.paciente) {
+        const p = perfilRes.value.paciente;
+        if (p.treatmentObjective || p.clinicalFocus) {
+          setTreatmentObjective(p.treatmentObjective || p.clinicalFocus);
+        }
+        if (p.medicacoes !== undefined) {
+          setMedicacoes(p.medicacoes || null);
+        }
+        if (p.convenio) setConvenio(p.convenio);
+        if (p.phoneWhatsapp) setTelefone(p.phoneWhatsapp);
+        if (p.email) setEmail(p.email);
+        if (p.metaDiariaMl) setMetaAguaMl(Number(p.metaDiariaMl));
       }
+
+      if (metasRes.status === "fulfilled" && metasRes.value?.metas) {
+        const m = metasRes.value.metas;
+        if (m.treatmentObjective || m.focoMetabolico) {
+          setTreatmentObjective(m.treatmentObjective || m.focoMetabolico);
+        }
+        if (Number(m.aguaMlAlvo) > 0) {
+          setMetaAguaMl(Number(m.aguaMlAlvo));
+        }
+      }
+    } finally {
+      inFlightRef.current = false;
     }
   }, [pacienteId]);
 
@@ -411,6 +453,23 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
         return;
       }
       await Linking.openURL(targetUrl);
+    } catch {
+      Alert.alert(
+        "WhatsApp Clínica FAAZ",
+        "Não foi possível abrir o WhatsApp. Nosso número oficial: (31) 98440-0076"
+      );
+    }
+  };
+
+  const handleOpenWhatsAppRenovacao = async (nomePlano: string) => {
+    const msg = `Olá! Vi no aplicativo Clínica FAAZ que meu ${nomePlano} está próximo de encerrar e gostaria de saber sobre a renovação.`;
+    const url = `https://wa.me/5531984400076?text=${encodeURIComponent(msg)}`;
+    try {
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.open(url, "_blank");
+        return;
+      }
+      await Linking.openURL(url);
     } catch {
       Alert.alert(
         "WhatsApp Clínica FAAZ",
@@ -797,7 +856,7 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
             <View style={styles.protocolStatBox}>
               <Text style={styles.protocolStatLabel}>Plano Ativo</Text>
               <Text style={styles.protocolStatVal} numberOfLines={1}>
-                {convenio}
+                {planoResumo?.planoLabel?.trim() || convenio || "Particular"}
               </Text>
             </View>
             <View style={styles.protocolStatBox}>
@@ -805,6 +864,166 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
               <Text style={styles.protocolStatVal}>{metaAguaLitros} L / dia</Text>
             </View>
           </View>
+
+          {/* Sub-bloco Acompanhamento do Plano (exibido SOMENTE quando possuiPacote === true) */}
+          {planoResumo?.possuiPacote && planoResumo.pacote ? (
+            <View style={styles.pacoteTrackBlock}>
+              <View style={styles.pacoteTrackHeader}>
+                <Text style={styles.pacoteTrackTitle}>Consultas do Pacote</Text>
+                {(() => {
+                  const p = planoResumo.pacote;
+                  const isConcluido =
+                    p.consultasRestantes === 0 || p.status === "CONCLUIDO";
+                  const isUltima = !isConcluido && p.consultasRestantes === 1;
+                  return (
+                    <View
+                      style={[
+                        styles.pacoteStatusBadge,
+                        isConcluido
+                          ? styles.pacoteStatusBadgeConcluido
+                          : isUltima
+                            ? styles.pacoteStatusBadgeAmber
+                            : styles.pacoteStatusBadgeAtivo,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.pacoteStatusBadgeText,
+                          isConcluido
+                            ? styles.pacoteStatusTextConcluido
+                            : isUltima
+                              ? styles.pacoteStatusTextAmber
+                              : styles.pacoteStatusTextAtivo,
+                        ]}
+                      >
+                        {isConcluido
+                          ? "Concluído"
+                          : isUltima
+                            ? "Última consulta"
+                            : "Ativo"}
+                      </Text>
+                    </View>
+                  );
+                })()}
+              </View>
+
+              {/* Métricas em linha: X de Y realizadas + Faltam Z */}
+              <View style={styles.pacoteMetricsRow}>
+                <Text style={styles.pacoteRealizadasText}>
+                  {planoResumo.pacote.consultasRealizadas} de{" "}
+                  {planoResumo.pacote.qtdTotalConsultas} realizadas
+                </Text>
+                <Text style={styles.pacoteRestantesText}>
+                  Faltam {planoResumo.pacote.consultasRestantes}
+                </Text>
+              </View>
+
+              {/* Barra de progresso limpa */}
+              <View style={styles.pacoteProgressTrack}>
+                <View
+                  style={[
+                    styles.pacoteProgressFill,
+                    {
+                      width: `${Math.min(
+                        100,
+                        Math.max(0, planoResumo.pacote.percentualUso || 0)
+                      )}%`,
+                    },
+                  ]}
+                />
+              </View>
+
+              {/* Linha discreta de vigência */}
+              <View style={styles.pacoteDatesRow}>
+                <Text style={styles.pacoteDateMeta}>
+                  Início: {formatDataIsoBr(planoResumo.pacote.dataInicio)}
+                </Text>
+                {planoResumo.pacote.dataValidade ? (
+                  <Text style={styles.pacoteDateMeta}>
+                    Validade: {formatDataIsoBr(planoResumo.pacote.dataValidade)}
+                  </Text>
+                ) : null}
+              </View>
+
+              {/* Extrato expansível (fechado por padrão) */}
+              <TouchableOpacity
+                activeOpacity={0.78}
+                onPress={() => setHistoricoPlanoAberto((prev) => !prev)}
+                style={styles.pacoteHistoryToggle}
+              >
+                <Text style={styles.pacoteHistoryToggleText}>
+                  Ver histórico de consultas ({planoResumo.pacote.consultas.length})
+                </Text>
+                {historicoPlanoAberto ? (
+                  <ChevronUp size={15} color="#0f766e" />
+                ) : (
+                  <ChevronDown size={15} color="#0f766e" />
+                )}
+              </TouchableOpacity>
+
+              {historicoPlanoAberto ? (
+                <View style={styles.pacoteHistoryList}>
+                  {planoResumo.pacote.consultas.length === 0 ? (
+                    <Text style={styles.pacoteHistoryEmptyText}>
+                      Nenhuma consulta contabilizada neste ciclo ainda.
+                    </Text>
+                  ) : (
+                    planoResumo.pacote.consultas.map((c) => {
+                      const statusUpper = (c.status || "").toUpperCase();
+                      const isBonificada = statusUpper === "BONIFICADA";
+                      const isFalta = statusUpper === "FALTA_COBRADA";
+                      return (
+                        <View
+                          key={`${c.numero}-${c.dataConsulta}`}
+                          style={styles.pacoteHistoryItem}
+                        >
+                          <Text
+                            style={styles.pacoteHistoryItemMain}
+                            numberOfLines={1}
+                          >
+                            #{c.numero} · {formatDataIsoBr(c.dataConsulta)} ·{" "}
+                            {formatTipoConsultaPacote(c.tipo)}
+                          </Text>
+                          {isBonificada ? (
+                            <View style={styles.pacoteHistoryTagBonus}>
+                              <Text style={styles.pacoteHistoryTagBonusText}>
+                                Bonificada
+                              </Text>
+                            </View>
+                          ) : isFalta ? (
+                            <View style={styles.pacoteHistoryTagFalta}>
+                              <Text style={styles.pacoteHistoryTagFaltaText}>
+                                Falta
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              ) : null}
+
+              {/* Botão de renovação condicional */}
+              {planoResumo.pacote.alertaRenovacao ||
+              planoResumo.pacote.consultasRestantes === 0 ? (
+                <TouchableOpacity
+                  activeOpacity={0.82}
+                  onPress={() =>
+                    void handleOpenWhatsAppRenovacao(
+                      planoResumo.pacote?.nomePlano || "Plano FAAZ"
+                    )
+                  }
+                  style={styles.pacoteRenewalBtn}
+                >
+                  <MessageCircle size={14} color="#0f766e" />
+                  <Text style={styles.pacoteRenewalBtnText}>
+                    Falar sobre renovação no WhatsApp
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
 
           {/* Equipe Médica */}
           <View style={styles.protocolBlock}>
@@ -1489,6 +1708,183 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: "700",
     color: "#be123c",
+  },
+  pacoteTrackBlock: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    gap: 10,
+  },
+  pacoteTrackHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  pacoteTrackTitle: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#0f172a",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  pacoteStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  pacoteStatusBadgeAtivo: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#a7f3d0",
+  },
+  pacoteStatusBadgeAmber: {
+    backgroundColor: "#fffbeb",
+    borderColor: "#fde68a",
+  },
+  pacoteStatusBadgeConcluido: {
+    backgroundColor: "#f1f5f9",
+    borderColor: "#cbd5e1",
+  },
+  pacoteStatusBadgeText: {
+    fontSize: 10.5,
+    fontWeight: "700",
+  },
+  pacoteStatusTextAtivo: {
+    color: "#047857",
+  },
+  pacoteStatusTextAmber: {
+    color: "#b45309",
+  },
+  pacoteStatusTextConcluido: {
+    color: "#475569",
+  },
+  pacoteMetricsRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+  },
+  pacoteRealizadasText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  pacoteRestantesText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#047857",
+  },
+  pacoteProgressTrack: {
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: "#e2e8f0",
+    overflow: "hidden",
+  },
+  pacoteProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "#0f766e",
+  },
+  pacoteDatesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  pacoteDateMeta: {
+    fontSize: 11.5,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  pacoteHistoryToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
+  },
+  pacoteHistoryToggleText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  pacoteHistoryList: {
+    backgroundColor: "#ffffff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  pacoteHistoryEmptyText: {
+    fontSize: 12,
+    color: "#64748b",
+    fontStyle: "italic",
+    paddingVertical: 8,
+    textAlign: "center",
+  },
+  pacoteHistoryItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 7,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#f1f5f9",
+    gap: 8,
+  },
+  pacoteHistoryItemMain: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#1e293b",
+    flex: 1,
+  },
+  pacoteHistoryTagBonus: {
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+  },
+  pacoteHistoryTagBonusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#0f766e",
+  },
+  pacoteHistoryTagFalta: {
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+  },
+  pacoteHistoryTagFaltaText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#b45309",
+  },
+  pacoteRenewalBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#f0fdfa",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginTop: 2,
+  },
+  pacoteRenewalBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0f766e",
   },
 });
 
