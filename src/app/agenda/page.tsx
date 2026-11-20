@@ -26,6 +26,15 @@ import {
 import { TopMenu } from "@/components/TopMenu";
 import { mockUserSession } from "@/mocks/dashboard";
 import {
+  AgendaMonthView,
+  AgendaSemesterView,
+  buildMonthGrid,
+  getSemesterInfo,
+  MESES_PT_FULL,
+  stepMonthsIso,
+  type AgendaViewMode,
+} from "@/components/AgendaExtendedViews";
+import {
   adicionarDiasDataBR,
   formatarHoraBR,
   getDataDiaBR,
@@ -175,7 +184,7 @@ function formatMinutesToTime(totalMin: number): string {
  */
 function buildAgendamentosQuery(
   selectedDateIso: string,
-  mode: "dia" | "semana",
+  mode: AgendaViewMode,
   medicoIdFiltro: string,
   especialidadeFiltro: "TODAS" | EspecialidadeAgendamento
 ): string {
@@ -191,11 +200,20 @@ function buildAgendamentosQuery(
   if (mode === "dia") {
     return `data=${selectedDateIso}${medicoSuffix}${especialidadeSuffix}`;
   }
+  if (mode === "mes") {
+    const [y, m] = selectedDateIso.split("-").map(Number);
+    const { gridStartIso, gridEndIso } = buildMonthGrid(y || 2026, m || 1, "");
+    return `dataInicio=${gridStartIso}&dataFim=${gridEndIso}${medicoSuffix}${especialidadeSuffix}`;
+  }
+  if (mode === "semestre") {
+    const { startIso, endIso } = getSemesterInfo(selectedDateIso);
+    return `dataInicio=${startIso}&dataFim=${endIso}${medicoSuffix}${especialidadeSuffix}`;
+  }
   const dayOfWeek = getPartesDataHoraBR(selectedDateIso).weekdayIndex;
   const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const mondayIso = subtrairDiasDataBR(selectedDateIso, diffToMonday);
   const sundayIso = adicionarDiasDataBR(mondayIso, 6);
-  return `inicio=${mondayIso}&fim=${sundayIso}${medicoSuffix}${especialidadeSuffix}`;
+  return `dataInicio=${mondayIso}&dataFim=${sundayIso}${medicoSuffix}${especialidadeSuffix}`;
 }
 
 /**
@@ -303,7 +321,7 @@ export default function AgendaPage() {
   // Datas inicializadas vazias no SSR e hidratadas em useEffect (evita hydration mismatch #418)
   const [hojeIso, setHojeIso] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
-  const [viewMode, setViewMode] = useState<"dia" | "semana">("dia");
+  const [viewMode, setViewMode] = useState<AgendaViewMode>("dia");
   const [reloadTrigger, setReloadTrigger] = useState<number>(0);
 
   const [agendamentos, setAgendamentos] = useState<AgendamentoItem[]>([]);
@@ -435,7 +453,9 @@ export default function AgendaPage() {
 
   // Colunas visíveis na grade (1 coluna no modo "dia", 7 colunas no modo "semana")
   const visibleColumns = useMemo(() => {
-    if (!selectedDate) return [];
+    if (!selectedDate || (viewMode !== "dia" && viewMode !== "semana")) {
+      return [];
+    }
     const baseDate = parseLocalIsoDate(selectedDate);
 
     if (viewMode === "dia") {
@@ -527,6 +547,16 @@ export default function AgendaPage() {
       });
       const mes = mesRaw.charAt(0).toUpperCase() + mesRaw.slice(1);
       return `${diaSemana}, ${dia} de ${mes} de ${selectedDate.slice(0, 4)}`;
+    }
+
+    if (viewMode === "mes") {
+      const [y, m] = selectedDate.split("-").map(Number);
+      const mesNome = MESES_PT_FULL[(m || 1) - 1] || "Mês";
+      return `${mesNome} de ${y}`;
+    }
+
+    if (viewMode === "semestre") {
+      return getSemesterInfo(selectedDate).title;
     }
 
     if (visibleColumns.length === 0) return "Agenda Clínica";
@@ -712,15 +742,26 @@ export default function AgendaPage() {
       }));
   }, [agendamentos, filtroEspecialidade]);
 
+  // Agendamentos pertencentes ao período principal (em "Mês", contabiliza exatamente o mês selecionado)
+  const agendamentosDoPeriodoResumo = useMemo(() => {
+    if (viewMode === "mes" && selectedDate) {
+      const mesPrefix = selectedDate.slice(0, 7);
+      return agendamentosNormalizados.filter((a) =>
+        a.data.startsWith(mesPrefix)
+      );
+    }
+    return agendamentosNormalizados;
+  }, [agendamentosNormalizados, viewMode, selectedDate]);
+
   // Lista ordenada de agendamentos cancelados no período visível (para o popover Cancelados: N)
   const canceladosPeriodo = useMemo(() => {
-    return agendamentosNormalizados
+    return agendamentosDoPeriodoResumo
       .filter((a) => a.status === "CANCELADO")
       .sort(
         (a, b) =>
           a.data.localeCompare(b.data) || a.horario.localeCompare(b.horario)
       );
-  }, [agendamentosNormalizados]);
+  }, [agendamentosDoPeriodoResumo]);
 
   // Itens efetivamente exibidos na grade (por padrão oculta CANCELADO para liberar o slot)
   const itensVisiveisNaGrade = useMemo(() => {
@@ -780,21 +821,44 @@ export default function AgendaPage() {
   // Indicadores rápidos do período visível
   const resumoPeriodo = useMemo(() => {
     return {
-      total: agendamentosNormalizados.length,
-      confirmados: agendamentosNormalizados.filter(
+      total: agendamentosDoPeriodoResumo.length,
+      confirmados: agendamentosDoPeriodoResumo.filter(
         (a) => a.status === "CONFIRMADO"
       ).length,
-      agendados: agendamentosNormalizados.filter((a) => a.status === "AGENDADO")
-        .length,
-      encaixes: agendamentosNormalizados.filter(
+      agendados: agendamentosDoPeriodoResumo.filter(
+        (a) => a.status === "AGENDADO"
+      ).length,
+      encaixes: agendamentosDoPeriodoResumo.filter(
         (a) => Boolean(a.encaixe) && a.status !== "CANCELADO"
       ).length,
       cancelados: canceladosPeriodo.length,
     };
-  }, [agendamentosNormalizados, canceladosPeriodo]);
+  }, [agendamentosDoPeriodoResumo, canceladosPeriodo]);
+
+  const isCurrentTodayPeriod = useMemo(() => {
+    if (!selectedDate || !hojeIso) return false;
+    if (viewMode === "dia") return selectedDate === hojeIso;
+    if (viewMode === "mes") {
+      return selectedDate.slice(0, 7) === hojeIso.slice(0, 7);
+    }
+    if (viewMode === "semestre") {
+      const selSem = getSemesterInfo(selectedDate);
+      const hojeSem = getSemesterInfo(hojeIso);
+      return selSem.year === hojeSem.year && selSem.semester === hojeSem.semester;
+    }
+    return visibleColumns.some((c) => c.isoDate === hojeIso);
+  }, [selectedDate, hojeIso, viewMode, visibleColumns]);
 
   function handleStepPeriod(direction: -1 | 1) {
     if (!selectedDate) return;
+    if (viewMode === "mes") {
+      setSelectedDate(stepMonthsIso(selectedDate, direction));
+      return;
+    }
+    if (viewMode === "semestre") {
+      setSelectedDate(stepMonthsIso(selectedDate, direction * 6));
+      return;
+    }
     const delta = viewMode === "semana" ? 7 : 1;
     setSelectedDate(
       direction > 0
@@ -1116,7 +1180,7 @@ export default function AgendaPage() {
               type="button"
               onClick={handleGoToday}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                selectedDate === hojeIso
+                isCurrentTodayPeriod
                   ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                   : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 shadow-2xs"
               }`}
@@ -1130,7 +1194,13 @@ export default function AgendaPage() {
                 onClick={() => handleStepPeriod(-1)}
                 className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white transition-all cursor-pointer"
                 title={
-                  viewMode === "semana" ? "Semana anterior" : "Dia anterior"
+                  viewMode === "semestre"
+                    ? "Semestre anterior"
+                    : viewMode === "mes"
+                      ? "Mês anterior"
+                      : viewMode === "semana"
+                        ? "Semana anterior"
+                        : "Dia anterior"
                 }
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -1139,7 +1209,15 @@ export default function AgendaPage() {
                 type="button"
                 onClick={() => handleStepPeriod(1)}
                 className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white transition-all cursor-pointer"
-                title={viewMode === "semana" ? "Próxima semana" : "Próximo dia"}
+                title={
+                  viewMode === "semestre"
+                    ? "Próximo semestre"
+                    : viewMode === "mes"
+                      ? "Próximo mês"
+                      : viewMode === "semana"
+                        ? "Próxima semana"
+                        : "Próximo dia"
+                }
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -1364,7 +1442,7 @@ export default function AgendaPage() {
                                 <div className="min-w-0 space-y-0.5">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="text-[11px] font-black font-mono tabular-nums text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded">
-                                      {viewMode === "semana" && dataDdMm
+                                      {viewMode !== "dia" && dataDdMm
                                         ? `${dataDdMm} • `
                                         : ""}
                                       {item.horario}
@@ -1437,29 +1515,28 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            <div className="inline-flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/70">
-              <button
-                type="button"
-                onClick={() => setViewMode("dia")}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  viewMode === "dia"
-                    ? "bg-white text-slate-900 shadow-2xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Dia
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("semana")}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  viewMode === "semana"
-                    ? "bg-white text-slate-900 shadow-2xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Semana
-              </button>
+            <div className="cl-segmented inline-flex items-center p-1 rounded-xl">
+              {(
+                [
+                  { id: "dia", label: "Dia" },
+                  { id: "semana", label: "Semana" },
+                  { id: "mes", label: "Mês" },
+                  { id: "semestre", label: "Semestre" },
+                ] as Array<{ id: AgendaViewMode; label: string }>
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setViewMode(tab.id)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    viewMode === tab.id
+                      ? "bg-white text-slate-900 shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             <button
@@ -1473,59 +1550,90 @@ export default function AgendaPage() {
           </div>
         </div>
 
-        {/* CABEÇALHO FIXO DAS COLUNAS DO CALENDÁRIO */}
-        <div className="flex bg-slate-50/60">
-          <div className="w-20 shrink-0 border-r border-slate-100 py-2 px-2 flex items-center justify-center">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              GMT-3
-            </span>
-          </div>
+        {/* CABEÇALHO FIXO DAS COLUNAS DO CALENDÁRIO (Dia / Semana) */}
+        {(viewMode === "dia" || viewMode === "semana") && (
+          <div className="flex bg-slate-50/60">
+            <div className="w-20 shrink-0 border-r border-slate-100 py-2 px-2 flex items-center justify-center">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                GMT-3
+              </span>
+            </div>
 
-          <div
-            className="flex-1 grid"
-            style={{
-              gridTemplateColumns: `repeat(${Math.max(1, visibleColumns.length)}, minmax(0, 1fr))`,
-            }}
-          >
-            {visibleColumns.map((col) => (
-              <div
-                key={col.isoDate}
-                onClick={() => setSelectedDate(col.isoDate)}
-                className={`py-2 px-3 border-r border-slate-100 last:border-r-0 flex items-center justify-between sm:justify-center gap-2 cursor-pointer transition-colors ${
-                  col.isToday
-                    ? "bg-emerald-50/40"
-                    : col.isSelected
-                    ? "bg-slate-100/50"
-                    : "hover:bg-slate-50"
-                }`}
-              >
-                <span
-                  className={`text-[11px] font-extrabold uppercase tracking-wider ${
-                    col.isToday ? "text-emerald-700" : "text-slate-500"
-                  }`}
-                >
-                  {viewMode === "dia" ? col.weekdayLong : col.weekdayShort}
-                </span>
-                <span
-                  className={`w-7 h-7 rounded-full text-xs font-black font-mono tabular-nums flex items-center justify-center ${
+            <div
+              className="flex-1 grid"
+              style={{
+                gridTemplateColumns: `repeat(${Math.max(1, visibleColumns.length)}, minmax(0, 1fr))`,
+              }}
+            >
+              {visibleColumns.map((col) => (
+                <div
+                  key={col.isoDate}
+                  onClick={() => setSelectedDate(col.isoDate)}
+                  className={`py-2 px-3 border-r border-slate-100 last:border-r-0 flex items-center justify-between sm:justify-center gap-2 cursor-pointer transition-colors ${
                     col.isToday
-                      ? "bg-emerald-600 text-white shadow-2xs"
+                      ? "bg-emerald-50/40"
                       : col.isSelected
-                      ? "bg-emerald-50 text-emerald-800 border border-emerald-300"
-                      : "text-slate-800"
+                      ? "bg-slate-100/50"
+                      : "hover:bg-slate-50"
                   }`}
                 >
-                  {col.dayNumber}
-                </span>
-              </div>
-            ))}
+                  <span
+                    className={`text-[11px] font-extrabold uppercase tracking-wider ${
+                      col.isToday ? "text-emerald-700" : "text-slate-500"
+                    }`}
+                  >
+                    {viewMode === "dia" ? col.weekdayLong : col.weekdayShort}
+                  </span>
+                  <span
+                    className={`w-7 h-7 rounded-full text-xs font-black font-mono tabular-nums flex items-center justify-center ${
+                      col.isToday
+                        ? "bg-emerald-600 text-white shadow-2xs"
+                        : col.isSelected
+                        ? "bg-emerald-50 text-emerald-800 border border-emerald-300"
+                        : "text-slate-800"
+                    }`}
+                  >
+                    {col.dayNumber}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </header>
 
       {/* ======================================================== */}
-      {/* TIME-GRID DINÂMICO ZERO-SCROLL (GOOGLE / APPLE CALENDAR) */}
+      {/* CORPO PRINCIPAL: DIA / SEMANA (TIME-GRID) | MÊS | SEMESTRE */}
       {/* ======================================================== */}
+      {viewMode === "mes" ? (
+        <AgendaMonthView
+          selectedDate={selectedDate}
+          hojeIso={hojeIso}
+          itensVisiveisNaGrade={itensVisiveisNaGrade}
+          isLoading={isLoading}
+          onSelectDay={(isoDate) => {
+            setSelectedDate(isoDate);
+            setViewMode("dia");
+          }}
+          onQuickAddDate={(isoDate) => handleSlotClick(isoDate, "09:00")}
+          onSelectAgendamento={(item) => setSelectedCard(item)}
+        />
+      ) : viewMode === "semestre" ? (
+        <AgendaSemesterView
+          selectedDate={selectedDate}
+          hojeIso={hojeIso}
+          agendamentosNormalizados={agendamentosNormalizados}
+          isLoading={isLoading}
+          onOpenMonth={(firstDayIso) => {
+            setSelectedDate(firstDayIso);
+            setViewMode("mes");
+          }}
+          onOpenDay={(isoDate) => {
+            setSelectedDate(isoDate);
+            setViewMode("dia");
+          }}
+        />
+      ) : (
       <div className="flex-1 min-h-0 flex overflow-hidden relative bg-white">
         {isLoading && (
           <div className="absolute top-2 right-4 z-30 bg-white/95 backdrop-blur-xs border border-slate-200 px-3 py-1 rounded-full shadow-xs flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
@@ -1870,6 +1978,7 @@ export default function AgendaPage() {
           })}
         </div>
       </div>
+      )}
 
       {/* ======================================================== */}
       {/* POPOVER / MODAL DE GESTÃO RÁPIDA DO AGENDAMENTO (AO CLICAR NO CARD) */}

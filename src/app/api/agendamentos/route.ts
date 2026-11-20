@@ -72,8 +72,9 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const dataParam = searchParams.get("data");
-    const inicioParam = searchParams.get("inicio");
-    const fimParam = searchParams.get("fim");
+    const inicioParam =
+      searchParams.get("dataInicio") || searchParams.get("inicio");
+    const fimParam = searchParams.get("dataFim") || searchParams.get("fim");
     const medicoIdParam = searchParams.get("medicoId");
     const especialidadeParam = searchParams.get("especialidade");
 
@@ -86,8 +87,10 @@ export async function GET(request: NextRequest) {
       /^\d{4}-\d{2}-\d{2}$/.test(inicioParam) &&
       /^\d{4}-\d{2}-\d{2}$/.test(fimParam)
     ) {
-      inicioPeriodo = getInicioFimDiaBR(inicioParam).inicioUtc;
-      fimPeriodo = getInicioFimDiaBR(fimParam).fimUtc;
+      const startIso = inicioParam <= fimParam ? inicioParam : fimParam;
+      const endIso = inicioParam <= fimParam ? fimParam : inicioParam;
+      inicioPeriodo = getInicioFimDiaBR(startIso).inicioUtc;
+      fimPeriodo = getInicioFimDiaBR(endIso).fimUtc;
     } else if (dataParam && /^\d{4}-\d{2}-\d{2}$/.test(dataParam)) {
       const faixa = getInicioFimDiaBR(dataParam);
       inicioPeriodo = faixa.inicioUtc;
