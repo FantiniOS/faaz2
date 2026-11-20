@@ -7,6 +7,7 @@ import { getRepository } from "@/lib/db/data-source";
 import { MeasurementEntity, PatientEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
+import { criarDataBR, getDataDiaBR } from "@/lib/date-br";
 
 export interface MeasurementDTO {
   id: string;
@@ -21,6 +22,8 @@ export interface MeasurementDTO {
   rightThigh: number | null;
   leftThigh: number | null;
   notes: string | null;
+  createdBy?: string | null;
+  createdByName?: string | null;
 }
 
 export interface SaveMeasurementInput {
@@ -158,13 +161,17 @@ export async function saveAnthropometricMeasurement(
 
     let measuredAtDate = new Date();
     if (parsedMeta.data.measuredAt?.trim()) {
-      const candidate = new Date(
-        parsedMeta.data.measuredAt.includes("T")
-          ? parsedMeta.data.measuredAt
-          : `${parsedMeta.data.measuredAt}T12:00:00`,
-      );
-      if (!Number.isNaN(candidate.getTime())) {
-        measuredAtDate = candidate;
+      const rawDate = parsedMeta.data.measuredAt.trim();
+      if (rawDate === getDataDiaBR()) {
+        // Preserva o horário real da consulta quando a data selecionada é hoje (Brasília)
+        measuredAtDate = new Date();
+      } else {
+        const candidate = rawDate.includes("T")
+          ? new Date(rawDate)
+          : criarDataBR(rawDate, "12:00");
+        if (!Number.isNaN(candidate.getTime())) {
+          measuredAtDate = candidate;
+        }
       }
     }
 
@@ -203,6 +210,8 @@ export async function saveAnthropometricMeasurement(
         rightThigh: created.rightThigh ?? null,
         leftThigh: created.leftThigh ?? null,
         notes: created.notes ?? null,
+        createdBy: created.createdBy ?? sessao.userId,
+        createdByName: sessao.nome || null,
       },
     };
   } catch (err: unknown) {

@@ -35,6 +35,7 @@ import {
   ArrowUpRight,
   Info,
   Plus,
+  Smartphone,
 } from "lucide-react";
 import { DietaTab } from "@/components/DietaTab";
 import { MetasTab } from "@/components/MetasTab";
@@ -120,6 +121,119 @@ interface BiometriaHistoricoItem {
   waistCircumferenceCm: number | null;
   bodyFatPercentage: number | null;
 }
+
+const PATIENT_APP_CREATED_BY = "PATIENT_APP_SELF_REPORT";
+
+function isMeasurementFromApp(m: MeasurementDTO): boolean {
+  return (m.createdBy || "").toUpperCase() === PATIENT_APP_CREATED_BY;
+}
+
+function isRegistroAutoMonitoramento(item: HistoricoClinicoItem): boolean {
+  const medico = (item.medicoResponsavel || "").toUpperCase();
+  const queixa = (item.queixaPrincipal || "").toUpperCase();
+  const evolucaoTexto = (item.condutaEvolucao || "").toUpperCase();
+  return (
+    medico.includes("AUTO-MONITORAMENTO") ||
+    queixa.includes("AUTO-MONITORAMENTO") ||
+    evolucaoTexto.includes(
+      "PESAGEM DE AUTO-MONITORAMENTO REGISTRADA VIA APP MOBILE"
+    )
+  );
+}
+
+type MeasurementNumericKey =
+  | "bodyFatPercentage"
+  | "waist"
+  | "abdomen"
+  | "hips"
+  | "rightArm"
+  | "leftArm"
+  | "rightThigh"
+  | "leftThigh";
+
+type TapeMeasureKey = Exclude<MeasurementNumericKey, "bodyFatPercentage">;
+
+const TAPE_MEASURE_PRIORITY: Array<{
+  key: TapeMeasureKey;
+  label: string;
+  shortLabel: string;
+}> = [
+  { key: "waist", label: "Cintura", shortLabel: "Cintura" },
+  { key: "abdomen", label: "Abdômen", shortLabel: "Abdômen" },
+  { key: "hips", label: "Quadril", shortLabel: "Quadril" },
+  { key: "rightArm", label: "Braço Direito", shortLabel: "Braço Dir." },
+  { key: "leftArm", label: "Braço Esquerdo", shortLabel: "Braço Esq." },
+  { key: "rightThigh", label: "Coxa Direita", shortLabel: "Coxa Dir." },
+  { key: "leftThigh", label: "Coxa Esquerda", shortLabel: "Coxa Esq." },
+];
+
+const ALL_MEASUREMENT_FIELDS: Array<{
+  key: MeasurementNumericKey;
+  label: string;
+  shortLabel: string;
+  unit: "%" | "cm";
+}> = [
+  {
+    key: "bodyFatPercentage",
+    label: "% de Gordura",
+    shortLabel: "% Gordura",
+    unit: "%",
+  },
+  ...TAPE_MEASURE_PRIORITY.map((f) => ({ ...f, unit: "cm" as const })),
+];
+
+function formatBrNumber(val: number, decimals = 1): string {
+  return val.toFixed(decimals).replace(".", ",");
+}
+
+function getMeasurementChips(m: MeasurementDTO): Array<{
+  key: MeasurementNumericKey;
+  label: string;
+  shortLabel: string;
+  formatted: string;
+}> {
+  const chips: Array<{
+    key: MeasurementNumericKey;
+    label: string;
+    shortLabel: string;
+    formatted: string;
+  }> = [];
+
+  for (const field of ALL_MEASUREMENT_FIELDS) {
+    const raw = m[field.key];
+    if (raw !== null && raw !== undefined && !Number.isNaN(Number(raw))) {
+      const num = Number(raw);
+      chips.push({
+        key: field.key,
+        label: field.label,
+        shortLabel: field.shortLabel,
+        formatted:
+          field.unit === "%"
+            ? `${formatBrNumber(num)}%`
+            : `${formatBrNumber(num)} cm`,
+      });
+    }
+  }
+  return chips;
+}
+
+type TimelineEntry =
+  | {
+      kind: "evolucao";
+      id: string;
+      timestamp: number;
+      dataIso: string;
+      isAutoApp: boolean;
+      evolucao: HistoricoClinicoItem;
+    }
+  | {
+      kind: "medicao";
+      id: string;
+      timestamp: number;
+      dataIso: string;
+      isAutoApp: boolean;
+      medicao: MeasurementDTO;
+    };
 
 interface GlicemiaHistoricoItem {
   id: string;
@@ -827,58 +941,182 @@ export function ProntuarioModal({
   const glicemiaStatusDisplay =
     pacienteApiData?.glicemiaStatus || "Sem dados";
 
-  // 4. Antropometria & Composição Corporal (% Gordura em destaque + Cintura / Abdômen)
-  const formatAnthropometricValue = (val: number | null | undefined, suffix: string) =>
-    val !== null && val !== undefined && !Number.isNaN(Number(val))
-      ? `${Number(Number(val).toFixed(1))}${suffix}`
-      : "--";
+  // 4. Antropometria & Composição Corporal — consolidação do último valor não-nulo por campo
+  const measurementsOrdenadasDesc = useMemo(
+    () =>
+      [...measurementsHistorico].sort(
+        (a, b) =>
+          new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime()
+      ),
+    [measurementsHistorico]
+  );
 
-  const latestMeasurement: MeasurementDTO | null = measurementsHistorico[0] ?? null;
+  const consolidatedMeasurement: MeasurementDTO | null = useMemo(() => {
+    if (measurementsOrdenadasDesc.length === 0) return null;
+    const newest = measurementsOrdenadasDesc[0];
+    const pickLatest = (key: MeasurementNumericKey): number | null => {
+      for (const m of measurementsOrdenadasDesc) {
+        const v = m[key];
+        if (v !== null && v !== undefined && !Number.isNaN(Number(v))) {
+          return Number(v);
+        }
+      }
+      return null;
+    };
+
+    return {
+      ...newest,
+      bodyFatPercentage: pickLatest("bodyFatPercentage"),
+      waist: pickLatest("waist"),
+      abdomen: pickLatest("abdomen"),
+      hips: pickLatest("hips"),
+      rightArm: pickLatest("rightArm"),
+      leftArm: pickLatest("leftArm"),
+      rightThigh: pickLatest("rightThigh"),
+      leftThigh: pickLatest("leftThigh"),
+    };
+  }, [measurementsOrdenadasDesc]);
 
   const latestBodyFat: number | null =
-    latestMeasurement?.bodyFatPercentage !== null &&
-    latestMeasurement?.bodyFatPercentage !== undefined
-      ? Number(latestMeasurement.bodyFatPercentage)
-      : pacienteApiData?.percentualGordura !== undefined &&
-        pacienteApiData?.percentualGordura !== null
+    consolidatedMeasurement?.bodyFatPercentage ??
+    (pacienteApiData?.percentualGordura !== undefined &&
+    pacienteApiData?.percentualGordura !== null
       ? Number(pacienteApiData.percentualGordura)
-      : null;
+      : null);
 
   const latestWaist: number | null =
-    latestMeasurement?.waist !== null && latestMeasurement?.waist !== undefined
-      ? Number(latestMeasurement.waist)
-      : pacienteApiData?.circunferenciaAbdominal !== undefined &&
-        pacienteApiData?.circunferenciaAbdominal !== null
+    consolidatedMeasurement?.waist ??
+    (pacienteApiData?.circunferenciaAbdominal !== undefined &&
+    pacienteApiData?.circunferenciaAbdominal !== null
       ? Number(pacienteApiData.circunferenciaAbdominal)
-      : null;
+      : null);
 
-  const latestAbdomen: number | null =
-    latestMeasurement?.abdomen !== null && latestMeasurement?.abdomen !== undefined
-      ? Number(latestMeasurement.abdomen)
-      : null;
+  const latestAbdomen: number | null = consolidatedMeasurement?.abdomen ?? null;
+
+  // Todas as circunferências consolidadas disponíveis por ordem de prioridade clínica
+  const availableTapeMeasures = useMemo(() => {
+    const list: Array<{
+      key: TapeMeasureKey;
+      label: string;
+      shortLabel: string;
+      value: number;
+    }> = [];
+
+    for (const item of TAPE_MEASURE_PRIORITY) {
+      const val =
+        item.key === "waist"
+          ? latestWaist
+          : consolidatedMeasurement?.[item.key] ?? null;
+      if (val !== null && val !== undefined && !Number.isNaN(Number(val))) {
+        list.push({ ...item, value: Number(val) });
+      }
+    }
+    return list;
+  }, [consolidatedMeasurement, latestWaist]);
+
+  const promotedTapeMetric = availableTapeMeasures[0] ?? null;
 
   const hasAnthropometryData =
-    measurementsHistorico.length > 0 ||
+    measurementsOrdenadasDesc.length > 0 ||
     latestBodyFat !== null ||
-    latestWaist !== null ||
-    latestAbdomen !== null;
+    availableTapeMeasures.length > 0;
 
-  const percentualGorduraDisplay =
-    latestBodyFat !== null
-      ? formatAnthropometricValue(latestBodyFat, "%")
-      : hasAnthropometryData
-      ? "--%"
-      : "Sem dados";
+  // Foco inteligente do Card 4:
+  // - Com % Gordura: destaca % Gordura + Cintura e Abdômen abaixo
+  // - Sem % Gordura: promove a principal medida de fita métrica (nunca "--%" nem "Sem % gord.")
+  const card4Display = useMemo(() => {
+    if (latestBodyFat !== null) {
+      const subItems: Array<{ label: string; value: string }> = [
+        {
+          label: "Cintura",
+          value: latestWaist !== null ? `${formatBrNumber(latestWaist)} cm` : "--",
+        },
+        {
+          label: "Abdômen",
+          value:
+            latestAbdomen !== null ? `${formatBrNumber(latestAbdomen)} cm` : "--",
+        },
+      ];
+      return {
+        hasValue: true,
+        headline: `${formatBrNumber(latestBodyFat)}%`,
+        badgeLabel: "% Gordura",
+        subItems,
+        fallbackSubtext: null as string | null,
+        chartUnit: "%" as const,
+        chartMetricLabel: "% de Gordura Corporal",
+      };
+    }
 
-  const waistDisplay = formatAnthropometricValue(latestWaist, " cm");
-  const abdomenDisplay = formatAnthropometricValue(latestAbdomen, " cm");
+    if (promotedTapeMetric) {
+      const secondaryTape = availableTapeMeasures
+        .filter((item) => item.key !== promotedTapeMetric.key)
+        .slice(0, 2)
+        .map((item) => ({
+          label: item.shortLabel,
+          value: `${formatBrNumber(item.value)} cm`,
+        }));
 
-  const circunferenciaDisplay =
-    latestBodyFat !== null
-      ? formatAnthropometricValue(latestBodyFat, "%")
-      : latestWaist !== null
-      ? formatAnthropometricValue(latestWaist, " cm")
-      : "Sem dados";
+      const fallbackSubtext =
+        secondaryTape.length === 0
+          ? consolidatedMeasurement?.measuredAt
+            ? `Aferido em ${formatarDataBR(consolidatedMeasurement.measuredAt)}`
+            : "Fita métrica registrada"
+          : null;
+
+      return {
+        hasValue: true,
+        headline: `${formatBrNumber(promotedTapeMetric.value)} cm`,
+        badgeLabel: promotedTapeMetric.shortLabel,
+        subItems: secondaryTape,
+        fallbackSubtext,
+        chartUnit: "cm" as const,
+        chartMetricLabel: `${promotedTapeMetric.label} (cm)`,
+      };
+    }
+
+    return {
+      hasValue: false,
+      headline: "Sem dados",
+      badgeLabel: null as string | null,
+      subItems: [] as Array<{ label: string; value: string }>,
+      fallbackSubtext: null as string | null,
+      chartUnit: "cm" as const,
+      chartMetricLabel: "Circunferências (cm)",
+    };
+  }, [
+    latestBodyFat,
+    latestWaist,
+    latestAbdomen,
+    promotedTapeMetric,
+    availableTapeMeasures,
+    consolidatedMeasurement,
+  ]);
+
+  const circunferenciaDisplay = card4Display.headline;
+
+  // Origem do último peso pré-preenchido no bloco ANTROPOMETRIA
+  const origemUltimoPeso = useMemo(() => {
+    const comPeso = [...historico]
+      .filter(
+        (h) =>
+          h.pesoAtual !== null &&
+          h.pesoAtual !== undefined &&
+          !Number.isNaN(Number(h.pesoAtual))
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.dataAtendimento).getTime() -
+          new Date(a.dataAtendimento).getTime()
+      );
+
+    const ultimo = comPeso[0];
+    if (!ultimo) return null;
+
+    const ddMm = formatarDataBR(ultimo.dataAtendimento).slice(0, 5);
+    const viaApp = isRegistroAutoMonitoramento(ultimo);
+    return { viaApp, ddMm };
+  }, [historico]);
 
   // ========================================================
   // SÉRIES HISTÓRICAS REAIS PARA OS SPARKLINES E MODAL
@@ -1038,45 +1276,102 @@ export function ProntuarioModal({
     return pontos;
   }, [glicemiaHistorico]);
 
-  // 4. SÉRIE HISTÓRICA DE % DE GORDURA CORPORAL (para Sparkline e Curva do Modal)
+  // 4. SÉRIE HISTÓRICA DE ANTROPOMETRIA (% Gordura quando existir, ou principal circunferência promovida em cm)
   const circunferenciaSeries: MetricDataPoint[] = useMemo(() => {
-    const newRecords = measurementsHistorico.filter(
-      (m) => m.bodyFatPercentage !== null && !Number.isNaN(Number(m.bodyFatPercentage))
-    );
+    // Modo A: paciente tem % de Gordura registrada
+    if (latestBodyFat !== null) {
+      const newRecords = measurementsHistorico.filter(
+        (m) =>
+          m.bodyFatPercentage !== null &&
+          !Number.isNaN(Number(m.bodyFatPercentage))
+      );
 
-    if (newRecords.length > 0) {
-      const sorted = [...newRecords].sort(
-        (a, b) => new Date(a.measuredAt).getTime() - new Date(b.measuredAt).getTime()
+      if (newRecords.length > 0) {
+        const sorted = [...newRecords].sort(
+          (a, b) =>
+            new Date(a.measuredAt).getTime() - new Date(b.measuredAt).getTime()
+        );
+
+        const pontos: MetricDataPoint[] = [];
+        sorted.forEach((item, idx) => {
+          const d = new Date(item.measuredAt);
+          const valorG = Number(item.bodyFatPercentage);
+          const prev = idx > 0 ? pontos[idx - 1].valor : null;
+          const diff =
+            prev !== null ? Math.round((valorG - prev) * 10) / 10 : null;
+
+          const secParts: string[] = [];
+          if (item.waist !== null)
+            secParts.push(`Cintura: ${formatBrNumber(item.waist)} cm`);
+          if (item.abdomen !== null)
+            secParts.push(`Abdômen: ${formatBrNumber(item.abdomen)} cm`);
+
+          const detailParts = getMeasurementChips(item)
+            .filter((c) => c.key !== "bodyFatPercentage")
+            .map((c) => `${c.shortLabel}: ${c.formatted}`);
+          if (item.notes) detailParts.push(item.notes);
+
+          pontos.push({
+            id: item.id || `bf-${idx}`,
+            timestamp: d.getTime(),
+            data: formatarDataBR(d),
+            dataFormatada: d.toLocaleDateString("pt-BR", {
+              timeZone: TIMEZONE_BR,
+              day: "numeric",
+              month: "short",
+            }),
+            valor: valorG,
+            unidade: "%",
+            variacao: diff,
+            variacaoTexto:
+              diff === null
+                ? "Linha de Base"
+                : diff < 0
+                  ? `${formatBrNumber(diff)}%`
+                  : diff > 0
+                    ? `+${formatBrNumber(diff)}%`
+                    : "0,0%",
+            status: "% Gordura",
+            secundario: secParts.length > 0 ? secParts.join(" • ") : undefined,
+            observacao:
+              detailParts.length > 0
+                ? detailParts.join(" | ")
+                : "Avaliação antropométrica registrada",
+          });
+        });
+
+        return pontos;
+      }
+
+      const legacyValid = biometriaHistorico.filter(
+        (b) =>
+          b.bodyFatPercentage !== null &&
+          !Number.isNaN(Number(b.bodyFatPercentage))
+      );
+      if (legacyValid.length === 0) return [];
+
+      const ordenado = [...legacyValid].sort(
+        (a, b) =>
+          new Date(a.measuredAt).getTime() - new Date(b.measuredAt).getTime()
       );
 
       const pontos: MetricDataPoint[] = [];
-      sorted.forEach((item, idx) => {
+      ordenado.forEach((item, idx) => {
         const d = new Date(item.measuredAt);
         const valorG = Number(item.bodyFatPercentage);
+        const valorC =
+          item.waistCircumferenceCm !== null
+            ? Number(item.waistCircumferenceCm)
+            : null;
         const prev = idx > 0 ? pontos[idx - 1].valor : null;
-        const diff = prev !== null ? Math.round((valorG - prev) * 10) / 10 : null;
-
-        const secParts: string[] = [];
-        if (item.waist !== null) secParts.push(`Cintura: ${Number(item.waist.toFixed(1))} cm`);
-        if (item.abdomen !== null) secParts.push(`Abdômen: ${Number(item.abdomen.toFixed(1))} cm`);
-
-        const detailParts: string[] = [...secParts];
-        if (item.hips !== null) detailParts.push(`Quadril: ${Number(item.hips.toFixed(1))} cm`);
-        if (item.rightArm !== null) detailParts.push(`Braço D: ${Number(item.rightArm.toFixed(1))} cm`);
-        if (item.leftArm !== null) detailParts.push(`Braço E: ${Number(item.leftArm.toFixed(1))} cm`);
-        if (item.rightThigh !== null) detailParts.push(`Coxa D: ${Number(item.rightThigh.toFixed(1))} cm`);
-        if (item.leftThigh !== null) detailParts.push(`Coxa E: ${Number(item.leftThigh.toFixed(1))} cm`);
-        if (item.notes) detailParts.push(item.notes);
+        const diff =
+          prev !== null ? Math.round((valorG - prev) * 10) / 10 : null;
 
         pontos.push({
-          id: item.id || `bf-${idx}`,
+          id: item.id || `bf-legacy-${idx}`,
           timestamp: d.getTime(),
           data: formatarDataBR(d),
-          dataFormatada: d.toLocaleDateString("pt-BR", {
-            timeZone: TIMEZONE_BR,
-            day: "numeric",
-            month: "short",
-          }),
+          dataFormatada: `${d.toLocaleDateString("pt-BR", { timeZone: TIMEZONE_BR, day: "numeric", month: "short" })}`,
           valor: valorG,
           unidade: "%",
           variacao: diff,
@@ -1084,66 +1379,141 @@ export function ProntuarioModal({
             diff === null
               ? "Linha de Base"
               : diff < 0
-              ? `${diff.toFixed(1)}%`
-              : diff > 0
-              ? `+${diff.toFixed(1)}%`
-              : "0.0%",
+                ? `${formatBrNumber(diff)}%`
+                : diff > 0
+                  ? `+${formatBrNumber(diff)}%`
+                  : "0,0%",
           status: "% Gordura",
-          secundario: secParts.length > 0 ? secParts.join(" • ") : undefined,
+          secundario:
+            valorC !== null
+              ? `Cintura: ${formatBrNumber(valorC)} cm`
+              : undefined,
           observacao:
-            detailParts.length > 0
-              ? detailParts.join(" | ")
-              : "Avaliação antropométrica registrada",
+            valorC !== null
+              ? `Cintura: ${formatBrNumber(valorC)} cm`
+              : "Bioimpedância registrada",
         });
       });
 
       return pontos;
     }
 
-    const legacyValid = biometriaHistorico.filter(
-      (b) => b.bodyFatPercentage !== null && !Number.isNaN(Number(b.bodyFatPercentage))
+    // Modo B: sem % de Gordura — plota a circunferência principal promovida (fita métrica em cm)
+    if (!promotedTapeMetric) return [];
+
+    const metricKey = promotedTapeMetric.key;
+    const validTapeRecords = measurementsHistorico.filter(
+      (m) => m[metricKey] !== null && !Number.isNaN(Number(m[metricKey]))
     );
-    if (legacyValid.length === 0) return [];
 
-    const ordenado = [...legacyValid].sort(
-      (a, b) => new Date(a.measuredAt).getTime() - new Date(b.measuredAt).getTime()
-    );
+    if (validTapeRecords.length > 0) {
+      const sorted = [...validTapeRecords].sort(
+        (a, b) =>
+          new Date(a.measuredAt).getTime() - new Date(b.measuredAt).getTime()
+      );
 
-    const pontos: MetricDataPoint[] = [];
-    ordenado.forEach((item, idx) => {
-      const d = new Date(item.measuredAt);
-      const valorG = Number(item.bodyFatPercentage);
-      const valorC = item.waistCircumferenceCm !== null ? Number(item.waistCircumferenceCm) : null;
-      const prev = idx > 0 ? pontos[idx - 1].valor : null;
-      const diff = prev !== null ? Math.round((valorG - prev) * 10) / 10 : null;
+      const pontos: MetricDataPoint[] = [];
+      sorted.forEach((item, idx) => {
+        const d = new Date(item.measuredAt);
+        const valorCm = Number(item[metricKey]);
+        const prev = idx > 0 ? pontos[idx - 1].valor : null;
+        const diff =
+          prev !== null ? Math.round((valorCm - prev) * 10) / 10 : null;
 
-      pontos.push({
-        id: item.id || `bf-legacy-${idx}`,
-        timestamp: d.getTime(),
-        data: formatarDataBR(d),
-        dataFormatada: `${d.toLocaleDateString("pt-BR", { timeZone: TIMEZONE_BR, day: "numeric", month: "short" })}`,
-        valor: valorG,
-        unidade: "%",
-        variacao: diff,
-        variacaoTexto:
-          diff === null
-            ? "Linha de Base"
-            : diff < 0
-            ? `${diff.toFixed(1)}%`
-            : diff > 0
-            ? `+${diff.toFixed(1)}%`
-            : "0.0%",
-        status: "% Gordura",
-        secundario: valorC !== null ? `Cintura: ${valorC.toFixed(1)} cm` : undefined,
-        observacao:
-          valorC !== null
-            ? `Cintura: ${valorC.toFixed(1)} cm`
-            : "Bioimpedância registrada",
+        const otherChips = getMeasurementChips(item).filter(
+          (c) => c.key !== metricKey
+        );
+        const detailParts = otherChips.map(
+          (c) => `${c.shortLabel}: ${c.formatted}`
+        );
+        if (item.notes) detailParts.push(item.notes);
+
+        pontos.push({
+          id: item.id || `tape-${metricKey}-${idx}`,
+          timestamp: d.getTime(),
+          data: formatarDataBR(d),
+          dataFormatada: d.toLocaleDateString("pt-BR", {
+            timeZone: TIMEZONE_BR,
+            day: "numeric",
+            month: "short",
+          }),
+          valor: valorCm,
+          unidade: "cm",
+          variacao: diff,
+          variacaoTexto:
+            diff === null
+              ? "Linha de Base"
+              : diff < 0
+                ? `${formatBrNumber(diff)} cm`
+                : diff > 0
+                  ? `+${formatBrNumber(diff)} cm`
+                  : "0,0 cm",
+          status: promotedTapeMetric.shortLabel,
+          secundario:
+            otherChips.length > 0
+              ? otherChips
+                  .slice(0, 2)
+                  .map((c) => `${c.shortLabel}: ${c.formatted}`)
+                  .join(" • ")
+              : undefined,
+          observacao:
+            detailParts.length > 0
+              ? detailParts.join(" | ")
+              : "Medida de fita métrica registrada",
+        });
       });
-    });
 
-    return pontos;
-  }, [measurementsHistorico, biometriaHistorico]);
+      return pontos;
+    }
+
+    if (metricKey === "waist") {
+      const legacyWaist = biometriaHistorico.filter(
+        (b) =>
+          b.waistCircumferenceCm !== null &&
+          !Number.isNaN(Number(b.waistCircumferenceCm))
+      );
+      if (legacyWaist.length > 0) {
+        const sorted = [...legacyWaist].sort(
+          (a, b) =>
+            new Date(a.measuredAt).getTime() - new Date(b.measuredAt).getTime()
+        );
+        const pontos: MetricDataPoint[] = [];
+        sorted.forEach((item, idx) => {
+          const d = new Date(item.measuredAt);
+          const valorCm = Number(item.waistCircumferenceCm);
+          const prev = idx > 0 ? pontos[idx - 1].valor : null;
+          const diff =
+            prev !== null ? Math.round((valorCm - prev) * 10) / 10 : null;
+          pontos.push({
+            id: item.id || `waist-legacy-${idx}`,
+            timestamp: d.getTime(),
+            data: formatarDataBR(d),
+            dataFormatada: d.toLocaleDateString("pt-BR", {
+              timeZone: TIMEZONE_BR,
+              day: "numeric",
+              month: "short",
+            }),
+            valor: valorCm,
+            unidade: "cm",
+            variacao: diff,
+            variacaoTexto:
+              diff === null
+                ? "Linha de Base"
+                : diff < 0
+                  ? `${formatBrNumber(diff)} cm`
+                  : diff > 0
+                    ? `+${formatBrNumber(diff)} cm`
+                    : "0,0 cm",
+            status: "Cintura",
+            observacao: "Medida antropométrica legada",
+          });
+        });
+        return pontos;
+      }
+    }
+
+    return [];
+  }, [measurementsHistorico, biometriaHistorico, latestBodyFat, promotedTapeMetric]);
 
   // Configuração ativa para o Modal Detalhado de Números Reais
   const activeModalConfig = useMemo(() => {
@@ -1253,27 +1623,36 @@ export function ProntuarioModal({
         };
       }
       case "circunferencia": {
+        const unit = card4Display.chartUnit;
+        const formatVal = (v: number) =>
+          unit === "%" ? `${formatBrNumber(v)}%` : `${formatBrNumber(v)} cm`;
         const pInicial =
           circunferenciaSeries[0]?.valor !== undefined
-            ? `${circunferenciaSeries[0].valor.toFixed(1)}%`
+            ? formatVal(circunferenciaSeries[0].valor)
             : "Sem dados";
         const pFinal =
-          circunferenciaSeries[circunferenciaSeries.length - 1]?.valor !== undefined
-            ? `${circunferenciaSeries[circunferenciaSeries.length - 1].valor.toFixed(1)}%`
+          circunferenciaSeries[circunferenciaSeries.length - 1]?.valor !==
+          undefined
+            ? formatVal(circunferenciaSeries[circunferenciaSeries.length - 1].valor)
             : "Sem dados";
         const diffTotal =
           circunferenciaSeries.length >= 2
-            ? circunferenciaSeries[circunferenciaSeries.length - 1].valor -
-              circunferenciaSeries[0].valor
+            ? Math.round(
+                (circunferenciaSeries[circunferenciaSeries.length - 1].valor -
+                  circunferenciaSeries[0].valor) *
+                  10
+              ) / 10
             : null;
         const diffTexto =
           diffTotal === null
             ? "Sem dados"
             : diffTotal < 0
-            ? `${diffTotal.toFixed(1)}%`
-            : diffTotal > 0
-            ? `+${diffTotal.toFixed(1)}%`
-            : "0.0%";
+              ? formatVal(diffTotal)
+              : diffTotal > 0
+                ? `+${formatVal(diffTotal)}`
+                : unit === "%"
+                  ? "0,0%"
+                  : "0,0 cm";
 
         const tableSeries = [...circunferenciaSeries].sort(
           (a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0)
@@ -1282,8 +1661,9 @@ export function ProntuarioModal({
         return {
           tipo: "circunferencia",
           titulo: "Composição Corporal & Antropometria",
-          subtitulo: "Tendência histórica do percentual de gordura e circunferências",
-          unidade: "%",
+          subtitulo: `Curva de ${card4Display.chartMetricLabel} e histórico completo de aferições`,
+          unidade: unit,
+          metricLabel: card4Display.chartMetricLabel,
           corStroke: "#0284c7",
           corFill: "#0284c7",
           gradientId: "modalGradCirc",
@@ -1299,31 +1679,53 @@ export function ProntuarioModal({
       default:
         return null;
     }
-  }, [modalMetricaAtiva, pesoSeries, imcSeries, glicemiaSeries, circunferenciaSeries, pesoExibicao, imcDisplay, glicemiaDisplay, circunferenciaDisplay]);
+  }, [
+    modalMetricaAtiva,
+    pesoSeries,
+    imcSeries,
+    glicemiaSeries,
+    circunferenciaSeries,
+    pesoExibicao,
+    imcDisplay,
+    glicemiaDisplay,
+    circunferenciaDisplay,
+    card4Display,
+  ]);
 
-  // Classifica registros de auto-monitoramento vindos do App Mobile (filtro não-destrutivo)
-  function isRegistroAutoMonitoramento(item: HistoricoClinicoItem): boolean {
-    const medico = (item.medicoResponsavel || "").toUpperCase();
-    const queixa = (item.queixaPrincipal || "").toUpperCase();
-    const evolucaoTexto = (item.condutaEvolucao || "").toUpperCase();
-    return (
-      medico.includes("AUTO-MONITORAMENTO") ||
-      queixa.includes("AUTO-MONITORAMENTO") ||
-      evolucaoTexto.includes(
-        "PESAGEM DE AUTO-MONITORAMENTO REGISTRADA VIA APP MOBILE"
-      )
+  // Linha do tempo unificada: EVOLUCOES_CLINICAS + MEASUREMENTS (Consultório e App Mobile)
+  const timelineUnificada: TimelineEntry[] = useMemo(() => {
+    const evolucaoEntries: TimelineEntry[] = historico.map((item) => ({
+      kind: "evolucao",
+      id: `ev-${item.id}`,
+      timestamp: new Date(item.dataAtendimento).getTime(),
+      dataIso: item.dataAtendimento,
+      isAutoApp: isRegistroAutoMonitoramento(item),
+      evolucao: item,
+    }));
+
+    const medicaoEntries: TimelineEntry[] = measurementsHistorico.map((m) => ({
+      kind: "medicao",
+      id: `med-${m.id}`,
+      timestamp: new Date(m.measuredAt).getTime(),
+      dataIso: m.measuredAt,
+      isAutoApp: isMeasurementFromApp(m),
+      medicao: m,
+    }));
+
+    return [...evolucaoEntries, ...medicaoEntries].sort(
+      (a, b) => b.timestamp - a.timestamp
     );
-  }
+  }, [historico, measurementsHistorico]);
 
   const totalAutoMonitoramento = useMemo(
-    () => historico.filter(isRegistroAutoMonitoramento).length,
-    [historico]
+    () => timelineUnificada.filter((entry) => entry.isAutoApp).length,
+    [timelineUnificada]
   );
 
-  const historicoFiltrado = useMemo(() => {
-    if (filtroHistorico === "todos") return historico;
-    return historico.filter((item) => !isRegistroAutoMonitoramento(item));
-  }, [historico, filtroHistorico]);
+  const timelineFiltrada = useMemo(() => {
+    if (filtroHistorico === "todos") return timelineUnificada;
+    return timelineUnificada.filter((entry) => !entry.isAutoApp);
+  }, [timelineUnificada, filtroHistorico]);
 
   // Salvar Ficha e Registrar Novo Atendimento na Linha do Tempo
   async function handleSalvarERegistrarAtendimento(e?: React.FormEvent) {
@@ -1766,15 +2168,15 @@ export function ProntuarioModal({
             <div
               role="button"
               tabIndex={0}
-              onClick={() => setIsMeasurementModalOpen(true)}
+              onClick={() => setModalMetricaAtiva("circunferencia")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  setIsMeasurementModalOpen(true);
+                  setModalMetricaAtiva("circunferencia");
                 }
               }}
               className="bg-white border border-slate-200/90 hover:border-sky-500 hover:shadow-md rounded-xl p-3 shadow-2xs flex flex-col justify-between transition-all cursor-pointer group text-left relative overflow-hidden"
-              title="Clique para registrar ou atualizar medidas antropométricas"
+              title="Clique para visualizar o histórico detalhado de medidas corporais"
             >
               <div className="flex items-center justify-between gap-1 mb-1">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-sky-700 transition-colors">
@@ -1796,33 +2198,41 @@ export function ProntuarioModal({
               </div>
               <div className="flex items-center justify-between gap-2 mt-0.5">
                 <div className="min-w-0">
-                  <div className="flex items-baseline gap-1.5">
+                  <div className="flex items-baseline gap-1.5 flex-wrap">
                     <span
                       className={`font-black font-mono tracking-tight ${
-                        percentualGorduraDisplay === "Sem dados"
+                        !card4Display.hasValue
                           ? "text-base sm:text-lg text-slate-400 font-sans font-bold"
                           : "text-xl sm:text-2xl text-slate-900"
                       }`}
                     >
-                      {percentualGorduraDisplay}
+                      {card4Display.headline}
                     </span>
-                    {hasAnthropometryData && (
+                    {card4Display.badgeLabel && (
                       <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded">
-                        % Gordura
+                        {card4Display.badgeLabel}
                       </span>
                     )}
                   </div>
-                  {hasAnthropometryData && (
+                  {card4Display.subItems.length > 0 ? (
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-600 mt-0.5 truncate">
-                      <span>
-                        Cintura: <strong className="font-mono text-slate-800">{waistDisplay}</strong>
-                      </span>
-                      <span className="text-slate-300">•</span>
-                      <span>
-                        Abdômen: <strong className="font-mono text-slate-800">{abdomenDisplay}</strong>
-                      </span>
+                      {card4Display.subItems.map((sub, idx) => (
+                        <React.Fragment key={sub.label}>
+                          {idx > 0 && <span className="text-slate-300">•</span>}
+                          <span className="truncate">
+                            {sub.label}:{" "}
+                            <strong className="font-mono text-slate-800">
+                              {sub.value}
+                            </strong>
+                          </span>
+                        </React.Fragment>
+                      ))}
                     </div>
-                  )}
+                  ) : card4Display.fallbackSubtext ? (
+                    <div className="text-[10px] text-slate-500 mt-0.5 truncate">
+                      {card4Display.fallbackSubtext}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="w-20 sm:w-24 md:w-28 h-9 shrink-0 flex items-center">
                   <MiniSparkline
@@ -1830,34 +2240,20 @@ export function ProntuarioModal({
                     color="#0284c7"
                     gradientId="sparkCirc"
                     isReductionGood={true}
-                    emptyLabel={hasAnthropometryData ? "Sem % gord." : "Sem dados"}
+                    emptyLabel="Sem dados"
                   />
                 </div>
               </div>
               <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 mt-1">
                 <span className="truncate">
                   {hasAnthropometryData
-                    ? `${Math.max(measurementsHistorico.length, circunferenciaSeries.length, 1)} avaliação(ões)`
+                    ? `${Math.max(measurementsOrdenadasDesc.length, circunferenciaSeries.length, 1)} avaliação(ões)`
                     : "Sem medições registradas"}
                 </span>
-                {circunferenciaSeries.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setModalMetricaAtiva("circunferencia");
-                    }}
-                    className="text-[10px] font-semibold text-sky-600 hover:text-sky-800 hover:underline shrink-0 inline-flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <span>Ver números</span>
-                    <ChevronRight className="w-3 h-3" />
-                  </button>
-                ) : (
-                  <span className="text-[10px] font-semibold text-sky-600 group-hover:text-sky-700 shrink-0 inline-flex items-center gap-0.5">
-                    <span>Inserir medidas</span>
-                    <ChevronRight className="w-3 h-3" />
-                  </span>
-                )}
+                <span className="text-[10px] font-semibold text-sky-600 group-hover:text-sky-700 shrink-0 inline-flex items-center gap-0.5">
+                  <span>Ver números</span>
+                  <ChevronRight className="w-3 h-3" />
+                </span>
               </div>
             </div>
           </div>
@@ -2017,6 +2413,26 @@ export function ProntuarioModal({
                           kg
                         </span>
                       </div>
+                      {origemUltimoPeso && (
+                        <p
+                          className={`mt-1.5 flex items-start gap-1 text-[10px] leading-snug font-medium ${
+                            origemUltimoPeso.viaApp
+                              ? "text-amber-700"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          {origemUltimoPeso.viaApp ? (
+                            <Smartphone className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                          ) : (
+                            <Stethoscope className="w-3 h-3 text-teal-600 shrink-0 mt-0.5" />
+                          )}
+                          <span>
+                            {origemUltimoPeso.viaApp
+                              ? `Último registro via App Mobile (${origemUltimoPeso.ddMm}) — confirme na balança da consulta`
+                              : `Última pesagem em consulta oficial (${origemUltimoPeso.ddMm})`}
+                          </span>
+                        </p>
+                      )}
                     </div>
 
                     {/* Altura */}
@@ -2275,16 +2691,16 @@ export function ProntuarioModal({
                     </div>
 
                     <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                      {historicoFiltrado.length}{" "}
-                      {historicoFiltrado.length === 1
+                      {timelineFiltrada.length}{" "}
+                      {timelineFiltrada.length === 1
                         ? "registro"
                         : "registros"}
                     </span>
                   </div>
                 </div>
 
-                {/* TIMELINE DE ATENDIMENTOS COM BOTÕES DE EDITAR E EXCLUIR */}
-                {historicoFiltrado.length === 0 ? (
+                {/* TIMELINE DE ATENDIMENTOS E AFERIÇÕES ANTROPOMÉTRICAS */}
+                {timelineFiltrada.length === 0 ? (
                   <div className="bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl p-8 text-center flex flex-col items-center justify-center space-y-2">
                     <History className="w-8 h-8 text-slate-300" />
                     <p className="text-xs font-bold text-slate-700">
@@ -2303,21 +2719,131 @@ export function ProntuarioModal({
                         onClick={() => setFiltroHistorico("todos")}
                         className="mt-1 px-3 py-1.5 text-[11px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors cursor-pointer"
                       >
-                        Exibir todos os registros ({historico.length})
+                        Exibir todos os registros ({timelineUnificada.length})
                       </button>
                     ) : null}
                   </div>
                 ) : (
                   <div className="relative pl-6 space-y-5 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-slate-200">
-                    {historicoFiltrado.map((item, idx) => {
+                    {timelineFiltrada.map((entry, idx) => {
+                      const isFirst = idx === 0;
+
+                      if (entry.kind === "medicao") {
+                        const m = entry.medicao;
+                        const dataFormatada = formatarDataBR(m.measuredAt);
+                        const horaFormatada = formatarHoraBR(m.measuredAt);
+                        const chips = getMeasurementChips(m);
+
+                        return (
+                          <div key={entry.id} className="relative group">
+                            {/* Marcador na Linha do Tempo */}
+                            <div
+                              className={`absolute -left-6 top-3.5 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                                isFirst
+                                  ? "bg-sky-600 border-white ring-4 ring-sky-100 text-white"
+                                  : "bg-white border-sky-300 text-sky-500 group-hover:border-sky-500"
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                            </div>
+
+                            {/* Card de Medição Antropométrica */}
+                            <div
+                              className={`bg-white rounded-xl border p-4 transition-all shadow-2xs space-y-2.5 ${
+                                isFirst
+                                  ? "border-sky-200 ring-1 ring-sky-500/20"
+                                  : "border-slate-200 hover:border-sky-200"
+                              }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                                    <Ruler className="w-3.5 h-3.5 text-sky-600" />
+                                    <span>
+                                      {dataFormatada} às {horaFormatada}
+                                    </span>
+                                  </span>
+                                  {isFirst && (
+                                    <span className="text-[10px] font-black px-1.5 py-0.2 bg-teal-50 text-teal-700 border border-teal-200 rounded">
+                                      Mais recente
+                                    </span>
+                                  )}
+                                  {entry.isAutoApp ? (
+                                    <span className="text-[10px] font-bold px-2 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 rounded">
+                                      AUTO-MONITORAMENTO (APP)
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">
+                                      <Stethoscope className="w-3 h-3" />
+                                      <span>Antropometria (Consultório)</span>
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2 self-start sm:self-auto">
+                                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200/60">
+                                    {entry.isAutoApp ? (
+                                      <>
+                                        <Smartphone className="w-3.5 h-3.5 text-sky-500" />
+                                        <span>Paciente (App Mobile)</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <User className="w-3.5 h-3.5 text-slate-400" />
+                                        <span>
+                                          {m.createdByName || "Equipe Clínica FAAZ"}
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setModalMetricaAtiva("circunferencia")}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors cursor-pointer"
+                                    title="Abrir histórico completo de medidas corporais"
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                    <span>Ver medidas</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Valores aferidos nesta avaliação */}
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {chips.map((chip) => (
+                                  <span
+                                    key={chip.key}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-slate-50 text-slate-700 rounded-lg border border-slate-200/90"
+                                  >
+                                    <span className="text-slate-500">
+                                      {chip.shortLabel}:
+                                    </span>
+                                    <strong className="font-mono font-bold text-slate-900">
+                                      {chip.formatted}
+                                    </strong>
+                                  </span>
+                                ))}
+                              </div>
+
+                              {/* Observações opcionais da avaliação */}
+                              {m.notes && (
+                                <div className="bg-slate-50/70 border border-slate-200/70 rounded-xl px-3.5 py-2.5 text-xs text-slate-700 leading-relaxed">
+                                  {m.notes}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const item = entry.evolucao;
                       const dataFormatada = formatarDataBR(item.dataAtendimento);
                       const horaFormatada = formatarHoraBR(item.dataAtendimento);
-
-                      const isFirst = idx === 0;
-                      const isAutoApp = isRegistroAutoMonitoramento(item);
+                      const isAutoApp = entry.isAutoApp;
 
                       return (
-                        <div key={item.id} className="relative group">
+                        <div key={entry.id} className="relative group">
                           {/* Marcador na Linha do Tempo */}
                           <div
                             className={`absolute -left-6 top-3.5 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
@@ -2350,8 +2876,8 @@ export function ProntuarioModal({
                                   </span>
                                 )}
                                 {isAutoApp && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.2 bg-sky-50 text-sky-700 border border-sky-200 rounded">
-                                    Auto-monitoramento (App)
+                                  <span className="text-[10px] font-bold px-2 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 rounded">
+                                    AUTO-MONITORAMENTO (APP)
                                   </span>
                                 )}
                               </div>
@@ -2718,7 +3244,13 @@ export function ProntuarioModal({
         {/* ======================================================== */}
         {activeModalConfig && (
           <div className="fixed inset-0 z-70 bg-slate-900/35 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
-            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200/90 overflow-hidden flex flex-col max-h-[88vh] animate-in zoom-in-95 duration-150">
+            <div
+              className={`bg-white w-full ${
+                activeModalConfig.tipo === "circunferencia"
+                  ? "max-w-3xl"
+                  : "max-w-2xl"
+              } rounded-2xl shadow-2xl border border-slate-200/90 overflow-hidden flex flex-col max-h-[88vh] animate-in zoom-in-95 duration-150`}
+            >
               {/* CABEÇALHO CLINICAL LIGHT GLASS */}
               <div className="cl-modal-header px-5 py-3.5 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3 min-w-0">
@@ -2749,13 +3281,20 @@ export function ProntuarioModal({
               <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
                 {/* 1. GRÁFICO RECHARTS INTERATIVO EXPANDIDO */}
                 <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3 sm:p-4 shadow-2xs">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-2 gap-2">
                     <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                      <Activity className="w-3.5 h-3.5 text-teal-600" />
-                      <span>Curva de Tendência Histórica ({activeModalConfig.series.length} ponto{activeModalConfig.series.length === 1 ? "" : "s"})</span>
+                      <Activity className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                      <span>
+                        Curva de Tendência Histórica
+                        {"metricLabel" in activeModalConfig && activeModalConfig.metricLabel
+                          ? ` · ${activeModalConfig.metricLabel}`
+                          : ""}{" "}
+                        ({activeModalConfig.series.length} ponto
+                        {activeModalConfig.series.length === 1 ? "" : "s"})
+                      </span>
                     </span>
                     {activeModalConfig.series.length >= 2 && (
-                      <span className="text-[10px] font-medium text-slate-400">
+                      <span className="text-[10px] font-medium text-slate-400 shrink-0">
                         Passe o mouse sobre os pontos para ver detalhes
                       </span>
                     )}
@@ -2836,99 +3375,277 @@ export function ProntuarioModal({
                 </div>
 
                 {/* 3. TABELA COMPLETA DE NÚMEROS REAIS, DATAS EXATAS E VARIAÇÕES */}
-                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-                  <div className="bg-slate-100/90 px-3.5 py-2 border-b border-slate-200 flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                      <FileText className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Tabela de Medições Detalhadas</span>
-                    </span>
-                    <span className="text-[10px] font-semibold text-slate-500">
-                      Datas exatas e variações
-                    </span>
-                  </div>
-                  <div className="max-h-52 overflow-y-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold tracking-wider sticky top-0 border-b border-slate-200">
-                        <tr>
-                          <th className="px-3 py-2">Data</th>
-                          <th className="px-3 py-2 text-right">Valor Real</th>
-                          <th className="px-3 py-2 text-center">Variação (Δ)</th>
-                          <th className="px-3 py-2">Status</th>
-                          <th className="px-3 py-2">Observações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {(!activeModalConfig.tableSeries || activeModalConfig.tableSeries.length === 0) ? (
+                {activeModalConfig.tipo === "circunferencia" ? (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                    <div className="bg-slate-100/90 px-3.5 py-2 border-b border-slate-200 flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <Ruler className="w-3.5 h-3.5 text-sky-600" />
+                        <span>
+                          Histórico Completo de Medidas ({measurementsOrdenadasDesc.length > 0 ? measurementsOrdenadasDesc.length : biometriaHistorico.length})
+                        </span>
+                      </span>
+                      <span className="text-[10px] font-semibold text-slate-500">
+                        Origem e todos os campos aferidos
+                      </span>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold tracking-wider sticky top-0 border-b border-slate-200">
                           <tr>
-                            <td colSpan={5} className="px-4 py-6 text-center text-xs font-semibold text-slate-400">
-                              Sem dados registrados no banco de dados para este indicador.
-                            </td>
+                            <th className="px-3 py-2">Data</th>
+                            <th className="px-3 py-2">Origem</th>
+                            <th className="px-3 py-2">Medidas Aferidas</th>
+                            <th className="px-3 py-2">Observações</th>
                           </tr>
-                        ) : (
-                          activeModalConfig.tableSeries.map((item, idx) => (
-                            <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="px-3 py-2.5 font-medium text-slate-800 flex items-center gap-1.5 whitespace-nowrap">
-                                <Calendar className="w-3 h-3 text-slate-400" />
-                                <span>{item.data}</span>
-                                {idx === 0 && (
-                                  <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">
-                                    Mais recente
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2.5 text-right font-black font-mono text-slate-900 whitespace-nowrap">
-                                {item.valor} <span className="text-[10px] font-semibold text-slate-500">{item.unidade}</span>
-                              </td>
-                              <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                                {item.variacao === null ? (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                                    Base
-                                  </span>
-                                ) : item.variacao < 0 ? (
-                                  <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                    <TrendingDown className="w-2.5 h-2.5 text-emerald-600" />
-                                    <span>{item.variacaoTexto}</span>
-                                  </span>
-                                ) : item.variacao > 0 ? (
-                                  <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
-                                    <TrendingUp className="w-2.5 h-2.5 text-amber-600" />
-                                    <span>{item.variacaoTexto}</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                                    0.0
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2.5 whitespace-nowrap">
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                                  {item.status}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2.5 text-[11px] text-slate-500 truncate max-w-[200px]" title={item.observacao}>
-                                {item.observacao || "--"}
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {measurementsOrdenadasDesc.length === 0 && biometriaHistorico.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="px-4 py-7 text-center">
+                                <p className="text-xs font-semibold text-slate-500">
+                                  Nenhuma medida corporal registrada ainda para este paciente.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setModalMetricaAtiva(null);
+                                    setIsMeasurementModalOpen(true);
+                                  }}
+                                  className="mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-bold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>Registrar primeira medida</span>
+                                </button>
                               </td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : measurementsOrdenadasDesc.length > 0 ? (
+                            measurementsOrdenadasDesc.map((m, idx) => {
+                              const fromApp = isMeasurementFromApp(m);
+                              const chips = getMeasurementChips(m);
+                              return (
+                                <tr key={m.id || idx} className="hover:bg-slate-50/80 transition-colors align-top">
+                                  <td className="px-3 py-2.5 font-medium text-slate-800 whitespace-nowrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                                      <span>{formatarDataBR(m.measuredAt)}</span>
+                                      {idx === 0 && (
+                                        <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                                          Mais recente
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] text-slate-400 pl-4.5 block">
+                                      {formatarHoraBR(m.measuredAt)}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2.5 whitespace-nowrap">
+                                    {fromApp ? (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+                                        <Smartphone className="w-2.5 h-2.5" />
+                                        <span>App Mobile</span>
+                                      </span>
+                                    ) : (
+                                      <div className="flex flex-col items-start gap-0.5">
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                          <Stethoscope className="w-2.5 h-2.5" />
+                                          <span>Consultório</span>
+                                        </span>
+                                        {m.createdByName && (
+                                          <span className="text-[10px] text-slate-400 pl-0.5">
+                                            {m.createdByName}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2.5">
+                                    <div className="flex flex-wrap gap-1">
+                                      {chips.length > 0 ? (
+                                        chips.map((chip) => (
+                                          <span
+                                            key={chip.key}
+                                            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200/80"
+                                          >
+                                            <span className="text-slate-500">{chip.shortLabel}:</span>
+                                            <strong className="font-mono text-slate-900">
+                                              {chip.formatted}
+                                            </strong>
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-[11px] text-slate-400">--</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td
+                                    className="px-3 py-2.5 text-[11px] text-slate-500 max-w-[180px] truncate"
+                                    title={m.notes || undefined}
+                                  >
+                                    {m.notes || "--"}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            biometriaHistorico.map((b, idx) => (
+                              <tr key={b.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="px-3 py-2.5 font-medium text-slate-800 whitespace-nowrap">
+                                  <div className="flex items-center gap-1.5">
+                                    <Calendar className="w-3 h-3 text-slate-400" />
+                                    <span>{formatarDataBR(b.measuredAt)}</span>
+                                    {idx === 0 && (
+                                      <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                                        Mais recente
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <Stethoscope className="w-2.5 h-2.5" />
+                                    <span>Consultório</span>
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <div className="flex flex-wrap gap-1">
+                                    {b.bodyFatPercentage !== null && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200/80">
+                                        <span className="text-slate-500">% Gordura:</span>
+                                        <strong className="font-mono text-slate-900">
+                                          {formatBrNumber(b.bodyFatPercentage)}%
+                                        </strong>
+                                      </span>
+                                    )}
+                                    {b.waistCircumferenceCm !== null && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200/80">
+                                        <span className="text-slate-500">Cintura:</span>
+                                        <strong className="font-mono text-slate-900">
+                                          {formatBrNumber(b.waistCircumferenceCm)} cm
+                                        </strong>
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 text-[11px] text-slate-400">
+                                  Registro biométrico legado
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                    <div className="bg-slate-100/90 px-3.5 py-2 border-b border-slate-200 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Tabela de Medições Detalhadas</span>
+                      </span>
+                      <span className="text-[10px] font-semibold text-slate-500">
+                        Datas exatas e variações
+                      </span>
+                    </div>
+                    <div className="max-h-52 overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold tracking-wider sticky top-0 border-b border-slate-200">
+                          <tr>
+                            <th className="px-3 py-2">Data</th>
+                            <th className="px-3 py-2 text-right">Valor Real</th>
+                            <th className="px-3 py-2 text-center">Variação (Δ)</th>
+                            <th className="px-3 py-2">Status</th>
+                            <th className="px-3 py-2">Observações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(!activeModalConfig.tableSeries || activeModalConfig.tableSeries.length === 0) ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-6 text-center text-xs font-semibold text-slate-400">
+                                Sem dados registrados no banco de dados para este indicador.
+                              </td>
+                            </tr>
+                          ) : (
+                            activeModalConfig.tableSeries.map((item, idx) => (
+                              <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="px-3 py-2.5 font-medium text-slate-800 flex items-center gap-1.5 whitespace-nowrap">
+                                  <Calendar className="w-3 h-3 text-slate-400" />
+                                  <span>{item.data}</span>
+                                  {idx === 0 && (
+                                    <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                                      Mais recente
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-black font-mono text-slate-900 whitespace-nowrap">
+                                  {item.valor} <span className="text-[10px] font-semibold text-slate-500">{item.unidade}</span>
+                                </td>
+                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                  {item.variacao === null ? (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                      Base
+                                    </span>
+                                  ) : item.variacao < 0 ? (
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      <TrendingDown className="w-2.5 h-2.5 text-emerald-600" />
+                                      <span>{item.variacaoTexto}</span>
+                                    </span>
+                                  ) : item.variacao > 0 ? (
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                      <TrendingUp className="w-2.5 h-2.5 text-amber-600" />
+                                      <span>{item.variacaoTexto}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                      0.0
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                                    {item.status}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-[11px] text-slate-500 truncate max-w-[200px]" title={item.observacao}>
+                                  {item.observacao || "--"}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* RODAPÉ DO MODAL */}
-              <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
                 <span className="text-[11px] text-slate-400">
                   Dica: Pressione <strong className="text-slate-600 font-mono">ESC</strong> para fechar
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setModalMetricaAtiva(null)}
-                  className="cl-btn-secondary px-4 py-1.5 text-xs"
-                >
-                  Fechar Detalhes
-                </button>
+                <div className="flex items-center gap-2">
+                  {activeModalConfig.tipo === "circunferencia" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModalMetricaAtiva(null);
+                        setIsMeasurementModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1 px-3.5 py-1.5 text-xs font-bold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Nova Medida</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setModalMetricaAtiva(null)}
+                    className="cl-btn-secondary px-4 py-1.5 text-xs"
+                  >
+                    Fechar Detalhes
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2940,10 +3657,10 @@ export function ProntuarioModal({
             onOpenChange={setIsMeasurementModalOpen}
             patientId={paciente.id}
             patientName={pacienteNome}
-            latestMeasurement={latestMeasurement}
-            totalRecords={measurementsHistorico.length}
+            latestMeasurement={consolidatedMeasurement}
+            totalRecords={measurementsOrdenadasDesc.length}
             onOpenHistory={
-              circunferenciaSeries.length > 0
+              measurementsOrdenadasDesc.length > 0
                 ? () => setModalMetricaAtiva("circunferencia")
                 : undefined
             }
@@ -2957,20 +3674,20 @@ export function ProntuarioModal({
               );
               setMeasurementsHistorico(next);
               setTermometroRefreshKey((k) => k + 1);
-              const top = next[0];
-              if (top) {
-                setPacienteApiData((prevApi) =>
-                  prevApi
-                    ? {
-                        ...prevApi,
-                        percentualGordura:
-                          top.bodyFatPercentage ?? prevApi.percentualGordura,
-                        circunferenciaAbdominal:
-                          top.abdomen ?? top.waist ?? prevApi.circunferenciaAbdominal,
-                      }
-                    : prevApi
-                );
-              }
+              setPacienteApiData((prevApi) => {
+                if (!prevApi) return prevApi;
+                const firstBodyFat =
+                  next.find((m) => m.bodyFatPercentage !== null)?.bodyFatPercentage ??
+                  prevApi.percentualGordura;
+                const firstWaist = next.find((m) => m.waist !== null)?.waist;
+                const firstAbdomen = next.find((m) => m.abdomen !== null)?.abdomen;
+                return {
+                  ...prevApi,
+                  percentualGordura: firstBodyFat,
+                  circunferenciaAbdominal:
+                    firstWaist ?? firstAbdomen ?? prevApi.circunferenciaAbdominal,
+                };
+              });
             }}
           />
         )}

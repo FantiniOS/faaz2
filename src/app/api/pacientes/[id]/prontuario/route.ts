@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { In } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import {
   BiometricMeasurementEntity,
@@ -10,6 +11,7 @@ import {
   PatientEntity,
   ProntuarioPacienteEntity,
   RegistroGlicemiaEntity,
+  UserEntity,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
@@ -134,9 +136,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           rightThigh: true,
           leftThigh: true,
           notes: true,
+          createdBy: true,
         },
         order: { measuredAt: "DESC", createdAt: "DESC" },
-        take: 30,
+        take: 50,
       }),
     ]);
 
@@ -147,10 +150,23 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Fallback legado de glicemia (GOAL_CHECKINS) só é consultado quando REGISTROS_GLICEMIA está vazio
-    const goalCheckins =
+    const clinicianIds = Array.from(
+      new Set(
+        measurements
+          .map((m) => m.createdBy)
+          .filter(
+            (uid): uid is string =>
+              typeof uid === "string" &&
+              uid !== "PATIENT_APP_SELF_REPORT" &&
+              /^[0-9a-f-]{32,36}$/i.test(uid),
+          ),
+      ),
+    );
+
+    // Fallback legado de glicemia (GOAL_CHECKINS) e nomes dos profissionais das medidas em paralelo
+    const [goalCheckins, clinicianUsers] = await Promise.all([
       registrosGlicemia.length === 0
-        ? await goalCheckinRepo.find({
+        ? goalCheckinRepo.find({
             where: {
               patientId: id,
               patientGoal: {
@@ -167,7 +183,29 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
             order: { referenceDate: "DESC", createdAt: "DESC" },
             take: 30,
           })
-        : [];
+        : Promise.resolve([]),
+      clinicianIds.length > 0
+        ? getRepository(UserEntity).then((userRepo) =>
+            userRepo.find({
+              where: { id: In(clinicianIds) },
+              select: { id: true, title: true, fullName: true },
+            }),
+          )
+        : Promise.resolve([]),
+    ]);
+
+    const clinicianNameMap = new Map<string, string>();
+    for (const u of clinicianUsers) {
+      const t = u.title?.trim() || "";
+      const fn = u.fullName?.trim() || "";
+      const displayName =
+        t && fn && !fn.toLowerCase().startsWith(t.toLowerCase())
+          ? `${t} ${fn}`
+          : fn || t;
+      if (displayName) {
+        clinicianNameMap.set(u.id, displayName);
+      }
+    }
     const dbDurMs = Math.round(performance.now() - dbStart);
 
     let idade: number | null = null;
@@ -200,7 +238,26 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           : null;
     const imc = prontuario?.imc != null ? Number(prontuario.imc) : null;
 
-    const latestMeasurement = measurements[0];
+    const findFirstNonNullMeasurement = (
+      key:
+        | "bodyFatPercentage"
+        | "waist"
+        | "abdomen"
+        | "hips"
+        | "rightArm"
+        | "leftArm"
+        | "rightThigh"
+        | "leftThigh",
+    ): number | null => {
+      for (const m of measurements) {
+        const val = m[key];
+        if (val !== null && val !== undefined && !Number.isNaN(Number(val))) {
+          return Number(val);
+        }
+      }
+      return null;
+    };
+
     const bioRecente = biometricMeasurements[0];
     const regGlicemiaRecente = registrosGlicemia[0];
     const glicemiaRecente =
@@ -209,17 +266,21 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         : goalCheckins[0]?.recordedValue != null
           ? Number(goalCheckins[0].recordedValue)
           : null;
+    const latestWaistVal = findFirstNonNullMeasurement("waist");
+    const latestAbdomenVal = findFirstNonNullMeasurement("abdomen");
+    const latestBodyFatVal = findFirstNonNullMeasurement("bodyFatPercentage");
+
     const circunferenciaAbdominal =
-      latestMeasurement?.waist != null
-        ? Number(latestMeasurement.waist)
-        : latestMeasurement?.abdomen != null
-          ? Number(latestMeasurement.abdomen)
+      latestWaistVal !== null
+        ? latestWaistVal
+        : latestAbdomenVal !== null
+          ? latestAbdomenVal
           : bioRecente?.waistCircumferenceCm != null
             ? Number(bioRecente.waistCircumferenceCm)
             : null;
     const percentualGordura =
-      latestMeasurement?.bodyFatPercentage != null
-        ? Number(latestMeasurement.bodyFatPercentage)
+      latestBodyFatVal !== null
+        ? latestBodyFatVal
         : bioRecente?.bodyFatPercentage != null
           ? Number(bioRecente.bodyFatPercentage)
           : null;
@@ -259,16 +320,22 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const measurementsHistorico = measurements.map((m) => ({
       id: m.id,
       patientId: m.patientId,
-      measuredAt: new Date(m.measuredAt).toISOString(),
-      bodyFatPercentage: m.bodyFatPercentage ?? null,
-      waist: m.waist ?? null,
-      abdomen: m.abdomen ?? null,
-      hips: m.hips ?? null,
-      rightArm: m.rightArm ?? null,
-      leftArm: m.leftArm ?? null,
-      rightThigh: m.rightThigh ?? null,
-      leftThigh: m.leftThigh ?? null,
+      measuredAt: toIsoUtc(m.measuredAt) ?? new Date(m.measuredAt).toISOString(),
+      bodyFatPercentage:
+        m.bodyFatPercentage != null ? Number(m.bodyFatPercentage) : null,
+      waist: m.waist != null ? Number(m.waist) : null,
+      abdomen: m.abdomen != null ? Number(m.abdomen) : null,
+      hips: m.hips != null ? Number(m.hips) : null,
+      rightArm: m.rightArm != null ? Number(m.rightArm) : null,
+      leftArm: m.leftArm != null ? Number(m.leftArm) : null,
+      rightThigh: m.rightThigh != null ? Number(m.rightThigh) : null,
+      leftThigh: m.leftThigh != null ? Number(m.leftThigh) : null,
       notes: m.notes ?? null,
+      createdBy: m.createdBy ?? null,
+      createdByName:
+        m.createdBy && m.createdBy !== "PATIENT_APP_SELF_REPORT"
+          ? clinicianNameMap.get(m.createdBy) ?? null
+          : null,
     }));
 
     const glicemiaHistorico =

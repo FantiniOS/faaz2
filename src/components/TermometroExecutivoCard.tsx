@@ -419,68 +419,128 @@ export function TermometroExecutivoCard({
             </div>
 
             {dados.medidas.temDados ? (
-              dados.medidas.temComparativo ? (
-                <>
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    {dados.medidas.cintura.variacaoCm !== null ? (
-                      <span
-                        className={`text-sm font-black font-mono leading-tight ${
-                          dados.medidas.cintura.variacaoCm < 0
-                            ? "text-emerald-700"
-                            : dados.medidas.cintura.variacaoCm > 0
-                            ? "text-amber-700"
-                            : "text-slate-700"
-                        }`}
+              (() => {
+                const cintAtual = dados.medidas.cintura.atualCm;
+                const cintDelta = dados.medidas.cintura.variacaoCm;
+                const hasRealCintDelta =
+                  cintDelta !== null && Math.abs(cintDelta) >= 0.05;
+                const isCintStable =
+                  cintDelta !== null && Math.abs(cintDelta) < 0.05;
+
+                const abdAtual = dados.medidas.abdomen.atualCm;
+                const abdDelta = dados.medidas.abdomen.variacaoCm;
+                const hasRealAbdDelta =
+                  abdDelta !== null && Math.abs(abdDelta) >= 0.05;
+                const isAbdStable =
+                  abdDelta !== null && Math.abs(abdDelta) < 0.05;
+
+                if (hasRealCintDelta || hasRealAbdDelta) {
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        {hasRealCintDelta && cintDelta !== null ? (
+                          <span
+                            className={`text-sm font-black font-mono leading-tight ${
+                              cintDelta < 0
+                                ? "text-emerald-700"
+                                : "text-amber-700"
+                            }`}
+                          >
+                            Cint {formatDeltaCm(cintDelta)}
+                          </span>
+                        ) : null}
+                        {hasRealAbdDelta && abdDelta !== null ? (
+                          <span
+                            className={`text-sm font-black font-mono leading-tight ${
+                              abdDelta < 0
+                                ? "text-emerald-700"
+                                : "text-amber-700"
+                            }`}
+                          >
+                            Abd {formatDeltaCm(abdDelta)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-[11px] font-medium text-slate-500 truncate">
+                        {[
+                          cintAtual !== null
+                            ? `Cint ${formatCm(cintAtual)}${
+                                isCintStable ? " (estável)" : ""
+                              }`
+                            : null,
+                          abdAtual !== null
+                            ? `Abd ${formatCm(abdAtual)}${
+                                isAbdStable ? " (estável)" : ""
+                              }`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    </>
+                  );
+                }
+
+                if (cintAtual !== null) {
+                  const subtexto = isCintStable
+                    ? abdAtual !== null
+                      ? `Cintura · Abdômen ${formatCm(abdAtual)}`
+                      : "Cintura estável vs aferição anterior"
+                    : abdAtual !== null
+                      ? `Abdômen ${formatCm(abdAtual)}`
+                      : "Última aferição registrada";
+
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-base font-black font-mono text-slate-900 leading-tight">
+                          {formatCm(cintAtual)}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                          {isCintStable ? "Estável" : "Cintura"}
+                        </span>
+                      </div>
+                      <p
+                        className="text-[11px] font-medium text-slate-500 truncate"
+                        title={subtexto}
                       >
-                        Cint {formatDeltaCm(dados.medidas.cintura.variacaoCm)}
-                      </span>
-                    ) : null}
-                    {dados.medidas.abdomen.variacaoCm !== null ? (
-                      <span
-                        className={`text-sm font-black font-mono leading-tight ${
-                          dados.medidas.abdomen.variacaoCm < 0
-                            ? "text-emerald-700"
-                            : dados.medidas.abdomen.variacaoCm > 0
-                            ? "text-amber-700"
-                            : "text-slate-700"
-                        }`}
+                        {subtexto}
+                      </p>
+                    </>
+                  );
+                }
+
+                if (abdAtual !== null) {
+                  const subtexto = isAbdStable
+                    ? "Abdômen estável vs aferição anterior"
+                    : "Última aferição registrada";
+
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-base font-black font-mono text-slate-900 leading-tight">
+                          {formatCm(abdAtual)}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                          {isAbdStable ? "Estável" : "Abdômen"}
+                        </span>
+                      </div>
+                      <p
+                        className="text-[11px] font-medium text-slate-500 truncate"
+                        title={subtexto}
                       >
-                        Abd {formatDeltaCm(dados.medidas.abdomen.variacaoCm)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="text-[11px] font-medium text-slate-500 truncate">
-                    {[
-                      dados.medidas.cintura.atualCm !== null
-                        ? `Cint ${formatCm(dados.medidas.cintura.atualCm)}`
-                        : null,
-                      dados.medidas.abdomen.atualCm !== null
-                        ? `Abd ${formatCm(dados.medidas.abdomen.atualCm)}`
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
+                        {subtexto}
+                      </p>
+                    </>
+                  );
+                }
+
+                return (
+                  <p className="text-[11px] font-medium text-slate-400 py-2">
+                    Aferição registrada
                   </p>
-                </>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    {dados.medidas.cintura.atualCm !== null ? (
-                      <span className="text-sm font-black font-mono text-slate-900 leading-tight">
-                        Cint {formatCm(dados.medidas.cintura.atualCm)}
-                      </span>
-                    ) : null}
-                    {dados.medidas.abdomen.atualCm !== null ? (
-                      <span className="text-sm font-black font-mono text-slate-900 leading-tight">
-                        Abd {formatCm(dados.medidas.abdomen.atualCm)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="text-[11px] font-medium text-slate-400 truncate">
-                    Última aferição registrada
-                  </p>
-                </>
-              )
+                );
+              })()
             ) : (
               <p className="text-[11px] font-medium text-slate-400 py-2">
                 Sem registros no período

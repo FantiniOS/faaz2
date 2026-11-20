@@ -24,7 +24,7 @@ import {
   saveAnthropometricMeasurement,
   MeasurementDTO,
 } from "@/actions/measurement-actions";
-import { formatarDataBR } from "@/lib/date-br";
+import { formatarDataBR, getDataDiaBR } from "@/lib/date-br";
 
 export interface MeasurementModalProps {
   open: boolean;
@@ -51,9 +51,11 @@ interface FormFieldsState {
 }
 
 function getTodayIsoDate(): string {
-  const now = new Date();
-  const offsetMs = now.getTimezoneOffset() * 60000;
-  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
+  return getDataDiaBR();
+}
+
+function formatBrDecimal(val: number): string {
+  return val.toFixed(1).replace(".", ",");
 }
 
 const EMPTY_FORM = (): FormFieldsState => ({
@@ -72,13 +74,15 @@ const EMPTY_FORM = (): FormFieldsState => ({
 const CIRCUMFERENCE_FIELDS: Array<{
   key: keyof Omit<FormFieldsState, "measuredAt" | "notes">;
   label: string;
+  shortLabel: string;
   unit: string;
   placeholder: string;
   highlight?: boolean;
 }> = [
   {
     key: "bodyFatPercentage",
-    label: "% de Gordura Corporal",
+    label: "% de Gordura (Bioimpedância / Pregas · Opcional)",
+    shortLabel: "Gordura",
     unit: "%",
     placeholder: "Ex: 24.5",
     highlight: true,
@@ -86,6 +90,7 @@ const CIRCUMFERENCE_FIELDS: Array<{
   {
     key: "waist",
     label: "Cintura",
+    shortLabel: "Cintura",
     unit: "cm",
     placeholder: "Ex: 78.0",
     highlight: true,
@@ -93,6 +98,7 @@ const CIRCUMFERENCE_FIELDS: Array<{
   {
     key: "abdomen",
     label: "Abdômen",
+    shortLabel: "Abdômen",
     unit: "cm",
     placeholder: "Ex: 85.0",
     highlight: true,
@@ -100,30 +106,35 @@ const CIRCUMFERENCE_FIELDS: Array<{
   {
     key: "hips",
     label: "Quadril",
+    shortLabel: "Quadril",
     unit: "cm",
     placeholder: "Ex: 101.0",
   },
   {
     key: "rightArm",
     label: "Braço Direito",
+    shortLabel: "Braço Dir.",
     unit: "cm",
     placeholder: "Ex: 29.5",
   },
   {
     key: "leftArm",
     label: "Braço Esquerdo",
+    shortLabel: "Braço Esq.",
     unit: "cm",
     placeholder: "Ex: 29.0",
   },
   {
     key: "rightThigh",
     label: "Coxa Direita",
+    shortLabel: "Coxa Dir.",
     unit: "cm",
     placeholder: "Ex: 56.0",
   },
   {
     key: "leftThigh",
     label: "Coxa Esquerda",
+    shortLabel: "Coxa Esq.",
     unit: "cm",
     placeholder: "Ex: 55.8",
   },
@@ -209,7 +220,7 @@ export function MeasurementModal({
                   Antropometria & Composição Corporal
                 </DialogTitle>
                 <DialogDescription>
-                  Paciente: <strong className="text-slate-700">{patientName}</strong> • Circunferências em centímetros (cm) e % de Gordura
+                  Paciente: <strong className="text-slate-700">{patientName}</strong> • Circunferências em centímetros (cm) e composição corporal
                 </DialogDescription>
               </div>
             </div>
@@ -218,47 +229,63 @@ export function MeasurementModal({
 
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1">
           <div className="p-6 space-y-5">
-            {/* FAIXA DE CONTEXTO DA ÚLTIMA AVALIAÇÃO */}
-            {latestMeasurement && (
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-sky-50/70 border border-sky-200/80 text-xs">
-                <div className="text-sky-950">
-                  <span className="font-bold">Última aferição ({formatarDataBR(latestMeasurement.measuredAt)}): </span>
-                  <span>
-                    Gordura:{" "}
-                    <strong>
-                      {latestMeasurement.bodyFatPercentage !== null
-                        ? `${latestMeasurement.bodyFatPercentage.toFixed(1)}%`
-                        : "--"}
-                    </strong>{" "}
-                    • Cintura:{" "}
-                    <strong>
-                      {latestMeasurement.waist !== null
-                        ? `${latestMeasurement.waist.toFixed(1)} cm`
-                        : "--"}
-                    </strong>{" "}
-                    • Abdômen:{" "}
-                    <strong>
-                      {latestMeasurement.abdomen !== null
-                        ? `${latestMeasurement.abdomen.toFixed(1)} cm`
-                        : "--"}
-                    </strong>
-                  </span>
+            {/* FAIXA DE CONTEXTO DA ÚLTIMA AVALIAÇÃO (CONSOLIDADA COM ÚLTIMO VALOR NÃO-NULO DE CADA CAMPO) */}
+            {latestMeasurement && (() => {
+              const summaryItems = CIRCUMFERENCE_FIELDS.map((field) => {
+                const raw = latestMeasurement[field.key];
+                if (raw === null || raw === undefined || Number.isNaN(Number(raw))) {
+                  return null;
+                }
+                const formatted =
+                  field.unit === "%"
+                    ? `${formatBrDecimal(Number(raw))}%`
+                    : `${formatBrDecimal(Number(raw))} cm`;
+                return {
+                  key: field.key,
+                  label: field.shortLabel,
+                  formatted,
+                };
+              }).filter((item): item is { key: keyof Omit<FormFieldsState, "measuredAt" | "notes">; label: string; formatted: string } => item !== null);
+
+              return (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-sky-50/70 border border-sky-200/80 text-xs">
+                  <div className="text-sky-950 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-bold">
+                      Última aferição ({formatarDataBR(latestMeasurement.measuredAt)}):
+                    </span>
+                    {summaryItems.length > 0 ? (
+                      summaryItems.slice(0, 4).map((item, idx) => (
+                        <span key={item.key} className="inline-flex items-center gap-1">
+                          {idx > 0 && <span className="text-sky-300">•</span>}
+                          <span>{item.label}:</span>
+                          <strong className="font-mono">{item.formatted}</strong>
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sky-700">Medidas registradas</span>
+                    )}
+                    {summaryItems.length > 4 && (
+                      <span className="text-[10px] font-semibold text-sky-700">
+                        +{summaryItems.length - 4} medida(s)
+                      </span>
+                    )}
+                  </div>
+                  {onOpenHistory && totalRecords > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenChange(false);
+                        onOpenHistory();
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-700 hover:text-sky-900 shrink-0 cursor-pointer"
+                    >
+                      <History className="w-3.5 h-3.5" />
+                      <span>Ver histórico ({totalRecords})</span>
+                    </button>
+                  )}
                 </div>
-                {onOpenHistory && totalRecords > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenChange(false);
-                      onOpenHistory();
-                    }}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-700 hover:text-sky-900 shrink-0 cursor-pointer"
-                  >
-                    <History className="w-3.5 h-3.5" />
-                    <span>Ver histórico ({totalRecords})</span>
-                  </button>
-                )}
-              </div>
-            )}
+              );
+            })()}
 
             {/* DATA DA AVALIAÇÃO */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 items-end">
@@ -293,16 +320,17 @@ export function MeasurementModal({
                         : "bg-white border-slate-200/80"
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
                       <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
                         {field.key === "bodyFatPercentage" && (
-                          <Percent className="w-3.5 h-3.5 text-sky-600" />
+                          <Percent className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                         )}
                         <span>{field.label}</span>
                       </label>
                       {previousValue !== undefined && previousValue !== null && (
-                        <span className="text-[10px] font-medium text-slate-400">
-                          Anterior: {Number(previousValue).toFixed(1)} {field.unit}
+                        <span className="text-[10px] font-medium text-slate-400 shrink-0 font-mono">
+                          Anterior: {formatBrDecimal(Number(previousValue))}
+                          {field.unit === "%" ? "%" : " cm"}
                         </span>
                       )}
                     </div>
