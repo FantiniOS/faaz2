@@ -64,6 +64,14 @@ import {
   getItemEfetivo,
   selecionarProximaRefeicaoHome,
 } from "../utils/dietaHelpers";
+import {
+  formatarDataCurtaBR,
+  getDataBR,
+  getHojeBR,
+  getHoraBR,
+  getHoraMinutosBR,
+  getSaudacaoBR,
+} from "../utils/dateBr";
 
 export interface HomeScreenProps {
   completedCheckins?: string[];
@@ -75,10 +83,7 @@ export interface HomeScreenProps {
 }
 
 function getSaudacao(): string {
-  const h = new Date().getHours();
-  if (h >= 5 && h < 12) return "Bom dia";
-  if (h >= 12 && h < 18) return "Boa tarde";
-  return "Boa noite";
+  return getSaudacaoBR();
 }
 
 function formatPrimeiroNome(nomeCompleto?: string | null): string {
@@ -88,10 +93,7 @@ function formatPrimeiroNome(nomeCompleto?: string | null): string {
 }
 
 function formatHoraLocal(iso?: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return getHoraBR(iso);
 }
 
 function formatStatusRefeicaoHome(status?: CheckinRefeicaoStatus | null): {
@@ -230,10 +232,7 @@ function consolidarMedidasHome(
 
   const newestDate = new Date(ordenadas[0].measuredAt);
   const dataCurta = !Number.isNaN(newestDate.getTime())
-    ? newestDate.toLocaleDateString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-      })
+    ? formatarDataCurtaBR(newestDate)
     : null;
 
   const temAlgumaCircunferencia =
@@ -334,7 +333,7 @@ function formatUILabel(val: number): string {
 }
 
 function sugerirMomentoPorHoraAtual(slotsAtivos: SlotMapaGlicemico[]): MomentoClinicoGlicemia {
-  const h = new Date().getHours();
+  const { hour: h } = getHoraMinutosBR();
   let candidato: SlotMapaGlicemico = "JEJUM";
   if (h < 9) candidato = "JEJUM";
   else if (h < 11) candidato = "POS_CAFE";
@@ -444,7 +443,7 @@ export function HomeScreen({
   const carregarCockpit = useCallback(async () => {
     if (!pacienteId) return;
 
-    const hojeStr = new Date().toDateString();
+    const hojeBR = getHojeBR();
 
     const [
       metasRes,
@@ -520,7 +519,7 @@ export function HomeScreen({
       setProtocoloGlicemico(prot);
 
       if (prot?.ativo) {
-        const hojeIso = mapaGlicRes.value.hojeDataDia;
+        const hojeIso = mapaGlicRes.value.hojeDataDia || hojeBR;
         const linhaHoje =
           (mapaGlicRes.value.linhas || []).find((l) => l.dataDia === hojeIso) ||
           null;
@@ -582,7 +581,7 @@ export function HomeScreen({
         )[0];
         setMediuHoje(
           Boolean(maisRecente) &&
-            new Date(maisRecente.measuredAt).toDateString() === hojeStr
+            getDataBR(maisRecente.measuredAt) === hojeBR
         );
       } else {
         setMediuHoje(false);

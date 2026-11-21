@@ -6,6 +6,7 @@ import {
   SubstituicaoPrescritaItem,
   UnidadeMedidaDieta,
 } from "../services/api";
+import { getHoraMinutosBR } from "./dateBr";
 
 export interface TrocaSelecionadaItem {
   itemRefeicaoId: string;
@@ -192,7 +193,7 @@ export function selecionarRefeicaoMaisProximaAgora(
 ): RefeicaoApi | null {
   if (!refeicoes.length) return null;
   const ordenadas = ordenarRefeicoesPorHorario(refeicoes);
-  const minAgora = agora.getHours() * 60 + agora.getMinutes();
+  const minAgora = getHoraMinutosBR(agora).totalMinutes;
 
   const comHorario = ordenadas.filter((r) => parseHorarioMinutos(r.horario) < 24 * 60);
   if (comHorario.length === 0) {
@@ -230,7 +231,7 @@ export function selecionarProximaRefeicaoHome(
 ): RefeicaoApi | null {
   if (!refeicoes.length) return null;
   const ordenadas = ordenarRefeicoesPorHorario(refeicoes);
-  const minAgora = agora.getHours() * 60 + agora.getMinutes();
+  const minAgora = getHoraMinutosBR(agora).totalMinutes;
 
   const proximaPendente = ordenadas.find((r) => {
     const status = checkinsPorRefeicao[r.id]?.status;

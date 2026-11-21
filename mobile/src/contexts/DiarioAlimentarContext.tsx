@@ -24,6 +24,7 @@ import {
   montarTrocasPayloadRefeicao,
   ordenarRefeicoesPorHorario,
 } from "../utils/dietaHelpers";
+import { getHojeBR } from "../utils/dateBr";
 
 export interface ItemAlimentoDiario {
   id: string;
@@ -131,14 +132,6 @@ const DiarioAlimentarContext = createContext<
   DiarioAlimentarContextData | undefined
 >(undefined);
 
-function getHojeIsoLocal(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
 export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
   const { paciente } = usePatientAuth();
   const pacienteId = paciente?.id || "";
@@ -192,9 +185,10 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
         }
         setErroDieta(null);
 
+        const hojeBR = getHojeBR();
         const [dietaRes, checkinsRes] = await Promise.allSettled([
           api.pacientes.getDietaEstruturada(pacienteId),
-          api.checkins.getRefeicoes(pacienteId),
+          api.checkins.getRefeicoes(pacienteId, hojeBR),
         ]);
 
         if (dietaRes.status === "fulfilled" && dietaRes.value) {
@@ -233,7 +227,7 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
           }
           setCheckinsPorRefeicao(mapaCheckins);
           setDataReferencia(
-            checkinsRes.value.dataReferencia || getHojeIsoLocal()
+            checkinsRes.value.dataReferencia || hojeBR
           );
 
           const trocasSalvas = extrairTrocasDosCheckins(lista);
@@ -316,7 +310,10 @@ export function DiarioAlimentarProvider({ children }: { children: ReactNode }) {
         ? []
         : montarTrocasPayloadRefeicao(refAlvo, trocasMapaAtivo);
       const opcaoEscolhida = variacaoAtiva?.nome || null;
-      const diaHoje = dataReferencia || getHojeIsoLocal();
+      const diaHoje = getHojeBR();
+      if (dataReferencia !== diaHoje) {
+        setDataReferencia(diaHoje);
+      }
       const agoraIso = new Date().toISOString();
 
       const anterior = checkinsPorRefeicao[refeicaoId];

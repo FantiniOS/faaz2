@@ -40,6 +40,7 @@ import {
   getConfigObjetivoClinico,
   avaliarVariacaoPeso,
 } from "../utils/objetivoClinico";
+import { formatarDataBR, formatarDataCurtaHoraBR } from "../utils/dateBr";
 
 export interface MetasScreenProps {
   pacienteId?: string;
@@ -90,11 +91,7 @@ function formatKg(val: number): string {
 }
 
 function formatDataHoraLocal(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "--";
-  const data = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-  const hora = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-  return `${data} • ${hora}`;
+  return formatarDataCurtaHoraBR(iso);
 }
 
 function formatCategoriaBristol(cat?: string, tipo?: number): {
@@ -630,9 +627,9 @@ export function MetasScreen({
                   </Text>
                   <Text style={styles.cardSubtitle}>
                     {ultimaMedida
-                      ? `Última aferição em ${new Date(
+                      ? `Última aferição em ${formatarDataBR(
                           ultimaMedida.measuredAt
-                        ).toLocaleDateString("pt-BR")}`
+                        )}`
                       : "Nenhuma aferição registrada"}
                   </Text>
                 </View>

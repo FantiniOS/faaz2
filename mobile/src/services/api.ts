@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { getHojeBR } from "../utils/dateBr";
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -1005,20 +1006,21 @@ export const api = {
       data?: string,
       options?: { historico?: boolean; dias?: number }
     ) {
+      const dataDiaBR = data || getHojeBR();
       return api.get<CheckinsRefeicoesResponse>("/checkins/refeicoes", {
         params: {
           pacienteId,
-          ...(data ? { data } : {}),
+          data: dataDiaBR,
           ...(options?.historico ? { historico: true } : {}),
           ...(options?.dias ? { dias: options.dias } : {}),
         },
       });
     },
     registrarRefeicao(payload: RegistrarCheckinRefeicaoPayload) {
-      return api.post<RegistrarCheckinRefeicaoResponse>(
-        "/checkins/refeicoes",
-        payload
-      );
+      return api.post<RegistrarCheckinRefeicaoResponse>("/checkins/refeicoes", {
+        ...payload,
+        dataDia: payload.dataDia || getHojeBR(),
+      });
     },
   },
 };

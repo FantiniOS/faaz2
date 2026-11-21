@@ -55,6 +55,15 @@ import {
   type ProximaConsultaItem,
 } from "../services/api";
 import { getConfigObjetivoClinico } from "../utils/objetivoClinico";
+import {
+  diffDiasBR,
+  formatarDataBR,
+  formatarDataCurtaBR,
+  formatarDataExtensoBR,
+  getDataBR,
+  getHojeBR,
+  getHoraBR,
+} from "../utils/dateBr";
 
 export interface ProfileScreenProps {
   onBack?: () => void;
@@ -69,34 +78,9 @@ type ProximaConsultaData = ProximaConsultaItem;
 const WHATSAPP_URL_OFICIAL =
   "https://wa.me/5531984400076?text=Olá!%20Sou%20paciente%20da%20Clínica%20FAAZ%20e%20gostaria%20de%20atendimento.";
 
-const MESES_PT = [
-  "Janeiro",
-  "Fevereiro",
-  "Março",
-  "Abril",
-  "Maio",
-  "Junho",
-  "Julho",
-  "Agosto",
-  "Setembro",
-  "Outubro",
-  "Novembro",
-  "Dezembro",
-];
-
-const DIAS_SEMANA_PT = [
-  "Domingo",
-  "Segunda-feira",
-  "Terça-feira",
-  "Quarta-feira",
-  "Quinta-feira",
-  "Sexta-feira",
-  "Sábado",
-];
-
 /**
- * Formata data, horário e contagem regressiva EXCLUSIVAMENTE a partir do ISO UTC
- * no fuso local do dispositivo (evita divergência UTC do servidor).
+ * Formata data, horário e contagem regressiva EXCLUSIVAMENTE em America/Sao_Paulo
+ * a partir do ISO UTC (imune ao fuso horário configurado no aparelho/emulador).
  */
 function formatConsultaLocal(isoStr: string): {
   dataExtenso: string;
@@ -114,25 +98,10 @@ function formatConsultaLocal(isoStr: string): {
     };
   }
 
-  const dia = d.getDate();
-  const mes = MESES_PT[d.getMonth()] || "";
-  const diaSemana = DIAS_SEMANA_PT[d.getDay()] || "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-
-  const dataExtenso = `${dia} de ${mes}, ${diaSemana}`;
-  const dataCurtaDdMm = `${pad(dia)}/${pad(d.getMonth() + 1)}`;
-  const horarioLocal = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-
-  const agora = new Date();
-  const hojeZero = new Date(
-    agora.getFullYear(),
-    agora.getMonth(),
-    agora.getDate()
-  );
-  const consultaZero = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diffDias = Math.round(
-    (consultaZero.getTime() - hojeZero.getTime()) / (1000 * 60 * 60 * 24)
-  );
+  const dataExtenso = formatarDataExtensoBR(d);
+  const dataCurtaDdMm = formatarDataCurtaBR(d);
+  const horarioLocal = getHoraBR(d);
+  const diffDias = diffDiasBR(getHojeBR(), getDataBR(d));
 
   let contagemRegressiva = "";
   if (diffDias <= 0) {
@@ -167,11 +136,7 @@ function formatNomeTitleCase(nome?: string | null): string {
 }
 
 function formatDataIsoBr(iso?: string | null): string {
-  if (!iso) return "--/--/----";
-  const clean = iso.trim().slice(0, 10);
-  const parts = clean.split("-");
-  if (parts.length !== 3) return iso;
-  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return formatarDataBR(iso);
 }
 
 function formatTipoConsultaPacote(tipo?: string | null): string {

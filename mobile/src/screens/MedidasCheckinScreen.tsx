@@ -16,6 +16,7 @@ import { Ruler, Send, CheckCircle2, AlertTriangle } from "lucide-react-native";
 import { StandardHeader } from "../components/StandardHeader";
 import { usePatientAuth } from "../contexts/PatientAuthContext";
 import { api, MeasurementItem, RegistrarMedidaPayload } from "../services/api";
+import { formatarDataBR } from "../utils/dateBr";
 
 export interface MedidasCheckinScreenProps {
   pacienteId?: string;
@@ -303,8 +304,7 @@ export function MedidasCheckinScreen({
           <View style={styles.lastRecordPill}>
             <CheckCircle2 size={14} color="#0f766e" />
             <Text style={styles.lastRecordText}>
-              Última aferição em{" "}
-              {new Date(ultimaMedicao.measuredAt).toLocaleDateString("pt-BR")}
+              Última aferição em {formatarDataBR(ultimaMedicao.measuredAt)}
             </Text>
           </View>
         ) : null}
