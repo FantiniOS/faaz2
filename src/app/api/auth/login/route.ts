@@ -1,217 +1,100 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { IsNull, Raw } from "typeorm";
-import { getRepository } from "@/lib/db/data-source";
-import {
-  OrganizationEntity,
-  UserEntity,
-  type UserRole,
-} from "@/lib/db/entities";
+import { IsNull, Not, Raw } from "typeorm";
+import { withRepositoryRetry } from "@/lib/db/data-source";
+import { UserEntity } from "@/lib/db/entities";
 import { criarSessao } from "@/lib/auth-session";
 import type { Cargo } from "@/lib/auth-rbac";
 
-// Perfis pré-configurados de Homologação da Clínica FAAZ (Suporte a Username e E-mail)
-const HOMOLOGACAO_USERS: Record<
-  string,
-  {
-    nome: string;
-    cargo: Cargo;
-    role: UserRole;
-    specialty: string;
-    username: string;
-    podeAcessarProntuario: boolean;
-  }
-> = {
-  "carlos.fantini": {
-    nome: "Dr. Carlos Fantini",
-    cargo: "DONO_CLINICA",
-    role: "CLINIC_ADMIN",
-    specialty: "Endocrinologia & Nutrologia",
-    username: "carlos.fantini",
-    podeAcessarProntuario: true,
-  },
-  "carlos.fantini@clinicafaaz.com.br": {
-    nome: "Dr. Carlos Fantini",
-    cargo: "DONO_CLINICA",
-    role: "CLINIC_ADMIN",
-    specialty: "Endocrinologia & Nutrologia",
-    username: "carlos.fantini",
-    podeAcessarProntuario: true,
-  },
-  "rodrigo.mendes": {
-    nome: "Dr. Rodrigo Mendes",
-    cargo: "MEDICO",
-    role: "DOCTOR",
-    specialty: "Nutrologia & Medicina Funcional",
-    username: "rodrigo.mendes",
-    podeAcessarProntuario: true,
-  },
-  "medico.parceiro@clinicafaaz.com.br": {
-    nome: "Dr. Rodrigo Mendes",
-    cargo: "MEDICO",
-    role: "DOCTOR",
-    specialty: "Nutrologia & Medicina Funcional",
-    username: "rodrigo.mendes",
-    podeAcessarProntuario: true,
-  },
-  "patricia.santos": {
-    nome: "Patrícia Santos",
-    cargo: "SECRETARIA",
-    role: "RECEPTIONIST",
-    specialty: "Recepção & Agendamentos",
-    username: "patricia.santos",
-    podeAcessarProntuario: false,
-  },
-  secretaria: {
-    nome: "Patrícia Santos",
-    cargo: "SECRETARIA",
-    role: "RECEPTIONIST",
-    specialty: "Recepção & Agendamentos",
-    username: "patricia.santos",
-    podeAcessarProntuario: false,
-  },
-  "secretaria@clinicafaaz.com.br": {
-    nome: "Patrícia Santos",
-    cargo: "SECRETARIA",
-    role: "RECEPTIONIST",
-    specialty: "Recepção & Agendamentos",
-    username: "patricia.santos",
-    podeAcessarProntuario: false,
-  },
-  "eduardo.lima": {
-    nome: "Eduardo Lima",
-    cargo: "ADMINISTRADOR",
-    role: "ADMIN",
-    specialty: "Gestão Financeira & RH",
-    username: "eduardo.lima",
-    podeAcessarProntuario: false,
-  },
-  admin: {
-    nome: "Eduardo Lima",
-    cargo: "ADMINISTRADOR",
-    role: "ADMIN",
-    specialty: "Gestão Financeira & RH",
-    username: "eduardo.lima",
-    podeAcessarProntuario: false,
-  },
-  "admin@clinicafaaz.com.br": {
-    nome: "Eduardo Lima",
-    cargo: "ADMINISTRADOR",
-    role: "ADMIN",
-    specialty: "Gestão Financeira & RH",
-    username: "eduardo.lima",
-    podeAcessarProntuario: false,
-  },
-};
+const GENERIC_AUTH_ERROR = "Usuário ou senha inválidos.";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { username, email, senha, autoCargo } = body;
-
-    const identifier = (username || email || "").toLowerCase().trim();
-    const userRepo = await getRepository(UserEntity);
-    const orgRepo = await getRepository(OrganizationEntity);
-
-    // 1. Busca usuário ativo no banco checando USERNAME (prioritário) ou E-mail (fallback)
-    let user = identifier
-      ? await userRepo.findOne({
-          where: [
-            {
-              username: Raw((alias) => `LOWER(${alias}) = :id`, { id: identifier }),
-              deletedAt: IsNull(),
-              accountStatus: "ACTIVE",
-            },
-            {
-              email: Raw((alias) => `LOWER(${alias}) = :id`, { id: identifier }),
-              deletedAt: IsNull(),
-              accountStatus: "ACTIVE",
-            },
-          ],
-          relations: { organization: true },
-        })
-      : null;
-
-    // 2. Se o usuário for de homologação e ainda não existir no banco, auto-provisiona na hora
-    if (!user && (HOMOLOGACAO_USERS[identifier] || autoCargo)) {
-      const config =
-        HOMOLOGACAO_USERS[identifier] ||
-        Object.values(HOMOLOGACAO_USERS).find((h) => h.cargo === autoCargo);
-
-      if (config) {
-        let org = await orgRepo.findOne({ where: { slug: "clinica-faaz" } });
-        if (!org) {
-          org = await orgRepo.save(
-            orgRepo.create({
-              slug: "clinica-faaz",
-              tradeName: "Clínica FAAZ",
-              legalName: "Clínica FAAZ Medicina & Saúde Integrativa Ltda",
-              taxId: "12345678000190",
-              primaryColorHex: "#0f766e",
-              enabledModules: {},
-              rolePermissions: {},
-              status: "ACTIVE",
-            }),
-          );
-        }
-
-        const existingUser = await userRepo.findOne({
-          where: { username: config.username },
-        });
-
-        if (existingUser) {
-          existingUser.cargo = config.cargo;
-          existingUser.role = config.role;
-          existingUser.podeAcessarProntuario = config.podeAcessarProntuario;
-          existingUser.accountStatus = "ACTIVE";
-          await userRepo.save(existingUser);
-        } else {
-          const passwordHash = await bcrypt.hash("faaz123", 10);
-          await userRepo.save(
-            userRepo.create({
-              organizationId: org.id,
-              fullName: config.nome,
-              username: config.username,
-              email: `${config.username}@clinicafaaz.com.br`,
-              passwordHash,
-              role: config.role,
-              cargo: config.cargo,
-              podeAcessarProntuario: config.podeAcessarProntuario,
-              isClinical: config.podeAcessarProntuario,
-              specialty: config.specialty,
-              mfaEnabled: false,
-              accountStatus: "ACTIVE",
-              mustChangePassword: false,
-            }),
-          );
-        }
-
-        user = await userRepo.findOne({
-          where: { username: config.username },
-          relations: { organization: true },
-        });
-      }
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return NextResponse.json(
+        { error: "Informe usuário e senha para acessar o painel." },
+        { status: 400 },
+      );
     }
 
-    if (!user) {
+    const rawIdentifier =
+      typeof body.username === "string" && body.username.trim()
+        ? body.username
+        : typeof body.email === "string"
+          ? body.email
+          : "";
+    const identifier = rawIdentifier.toLowerCase().trim();
+    const senha = typeof body.senha === "string" ? body.senha : "";
+
+    if (!identifier || !senha) {
       return NextResponse.json(
-        { error: "Credenciais inválidas. Verifique o usuário e a senha." },
+        { error: "Informe usuário e senha para acessar o painel." },
+        { status: 400 },
+      );
+    }
+
+    // Busca estritamente usuários ativos (não excluídos, não bloqueados/revogados e não-paciente)
+    // Projeção explícita sem CLOBs (mfaSecretEncrypted) para respeitar o pool leve do Oracle ADB
+    const user = await withRepositoryRetry(
+      UserEntity,
+      (repo) =>
+        repo.findOne({
+          where: [
+            {
+              username: Raw((alias) => `LOWER(${alias}) = :id`, {
+                id: identifier,
+              }),
+              deletedAt: IsNull(),
+              accountStatus: "ACTIVE",
+              role: Not("PATIENT"),
+            },
+            {
+              email: Raw((alias) => `LOWER(${alias}) = :id`, {
+                id: identifier,
+              }),
+              deletedAt: IsNull(),
+              accountStatus: "ACTIVE",
+              role: Not("PATIENT"),
+            },
+          ],
+          select: {
+            id: true,
+            organizationId: true,
+            fullName: true,
+            username: true,
+            email: true,
+            passwordHash: true,
+            role: true,
+            cargo: true,
+            podeAcessarProntuario: true,
+            accountStatus: true,
+            organization: {
+              id: true,
+              tradeName: true,
+            },
+          },
+          relations: { organization: true },
+        }),
+      { label: "auth-login:find-user" },
+    );
+
+    if (!user || !user.passwordHash) {
+      return NextResponse.json(
+        { error: GENERIC_AUTH_ERROR },
         { status: 401 },
       );
     }
 
-    // 3. Validação de senha (ou bypass seguro caso seja homologação direta por autoCargo)
-    if (!autoCargo) {
-      const senhaValida = await bcrypt.compare(senha, user.passwordHash);
-      if (!senhaValida) {
-        return NextResponse.json(
-          { error: "Senha incorreta. Para o ambiente de homologação, utilize 'faaz123'." },
-          { status: 401 },
-        );
-      }
+    const senhaValida = await bcrypt.compare(senha, user.passwordHash);
+    if (!senhaValida) {
+      return NextResponse.json(
+        { error: GENERIC_AUTH_ERROR },
+        { status: 401 },
+      );
     }
 
-    // 4. Cria sessão JWT e define o cookie HTTP-only
+    // Cria sessão JWT e define o cookie HTTP-only
     const token = await criarSessao({
       userId: user.id,
       nome: user.fullName,
@@ -220,8 +103,12 @@ export async function POST(request: Request) {
       organizationId: user.organizationId,
     });
 
-    // 5. Atualiza registro de último login
-    await userRepo.update({ id: user.id }, { lastLoginAt: new Date() });
+    // Atualiza registro de último login sem bloquear a sessão caso falhe
+    await withRepositoryRetry(
+      UserEntity,
+      (repo) => repo.update({ id: user.id }, { lastLoginAt: new Date() }),
+      { label: "auth-login:update-last-login" },
+    ).catch(() => {});
 
     return NextResponse.json({
       sucesso: true,

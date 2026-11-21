@@ -1,177 +1,95 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   Activity,
+  AlertCircle,
+  AlertTriangle,
+  ArrowRight,
+  Database,
   Eye,
   EyeOff,
-  Lock,
-  Mail,
-  User,
-  AlertCircle,
+  FileHeart,
+  HeartPulse,
   Loader2,
-  Shield,
-  Stethoscope,
-  ClipboardList,
-  Building2,
+  Lock,
+  ShieldCheck,
   Smartphone,
-  CheckCircle2,
-  Zap,
+  User,
 } from "lucide-react";
 
-interface PerfilHomologacao {
-  cargo: "DONO_CLINICA" | "MEDICO" | "SECRETARIA" | "ADMINISTRADOR";
-  nome: string;
-  username: string;
-  email: string;
-  badge: string;
-  badgeCor: string;
-  bordaCor: string;
-  bgCor: string;
-  icon: React.ElementType;
-  descricao: string;
-}
+const ECOSYSTEM_PILLARS = [
+  {
+    title: "Prontuário & Telemetria",
+    subtitle: "Evoluções, bioimpedância e adesão",
+    icon: FileHeart,
+    iconBg: "bg-emerald-50 border-emerald-200/80 text-emerald-700",
+    dot: "bg-emerald-500",
+  },
+  {
+    title: "Mapa Glicêmico & Nutrição",
+    subtitle: "Curva glicêmica, insulinas e TACO",
+    icon: HeartPulse,
+    iconBg: "bg-teal-50 border-teal-200/80 text-teal-700",
+    dot: "bg-teal-500",
+  },
+  {
+    title: "App Paciente Sincronizado",
+    subtitle: "Check-ins diários em tempo real",
+    icon: Smartphone,
+    iconBg: "bg-cyan-50 border-cyan-200/80 text-cyan-700",
+    dot: "bg-cyan-500",
+  },
+] as const;
 
-const PERFIS_HOMOLOGACAO: PerfilHomologacao[] = [
-  {
-    cargo: "DONO_CLINICA",
-    nome: "Dr. Carlos Fantini",
-    username: "carlos.fantini",
-    email: "carlos.fantini@clinicafaaz.com.br",
-    badge: "Acesso Total + Prontuários + Gestão",
-    badgeCor: "bg-emerald-100 text-emerald-800 border-emerald-300",
-    bordaCor: "hover:border-emerald-500",
-    bgCor: "bg-emerald-50/40",
-    icon: Shield,
-    descricao: "Poder administrativo irrestrito + acesso a todos os prontuários, dietas e relatórios.",
-  },
-  {
-    cargo: "MEDICO",
-    nome: "Dr. Rodrigo Mendes",
-    username: "rodrigo.mendes",
-    email: "medico.parceiro@clinicafaaz.com.br",
-    badge: "Acesso Clínico aos Prontuários",
-    badgeCor: "bg-blue-100 text-blue-800 border-blue-300",
-    bordaCor: "hover:border-blue-500",
-    bgCor: "bg-blue-50/40",
-    icon: Stethoscope,
-    descricao: "Atendimento clínico, prescrições, condutas e histórico de saúde dos pacientes.",
-  },
-  {
-    cargo: "SECRETARIA",
-    nome: "Patrícia Santos",
-    username: "patricia.santos",
-    email: "secretaria@clinicafaaz.com.br",
-    badge: "Recepção & Agenda (Sem Prontuário)",
-    badgeCor: "bg-amber-100 text-amber-800 border-amber-300",
-    bordaCor: "hover:border-amber-500",
-    bgCor: "bg-amber-50/40",
-    icon: ClipboardList,
-    descricao: "Controle de recepção e novos cadastros. Trava de segurança (RBAC) bloqueia prontuários.",
-  },
-  {
-    cargo: "ADMINISTRADOR",
-    nome: "Eduardo Lima",
-    username: "eduardo.lima",
-    email: "admin@clinicafaaz.com.br",
-    badge: "Gestão & Financeiro (Sem Prontuário)",
-    badgeCor: "bg-purple-100 text-purple-800 border-purple-300",
-    bordaCor: "hover:border-purple-500",
-    bgCor: "bg-purple-50/40",
-    icon: Building2,
-    descricao: "Gestão operacional, cadastros de equipe e faturamento. Bloqueado para dados médicos.",
-  },
-];
+const SECURITY_SEALS = [
+  { label: "Isolamento RBAC", icon: ShieldCheck },
+  { label: "Criptografia TLS", icon: Lock },
+  { label: "Oracle Cloud São Paulo", icon: Database },
+] as const;
 
 export default function LoginPage() {
+  const router = useRouter();
   const [username, setUsername] = useState("");
   const [senha, setSenha] = useState("");
   const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [capsLockAtivo, setCapsLockAtivo] = useState(false);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
-  const [perfilAtivo, setPerfilAtivo] = useState<string | null>(null);
-  const hasVerifiedMountRef = useRef(false);
 
-  // Função de fallback para limpar cookies e storage corrompidos e quebrar qualquer ciclo
-  async function limparEstadoCorrompidoClient() {
-    try {
-      document.cookie =
-        "endoc_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
-      localStorage.removeItem("endoc_session");
-      localStorage.removeItem("faaz_auth_user");
-      sessionStorage.removeItem("faaz_auth_user");
-      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" });
-    } catch {
-      // Ignora falhas de rede na limpeza preventiva
+  // Limpeza puramente local de resíduos de URL/storage após logout explícito — zero chamadas de rede/Oracle antes do submit
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("logout") === "1" || params.get("error") === "loop") {
+      try {
+        localStorage.removeItem("endoc_session");
+        localStorage.removeItem("faaz_auth_user");
+        sessionStorage.removeItem("faaz_auth_user");
+        sessionStorage.removeItem("faaz_login_mounts");
+      } catch {
+        // Ignora restrições de storage do navegador
+      }
+      window.history.replaceState({}, "", "/login");
+    }
+  }, []);
+
+  function handleCheckCapsLock(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (typeof e.getModifierState === "function") {
+      setCapsLockAtivo(e.getModifierState("CapsLock"));
     }
   }
 
-  // Auditoria de montagem: detecta ?error=loop ou sessão corrompida e estabiliza a tela
-  useEffect(() => {
-    if (typeof window === "undefined" || hasVerifiedMountRef.current) return;
-    hasVerifiedMountRef.current = true;
-
-    async function verificarOuLimparSessao() {
-      const params = new URLSearchParams(window.location.search);
-      const isExplicitLoop =
-        params.get("error") === "loop" || params.get("logout") === "1";
-
-      // Detector automático de loop rápido via sessionStorage (3+ montagens em < 4s)
-      const now = Date.now();
-      let recentMounts: number[] = [];
-      try {
-        const raw = sessionStorage.getItem("faaz_login_mounts");
-        if (raw) {
-          recentMounts = (JSON.parse(raw) as number[]).filter(
-            (t) => now - t < 4000
-          );
-        }
-        recentMounts.push(now);
-        sessionStorage.setItem("faaz_login_mounts", JSON.stringify(recentMounts));
-      } catch {
-        // Ignora erro de storage
-      }
-
-      const isRapidLoopDetected = recentMounts.length >= 3;
-
-      if (isExplicitLoop || isRapidLoopDetected) {
-        await limparEstadoCorrompidoClient();
-        try {
-          sessionStorage.removeItem("faaz_login_mounts");
-        } catch {}
-        if (window.location.search) {
-          window.history.replaceState({}, "", "/login");
-        }
-        return;
-      }
-
-      // Verifica se existe uma sessão genuinamente válida na API
-      try {
-        const res = await fetch("/api/auth/me", { cache: "no-store" });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.autenticado && data.usuario) {
-            try {
-              sessionStorage.removeItem("faaz_login_mounts");
-            } catch {}
-            window.location.replace("/dashboard");
-            return;
-          }
-        }
-        // Se a sessão falhar na verificação (401 ou inválida), limpa resíduos locais sem redirecionar
-        await limparEstadoCorrompidoClient();
-      } catch {
-        await limparEstadoCorrompidoClient();
-      }
-    }
-
-    verificarOuLimparSessao();
-  }, []);
-
-  // Submissão do formulário manual
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const trimmedIdentifier = username.trim();
+    if (!trimmedIdentifier || !senha) {
+      setErro("Informe seu usuário ou e-mail e sua senha.");
+      return;
+    }
+
     setErro("");
     setCarregando(true);
 
@@ -180,394 +98,502 @@ export default function LoginPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          username: username.trim(),
-          email: username.trim(), // fallback retrocompatível
+          username: trimmedIdentifier,
+          email: trimmedIdentifier,
           senha,
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
-      if (res.ok && data.sucesso) {
-        window.location.assign("/dashboard");
-      } else {
-        setErro(data.error || "Credenciais inválidas. Verifique o usuário e a senha.");
-        setCarregando(false);
+      if (res.ok && data?.sucesso) {
+        router.replace("/dashboard");
+        router.refresh();
+        return;
       }
-    } catch {
-      setErro("Falha de conexão com o servidor da Clínica FAAZ.");
+
+      setErro(data?.error || "Usuário ou senha inválidos.");
       setCarregando(false);
-    }
-  }
-
-  // Acesso rápido de 1 clique para homologação
-  async function handleQuickLogin(perfil: PerfilHomologacao) {
-    setUsername(perfil.username);
-    setSenha("faaz123");
-    setErro("");
-    setCarregando(true);
-    setPerfilAtivo(perfil.cargo);
-
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: perfil.username,
-          email: perfil.email,
-          senha: "faaz123",
-          autoCargo: perfil.cargo,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok && data.sucesso) {
-        window.location.assign("/dashboard");
-      } else {
-        setErro(data.error || "Não foi possível autenticar o perfil de teste.");
-        setCarregando(false);
-        setPerfilAtivo(null);
-      }
     } catch {
-      setErro("Erro de conexão ao efetuar login rápido.");
+      setErro("Não foi possível conectar ao servidor. Tente novamente.");
       setCarregando(false);
-      setPerfilAtivo(null);
     }
   }
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row cl-page">
-      {/* ======================================================== */}
-      {/* PAINEL ESQUERDO — CLINICAL LIGHT GLASS BRANDING          */}
-      {/* ======================================================== */}
-      <div className="w-full lg:w-5/12 bg-white border-b lg:border-b-0 lg:border-r border-slate-200/80 text-slate-900 p-8 lg:p-12 flex flex-col justify-between relative overflow-hidden">
-        {/* Aurora radial esmeralda/ciano claro sutil */}
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col lg:flex-row bg-slate-50 text-slate-900 selection:bg-emerald-100 selection:text-emerald-900">
+      {/* ================================================================== */}
+      {/* COLUNA ESQUERDA (~58%) — SHOWCASE CLÍNICO HIGH-TECH CLINICAL LIGHT */}
+      {/* ================================================================== */}
+      <section
+        aria-label="Plataforma Clínica EnDoc 2.0"
+        className="relative w-full lg:w-[58%] flex flex-col justify-between px-6 py-7 sm:px-10 sm:py-9 lg:px-12 xl:px-16 lg:py-9 overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-200/80"
+        style={{
+          background:
+            "linear-gradient(145deg, #F8FAFC 0%, #F1FCF9 52%, #ECFDF5 100%)",
+        }}
+      >
+        {/* Grade arquitetônica de precisão */}
         <div
-          className="pointer-events-none absolute -top-24 -right-24 w-96 h-96 rounded-full blur-3xl"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 cl-login-grid"
+        />
+
+        {/* 2 Auras luminosas suaves (GPU-friendly, baixa opacidade) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-28 -left-24 w-[420px] h-[420px] rounded-full blur-3xl cl-aura-a"
           style={{
             background:
-              "radial-gradient(circle, rgba(16,185,129,0.14) 0%, rgba(20,184,166,0.05) 55%, transparent 75%)",
+              "radial-gradient(circle, rgba(16,185,129,0.16) 0%, rgba(20,184,166,0.06) 52%, transparent 74%)",
           }}
         />
         <div
-          className="pointer-events-none absolute -bottom-28 -left-20 w-96 h-96 rounded-full blur-3xl"
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-32 -right-24 w-[460px] h-[460px] rounded-full blur-3xl cl-aura-b"
           style={{
             background:
-              "radial-gradient(circle, rgba(6,182,212,0.11) 0%, rgba(16,185,129,0.04) 55%, transparent 75%)",
+              "radial-gradient(circle, rgba(13,148,136,0.15) 0%, rgba(6,182,212,0.07) 48%, transparent 74%)",
           }}
         />
 
-        <div className="relative z-10 space-y-6">
-          {/* Logo e Título */}
+        {/* TOPO: Logo Oficial Clínica FAAZ + Pílula Tecnológica */}
+        <header className="relative z-10 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="h-10 max-h-10 flex items-center shrink-0 overflow-hidden">
+            <div className="h-9 sm:h-10 flex items-center shrink-0">
               <Image
                 src="/logo.png"
                 alt="Clínica FAAZ"
                 width={848}
                 height={1024}
-                className="h-10 w-auto object-contain shrink-0"
+                className="h-9 sm:h-10 w-auto object-contain shrink-0"
                 priority
               />
             </div>
-            <div>
-              <p className="text-xs text-emerald-700 font-extrabold tracking-wider uppercase">
-                Clínica FAAZ • Medicina & Saúde Integrativa
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <span className="cl-badge-emerald px-2.5 py-0.5 text-[10px] uppercase tracking-widest mb-2.5">
-              Clinical Command Center • Oracle ADB
-            </span>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 leading-tight mt-2">
-              Painel Clínico Inteligente
-            </h1>
-            <p className="text-sm text-slate-500 font-medium mt-2 leading-relaxed">
-              Sistema com isolamento rigoroso por perfil de acesso (RBAC), monitoramento de
-              aderência hídrica coletiva e saúde intestinal em tempo real.
-            </p>
-          </div>
-
-          {/* Banner de Credenciais Globais de Homologação */}
-          <div className="bg-slate-50/90 border border-slate-200/80 rounded-2xl p-4 space-y-2.5 shadow-2xs">
-            <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-700 uppercase tracking-wider">
-              <Zap className="w-4 h-4 text-amber-500" />
-              <span>Credenciais Padrão de Homologação</span>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Senha padrão para todos os perfis web da equipe:{" "}
-              <code className="bg-white border border-slate-200 px-2 py-0.5 rounded-md font-mono font-bold text-emerald-700 text-xs shadow-2xs">
-                faaz123
-              </code>
-            </p>
-            <div className="text-[11px] text-slate-500 pt-1.5 border-t border-slate-200/80">
-              Ou utilize os botões de <strong className="text-slate-800">1 Clique</strong> ao lado para entrar diretamente sem digitar.
-            </div>
-          </div>
-
-          {/* Card informativo do App Mobile (Paciente) */}
-          <div className="bg-emerald-50/55 border border-emerald-200/80 rounded-2xl p-4 space-y-2.5 shadow-2xs">
-            <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-800">
-              <Smartphone className="w-4 h-4 text-emerald-600" />
-              <span>Acesso no App Mobile (Paciente)</span>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Para testar o aplicativo no emulador Android, utilize um dos CPFs cadastrados:
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              <div className="bg-white/90 p-2.5 rounded-xl border border-emerald-200/70 shadow-2xs">
-                <span className="text-[10px] text-emerald-700 font-bold block">Carlos Fantini (Meta 2.5L)</span>
-                <code className="text-xs font-mono font-bold text-slate-900 tabular-nums">111.222.333-44</code>
-              </div>
-              <div className="bg-white/90 p-2.5 rounded-xl border border-teal-200/70 shadow-2xs">
-                <span className="text-[10px] text-teal-700 font-bold block">Maria Luiza (Meta 3.0L)</span>
-                <code className="text-xs font-mono font-bold text-slate-900 tabular-nums">222.333.444-55</code>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Rodapé institucional */}
-        <div className="relative z-10 pt-6 mt-6 border-t border-slate-200/80 text-xs text-slate-500 flex items-center justify-between">
-          <span>Clínica FAAZ • Endocrinologia & Nutrologia</span>
-          <span className="font-mono text-slate-400">Versão 2.0.4</span>
-        </div>
-      </div>
-
-      {/* ======================================================== */}
-      {/* PAINEL DIREITO — FORMULÁRIO & ATALHOS DE HOMOLOGAÇÃO */}
-      {/* ======================================================== */}
-      <div className="w-full lg:w-7/12 p-6 sm:p-10 lg:p-12 overflow-y-auto max-h-screen">
-        <div className="max-w-2xl mx-auto space-y-8">
-          <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-              Controle de Acesso Seguro • RBAC
-            </span>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight mt-2">
-              Autenticação de Equipe
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Escolha um perfil para teste imediato ou preencha as credenciais manualmente.
-            </p>
-          </div>
-
-          {/* Feedback de erro */}
-          {erro && (
-            <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3 animate-in fade-in duration-150">
-              <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs sm:text-sm font-bold text-rose-800">{erro}</p>
-              </div>
-            </div>
-          )}
-
-          {/* ======================================================== */}
-          {/* SEÇÃO 1: MODO HOMOLOGAÇÃO — 4 BOTÕES DE 1 CLIQUE */}
-          {/* ======================================================== */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Zap className="w-4 h-4 text-emerald-600" />
-                <h3 className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider">
-                  Acesso Rápido de Homologação (1 Clique)
-                </h3>
-              </div>
-              <span className="text-[11px] font-semibold text-slate-400">
-                Selecione o perfil desejado
+            <div className="h-6 w-px bg-slate-200/90 hidden sm:block" />
+            <div className="leading-tight">
+              <span className="block text-[11px] font-extrabold tracking-[0.14em] uppercase text-slate-900">
+                Clínica FAAZ
+              </span>
+              <span className="block text-[10px] font-semibold tracking-wide text-slate-500">
+                Medicina &amp; Saúde Integrativa
               </span>
             </div>
+          </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {PERFIS_HOMOLOGACAO.map((perfil) => {
-                const Icon = perfil.icon;
-                const isLoggingThis = perfilAtivo === perfil.cargo && carregando;
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/85 backdrop-blur-md border border-emerald-500/20 shadow-[0_2px_10px_-4px_rgba(15,118,110,0.18)]">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+            <span className="text-[10px] font-extrabold tracking-[0.14em] uppercase text-emerald-800">
+              ENDOC 2.0 • CLINICAL INTELLIGENCE
+            </span>
+          </div>
+        </header>
 
-                return (
-                  <button
-                    key={perfil.cargo}
-                    type="button"
-                    onClick={() => handleQuickLogin(perfil)}
-                    disabled={carregando}
-                    className={`text-left p-4 rounded-2xl border transition-all duration-150 relative group shadow-2xs hover:shadow-md cursor-pointer ${
-                      perfil.bgCor
-                    } border-slate-200 ${perfil.bordaCor} disabled:opacity-60 disabled:cursor-not-allowed`}
+        {/* CENTRO: Headline Executiva + Peça Visual Glassmorphism HUD */}
+        <div className="relative z-10 my-6 lg:my-0 flex flex-col gap-5 xl:gap-6 max-w-2xl">
+          <div className="space-y-2.5">
+            <h1 className="text-3xl sm:text-4xl xl:text-[42px] font-extrabold tracking-[-0.03em] leading-[1.08] text-slate-900">
+              Inteligência Clínica{" "}
+              <span className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 bg-clip-text text-transparent">
+                em Tempo Real.
+              </span>
+            </h1>
+            <p className="text-sm sm:text-[15px] text-slate-600 font-medium leading-relaxed max-w-xl">
+              Precisão endocrinológica, prontuário integrado e conexão contínua
+              com a jornada diária de cada paciente — em uma única estação clínica.
+            </p>
+          </div>
+
+          {/* PEÇA CENTRAL VISUAL — GLASSMORPHISM HUD */}
+          <div className="relative rounded-3xl backdrop-blur-xl bg-white/75 border border-emerald-500/15 shadow-[0_28px_70px_-28px_rgba(15,23,42,0.16),inset_0_1px_0_rgba(255,255,255,0.9)] p-4 sm:p-5 space-y-4">
+            {/* Barra superior do instrumento HUD */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200/70">
+              <div className="flex items-center gap-2">
+                <span className="w-7 h-7 rounded-xl bg-emerald-50 border border-emerald-200/80 text-emerald-700 flex items-center justify-center shrink-0">
+                  <Activity className="w-3.5 h-3.5" />
+                </span>
+                <div>
+                  <span className="block text-xs font-extrabold text-slate-800 leading-tight">
+                    Telemetria Biométrica Contínua
+                  </span>
+                  <span className="block text-[10px] font-medium text-slate-500">
+                    Fluxo clínico unificado • Web &amp; Mobile
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50/90 border border-emerald-200/80 text-[10px] font-bold text-emerald-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span>Sincronia Ativa</span>
+                </span>
+                <span className="hidden sm:inline-block font-mono text-[10px] font-bold text-slate-400 bg-slate-100/80 border border-slate-200/70 px-2 py-0.5 rounded-md tabular-nums">
+                  TLS 1.3
+                </span>
+              </div>
+            </div>
+
+            {/* Onda Biométrica / Telemetria SVG Animada */}
+            <div className="relative rounded-2xl bg-gradient-to-b from-emerald-50/45 via-white/80 to-white/95 border border-slate-200/70 px-3 pt-3 pb-2 overflow-hidden">
+              <svg
+                viewBox="0 0 600 132"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="w-full h-24 sm:h-28 xl:h-[124px] block"
+                role="img"
+                aria-label="Onda de telemetria clínica em tempo real"
+              >
+                <defs>
+                  <linearGradient
+                    id="clWaveAreaGrad"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="132"
+                    gradientUnits="userSpaceOnUse"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="w-9 h-9 rounded-xl bg-white border border-slate-200/80 flex items-center justify-center shrink-0 text-slate-700 shadow-2xs group-hover:scale-105 transition-transform">
-                        {isLoggingThis ? (
-                          <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
-                        ) : (
-                          <Icon className="w-4.5 h-4.5" />
-                        )}
-                      </div>
+                    <stop offset="0%" stopColor="#10B981" stopOpacity="0.22" />
+                    <stop offset="65%" stopColor="#14B8A6" stopOpacity="0.06" />
+                    <stop offset="100%" stopColor="#10B981" stopOpacity="0" />
+                  </linearGradient>
+                  <linearGradient
+                    id="clWaveStrokeGrad"
+                    x1="0"
+                    y1="66"
+                    x2="600"
+                    y2="66"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <stop offset="0%" stopColor="#059669" stopOpacity="0.45" />
+                    <stop offset="45%" stopColor="#0D9488" stopOpacity="0.95" />
+                    <stop offset="100%" stopColor="#10B981" stopOpacity="0.65" />
+                  </linearGradient>
+                  <linearGradient
+                    id="clWavePulseGrad"
+                    x1="0"
+                    y1="0"
+                    x2="600"
+                    y2="0"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <stop offset="0%" stopColor="#34D399" />
+                    <stop offset="50%" stopColor="#10B981" />
+                    <stop offset="100%" stopColor="#06B6D4" />
+                  </linearGradient>
+                  <filter
+                    id="clWaveGlow"
+                    x="-10%"
+                    y="-30%"
+                    width="120%"
+                    height="160%"
+                  >
+                    <feGaussianBlur stdDeviation="3.2" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
 
+                {/* Linhas horizontais de referência clínica */}
+                <line
+                  x1="0"
+                  y1="28"
+                  x2="600"
+                  y2="28"
+                  stroke="#CBD5E1"
+                  strokeOpacity="0.45"
+                  strokeDasharray="3 5"
+                />
+                <line
+                  x1="0"
+                  y1="66"
+                  x2="600"
+                  y2="66"
+                  stroke="#94A3B8"
+                  strokeOpacity="0.35"
+                  strokeDasharray="3 5"
+                />
+                <line
+                  x1="0"
+                  y1="104"
+                  x2="600"
+                  y2="104"
+                  stroke="#CBD5E1"
+                  strokeOpacity="0.45"
+                  strokeDasharray="3 5"
+                />
+
+                {/* Área suave sob a curva */}
+                <path
+                  d="M0 92 C48 92 66 78 106 78 C144 78 164 42 204 42 C240 42 252 84 286 84 C312 84 324 22 346 22 C366 22 378 96 402 96 C428 96 446 54 486 54 C526 54 548 68 600 60 L600 132 L0 132 Z"
+                  fill="url(#clWaveAreaGrad)"
+                />
+
+                {/* Curva base contínua */}
+                <path
+                  d="M0 92 C48 92 66 78 106 78 C144 78 164 42 204 42 C240 42 252 84 286 84 C312 84 324 22 346 22 C366 22 378 96 402 96 C428 96 446 54 486 54 C526 54 548 68 600 60"
+                  stroke="url(#clWaveStrokeGrad)"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+
+                {/* Pulso luminoso percorrendo o traçado via CSS @keyframes */}
+                <path
+                  d="M0 92 C48 92 66 78 106 78 C144 78 164 42 204 42 C240 42 252 84 286 84 C312 84 324 22 346 22 C366 22 378 96 402 96 C428 96 446 54 486 54 C526 54 548 68 600 60"
+                  stroke="url(#clWavePulseGrad)"
+                  strokeWidth="3.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  filter="url(#clWaveGlow)"
+                  className="cl-wave-pulse-stroke"
+                />
+
+                {/* Pontos nodais de telemetria */}
+                <circle cx="204" cy="42" r="4" fill="#FFFFFF" stroke="#059669" strokeWidth="2.2" />
+                <circle cx="346" cy="22" r="5" fill="#10B981" fillOpacity="0.22" />
+                <circle cx="346" cy="22" r="3.5" fill="#059669" stroke="#FFFFFF" strokeWidth="1.8" />
+                <circle cx="486" cy="54" r="4" fill="#FFFFFF" stroke="#0D9488" strokeWidth="2.2" />
+              </svg>
+
+              {/* Eixo discreto de telemetria */}
+              <div className="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400 px-1">
+                <span>FAIXA METABÓLICA ALVO</span>
+                <span className="text-emerald-700 font-semibold">
+                  MONITORAMENTO EM TEMPO REAL
+                </span>
+              </div>
+            </div>
+
+            {/* 3 Micro-cards limpos do Ecossistema Real */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {ECOSYSTEM_PILLARS.map((pillar) => {
+                const Icon = pillar.icon;
+                return (
+                  <div
+                    key={pillar.title}
+                    className="rounded-2xl bg-white/90 border border-slate-200/80 p-3 shadow-[0_6px_20px_-14px_rgba(15,23,42,0.18)] flex flex-col gap-2 transition-transform duration-200 hover:-translate-y-0.5"
+                  >
+                    <div className="flex items-center justify-between">
                       <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${perfil.badgeCor}`}
+                        className={`w-7 h-7 rounded-xl border flex items-center justify-center shrink-0 ${pillar.iconBg}`}
                       >
-                        {perfil.badge}
+                        <Icon className="w-3.5 h-3.5" />
                       </span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${pillar.dot}`} />
                     </div>
-
-                    <div className="mt-3">
-                      <h4 className="text-sm font-extrabold text-slate-900 group-hover:text-emerald-700 transition-colors">
-                        {perfil.nome}
-                      </h4>
-                      <p className="text-[11px] text-emerald-700 font-mono font-bold mt-0.5">
-                        @{perfil.username}
+                    <div>
+                      <p className="text-xs font-extrabold text-slate-900 leading-snug">
+                        {pillar.title}
                       </p>
-                      <p className="text-[10px] text-slate-400 font-mono">
-                        {perfil.email}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-2 line-clamp-2 leading-relaxed">
-                        {perfil.descricao}
+                      <p className="text-[10px] font-medium text-slate-500 mt-0.5 leading-snug">
+                        {pillar.subtitle}
                       </p>
                     </div>
-
-                    <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between text-xs font-bold text-emerald-700">
-                      <span>{isLoggingThis ? "Entrando..." : "Entrar com 1 Clique"}</span>
-                      <span className="text-sm group-hover:translate-x-1 transition-transform">➔</span>
-                    </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
           </div>
+        </div>
 
-          {/* DIVISOR ESTILIZADO */}
-          <div className="relative flex items-center justify-center">
-            <div className="w-full border-t border-slate-200" />
-            <span className="absolute bg-slate-50 px-3 text-xs font-bold uppercase tracking-wider text-slate-400">
-              Ou faça login digitando
-            </span>
+        {/* RODAPÉ DA VITRINE: 3 Selos Discretos de Engenharia */}
+        <footer className="relative z-10 pt-5 lg:pt-4 border-t border-slate-200/75 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            {SECURITY_SEALS.map((seal) => {
+              const Icon = seal.icon;
+              return (
+                <div
+                  key={seal.label}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600"
+                >
+                  <Icon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{seal.label}</span>
+                </div>
+              );
+            })}
           </div>
+          <span className="text-[11px] font-mono text-slate-400 hidden sm:inline">
+            LGPD • CFM
+          </span>
+        </footer>
+      </section>
 
-          {/* ======================================================== */}
-          {/* SEÇÃO 2: FORMULÁRIO MANUAL (USERNAME E SENHA) */}
-          {/* ======================================================== */}
-          <form onSubmit={handleSubmit} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <div>
-              <label
-                htmlFor="username-input"
-                className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5"
-              >
-                Usuário
-              </label>
-              <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  id="username-input"
-                  name="username"
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="ex: carlos.fantini, secretaria ou admin"
-                  required
-                  autoComplete="username"
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                />
+      {/* ================================================================== */}
+      {/* COLUNA DIREITA (~42%) — PORTAL DE ACESSO CIRÚRGICO                 */}
+      {/* ================================================================== */}
+      <main className="relative w-full lg:w-[42%] flex-1 flex items-center justify-center px-5 py-10 sm:px-10 lg:px-12 bg-white">
+        {/* Glow cerâmico quase imperceptível no canto superior direito */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute top-0 right-0 w-72 h-72 rounded-full blur-3xl opacity-60"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(16,185,129,0.08) 0%, transparent 72%)",
+          }}
+        />
+
+        <div className="relative z-10 w-full max-w-[420px]">
+          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-[0_24px_60px_-28px_rgba(15,23,42,0.14),0_2px_8px_-2px_rgba(15,23,42,0.04)] p-7 sm:p-9 space-y-6">
+            {/* Cabeçalho Minimalista */}
+            <div className="space-y-2.5">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100/90 border border-slate-200/80 text-[10px] font-extrabold tracking-[0.14em] uppercase text-slate-600">
+                <Lock className="w-3 h-3 text-emerald-600" />
+                <span>Acesso Restrito</span>
+              </div>
+              <div>
+                <h2 className="text-2xl font-extrabold tracking-[-0.025em] text-slate-900">
+                  Bem-vindo ao EnDoc
+                </h2>
+                <p className="text-xs sm:text-[13px] text-slate-500 font-medium mt-1">
+                  Autentique-se com suas credenciais da equipe
+                </p>
               </div>
             </div>
 
-            <div>
-              <label
-                htmlFor="senha-input"
-                className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5"
+            {/* Feedback de Erro Elegante (sem revelar existência do usuário) */}
+            {erro ? (
+              <div
+                role="alert"
+                className="cl-error-enter rounded-2xl bg-rose-50/90 border border-rose-200/90 px-3.5 py-3 flex items-start gap-2.5"
               >
-                Senha
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  id="senha-input"
-                  type={mostrarSenha ? "text" : "password"}
-                  value={senha}
-                  onChange={(e) => setSenha(e.target.value)}
-                  placeholder="Sua senha de acesso"
-                  required
-                  autoComplete="current-password"
-                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={() => setMostrarSenha(!mostrarSenha)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
-                  aria-label={mostrarSenha ? "Ocultar senha" : "Ver senha"}
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <p className="text-xs font-semibold text-rose-800 leading-relaxed">
+                  {erro}
+                </p>
+              </div>
+            ) : null}
+
+            {/* Formulário Cirúrgico */}
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+              {/* Campo: Usuário ou E-mail */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="login-username"
+                  className="block text-xs font-bold text-slate-700 tracking-wide"
                 >
-                  {mostrarSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  Usuário ou E-mail
+                </label>
+                <div className="relative group">
+                  <User className="w-4 h-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="login-username"
+                    name="username"
+                    type="text"
+                    value={username}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      if (erro) setErro("");
+                    }}
+                    placeholder="usuario ou e-mail institucional"
+                    required
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    disabled={carregando}
+                    className="no-uppercase w-full h-11 pl-10 pr-4 bg-slate-50/80 border border-slate-200/90 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/12 transition-all disabled:opacity-60"
+                  />
+                </div>
+              </div>
+
+              {/* Campo: Senha com detector nativo de Caps Lock */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="login-password"
+                    className="block text-xs font-bold text-slate-700 tracking-wide"
+                  >
+                    Senha
+                  </label>
+                  {capsLockAtivo ? (
+                    <span
+                      role="status"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200/90 text-[10px] font-bold text-amber-700"
+                    >
+                      <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                      <span>Caps Lock ativado</span>
+                    </span>
+                  ) : null}
+                </div>
+                <div className="relative group">
+                  <Lock className="w-4 h-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="login-password"
+                    name="password"
+                    type={mostrarSenha ? "text" : "password"}
+                    value={senha}
+                    onChange={(e) => {
+                      setSenha(e.target.value);
+                      if (erro) setErro("");
+                    }}
+                    onKeyDown={handleCheckCapsLock}
+                    onKeyUp={handleCheckCapsLock}
+                    onBlur={() => setCapsLockAtivo(false)}
+                    placeholder="Digite sua senha"
+                    required
+                    autoComplete="current-password"
+                    disabled={carregando}
+                    className="no-uppercase w-full h-11 pl-10 pr-11 bg-slate-50/80 border border-slate-200/90 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/12 transition-all disabled:opacity-60"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarSenha((prev) => !prev)}
+                    disabled={carregando}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100/80 transition-colors cursor-pointer"
+                    aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+                  >
+                    {mostrarSenha ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Botão Primário de Alto Impacto */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={carregando}
+                  className="cl-btn-shimmer relative overflow-hidden group w-full h-11.5 px-5 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-600 hover:from-emerald-700 hover:via-emerald-700 hover:to-teal-700 text-white text-sm font-bold shadow-[0_12px_28px_-10px_rgba(5,150,105,0.65)] hover:shadow-[0_16px_32px_-10px_rgba(5,150,105,0.78)] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-65 disabled:cursor-not-allowed"
+                >
+                  {carregando ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Autenticando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Acessar Painel Clínico</span>
+                      <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
+                    </>
+                  )}
                 </button>
               </div>
-            </div>
+            </form>
 
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={carregando}
-                className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {carregando && !perfilAtivo ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Autenticando...</span>
-                  </>
-                ) : (
-                  <span>Entrar no Painel Clínico</span>
-                )}
-              </button>
-            </div>
-          </form>
-
-          {/* ======================================================== */}
-          {/* SEÇÃO 3: TABELA RESUMO DE CREDENCIAIS DISPONÍVEIS */}
-          {/* ======================================================== */}
-          <div className="bg-slate-100/70 rounded-2xl p-4 border border-slate-200 text-xs text-slate-600 space-y-2.5">
-            <div className="flex items-center gap-2 font-bold text-slate-800">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>Resumo dos Acessos de Homologação</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[11px]">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase">
-                    <th className="pb-1.5">Cargo</th>
-                    <th className="pb-1.5">Usuário (Login)</th>
-                    <th className="pb-1.5">Senha</th>
-                    <th className="pb-1.5">Prontuários</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200/50">
-                  <tr>
-                    <td className="py-1 font-bold text-slate-800">Dono</td>
-                    <td className="py-1 font-mono text-emerald-700 font-bold">carlos.fantini</td>
-                    <td className="py-1 font-mono text-slate-500">faaz123</td>
-                    <td className="py-1 text-emerald-600 font-bold">Total (Sim)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1 font-bold text-slate-800">Médico</td>
-                    <td className="py-1 font-mono text-emerald-700 font-bold">rodrigo.mendes</td>
-                    <td className="py-1 font-mono text-slate-500">faaz123</td>
-                    <td className="py-1 text-emerald-600 font-bold">Clínico (Sim)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1 font-bold text-slate-800">Secretária</td>
-                    <td className="py-1 font-mono text-emerald-700 font-bold">patricia.santos</td>
-                    <td className="py-1 font-mono text-slate-500">faaz123</td>
-                    <td className="py-1 text-rose-600 font-bold">Bloqueado (Não)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1 font-bold text-slate-800">Admin</td>
-                    <td className="py-1 font-mono text-emerald-700 font-bold">eduardo.lima</td>
-                    <td className="py-1 font-mono text-slate-500">faaz123</td>
-                    <td className="py-1 text-rose-600 font-bold">Bloqueado (Não)</td>
-                  </tr>
-                </tbody>
-              </table>
+            {/* Rodapé do Card */}
+            <div className="pt-5 border-t border-slate-100 space-y-3">
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Acesso exclusivo para profissionais autorizados da Clínica FAAZ.
+                Precisa de acesso ou redefinição? Contate a administração.
+              </p>
+              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400">
+                <span>Clínica FAAZ</span>
+                <span className="font-mono px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/70 text-slate-500">
+                  EnDoc 2.0
+                </span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
