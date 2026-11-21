@@ -128,7 +128,7 @@ export default function LoginPage() {
       {/* ================================================================== */}
       <section
         aria-label="Plataforma Clínica EnDoc 2.0"
-        className="relative w-full lg:w-[58%] flex flex-col justify-between px-6 py-7 sm:px-10 sm:py-9 lg:px-12 xl:px-16 lg:py-9 overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-200/80"
+        className="relative hidden lg:flex lg:w-[58%] flex-col justify-between px-10 xl:px-16 py-7 xl:py-9 overflow-hidden border-r border-slate-200/80"
         style={{
           background:
             "linear-gradient(145deg, #F8FAFC 0%, #F1FCF9 52%, #ECFDF5 100%)",
@@ -158,31 +158,51 @@ export default function LoginPage() {
           }}
         />
 
-        {/* TOPO: Logo Oficial Clínica FAAZ + Pílula Tecnológica */}
-        <header className="relative z-10 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="h-9 sm:h-10 flex items-center shrink-0">
+        {/* Marca d'Água Arquitetônica de Alto Impacto (emblema Clínica FAAZ em grande escala) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none select-none absolute -top-4 -right-12 xl:-right-6 w-[430px] xl:w-[500px] aspect-[848/1024] flex items-center justify-center"
+        >
+          <div
+            className="absolute inset-8 rounded-full blur-3xl"
+            style={{
+              background:
+                "radial-gradient(circle, rgba(217,169,78,0.15) 0%, rgba(16,185,129,0.05) 52%, transparent 74%)",
+            }}
+          />
+          <Image
+            src="/logo.png"
+            alt=""
+            width={848}
+            height={1024}
+            className="w-full h-full object-contain opacity-[0.065] blur-[0.5px]"
+          />
+        </div>
+
+        {/* TOPO: Cabeçalho Ampliado da Marca Clínica FAAZ + Pílula Tecnológica */}
+        <header className="relative z-10 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="bg-white/80 backdrop-blur-md border border-amber-500/20 shadow-[0_8px_24px_-8px_rgba(180,130,30,0.22)] rounded-2xl p-2.5 flex items-center justify-center shrink-0">
               <Image
                 src="/logo.png"
                 alt="Clínica FAAZ"
                 width={848}
                 height={1024}
-                className="h-9 sm:h-10 w-auto object-contain shrink-0"
+                className="h-[52px] xl:h-[58px] w-auto object-contain block shrink-0"
                 priority
               />
             </div>
-            <div className="h-6 w-px bg-slate-200/90 hidden sm:block" />
             <div className="leading-tight">
-              <span className="block text-[11px] font-extrabold tracking-[0.14em] uppercase text-slate-900">
+              <span className="block text-xl xl:text-2xl font-black tracking-[0.06em] uppercase text-slate-900 leading-none">
                 Clínica FAAZ
               </span>
-              <span className="block text-[10px] font-semibold tracking-wide text-slate-500">
+              <span className="block text-[10px] xl:text-[11px] font-bold tracking-[0.2em] uppercase text-slate-500 mt-1.5">
                 Medicina &amp; Saúde Integrativa
               </span>
             </div>
           </div>
 
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/85 backdrop-blur-md border border-emerald-500/20 shadow-[0_2px_10px_-4px_rgba(15,118,110,0.18)]">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/85 backdrop-blur-md border border-emerald-500/20 shadow-[0_2px_10px_-4px_rgba(15,118,110,0.18)] shrink-0">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
@@ -194,15 +214,17 @@ export default function LoginPage() {
         </header>
 
         {/* CENTRO: Headline Executiva + Peça Visual Glassmorphism HUD */}
-        <div className="relative z-10 my-6 lg:my-0 flex flex-col gap-5 xl:gap-6 max-w-2xl">
-          <div className="space-y-2.5">
-            <h1 className="text-3xl sm:text-4xl xl:text-[42px] font-extrabold tracking-[-0.03em] leading-[1.08] text-slate-900">
-              Inteligência Clínica{" "}
-              <span className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 bg-clip-text text-transparent">
+        <div className="relative z-10 flex flex-col gap-4 xl:gap-5 max-w-2xl">
+          <div className="space-y-2">
+            <h1 className="text-[34px] xl:text-[42px] font-extrabold tracking-[-0.03em] leading-[1.08] text-slate-900">
+              <span className="block whitespace-nowrap">
+                Inteligência Clínica
+              </span>
+              <span className="block whitespace-nowrap bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 bg-clip-text text-transparent">
                 em Tempo Real.
               </span>
             </h1>
-            <p className="text-sm sm:text-[15px] text-slate-600 font-medium leading-relaxed max-w-xl">
+            <p className="text-sm xl:text-[15px] text-slate-600 font-medium leading-relaxed max-w-xl">
               Precisão endocrinológica, prontuário integrado e conexão contínua
               com a jornada diária de cada paciente — em uma única estação clínica.
             </p>
@@ -427,7 +449,7 @@ export default function LoginPage() {
       {/* ================================================================== */}
       {/* COLUNA DIREITA (~42%) — PORTAL DE ACESSO CIRÚRGICO                 */}
       {/* ================================================================== */}
-      <main className="relative w-full lg:w-[42%] flex-1 flex items-center justify-center px-5 py-10 sm:px-10 lg:px-12 bg-white">
+      <main className="relative w-full lg:w-[42%] flex-1 flex items-center justify-center px-5 py-6 sm:px-10 lg:px-10 xl:px-12 bg-white">
         {/* Glow cerâmico quase imperceptível no canto superior direito */}
         <div
           aria-hidden="true"
@@ -438,29 +460,56 @@ export default function LoginPage() {
           }}
         />
 
-        <div className="relative z-10 w-full max-w-[420px]">
-          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-[0_24px_60px_-28px_rgba(15,23,42,0.14),0_2px_8px_-2px_rgba(15,23,42,0.04)] p-7 sm:p-9 space-y-6">
-            {/* Cabeçalho Minimalista */}
-            <div className="space-y-2.5">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100/90 border border-slate-200/80 text-[10px] font-extrabold tracking-[0.14em] uppercase text-slate-600">
-                <Lock className="w-3 h-3 text-emerald-600" />
-                <span>Acesso Restrito</span>
+        <div className="relative z-10 w-full max-w-[424px]">
+          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-[0_24px_60px_-28px_rgba(15,23,42,0.14),0_2px_8px_-2px_rgba(15,23,42,0.04)] px-6 py-6 sm:px-8 sm:py-7 space-y-5">
+            {/* Bloco de Marca Protagonista + Cabeçalho Minimalista */}
+            <div className="flex flex-col items-center text-center">
+              <div className="relative flex items-center justify-center mb-3">
+                {/* Halo radial quente/esmeralda atrás do emblema */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -inset-4 rounded-full blur-2xl"
+                  style={{
+                    background:
+                      "radial-gradient(circle, rgba(217,169,78,0.24) 0%, rgba(16,185,129,0.12) 52%, transparent 74%)",
+                  }}
+                />
+                <div className="relative p-2.5 rounded-2xl bg-white/95 border border-amber-500/20 shadow-[0_10px_28px_-10px_rgba(180,130,30,0.28),0_2px_6px_-2px_rgba(15,23,42,0.06)]">
+                  <Image
+                    src="/logo.png"
+                    alt="Clínica FAAZ"
+                    width={848}
+                    height={1024}
+                    className="h-16 sm:h-[72px] w-auto object-contain block"
+                    priority
+                  />
+                </div>
               </div>
-              <div>
-                <h2 className="text-2xl font-extrabold tracking-[-0.025em] text-slate-900">
-                  Bem-vindo ao EnDoc
-                </h2>
-                <p className="text-xs sm:text-[13px] text-slate-500 font-medium mt-1">
-                  Autentique-se com suas credenciais da equipe
-                </p>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 mb-2">
+                <span className="text-[11px] font-black tracking-[0.2em] uppercase text-slate-800">
+                  Clínica FAAZ
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100/90 border border-slate-200/80 text-[10px] font-extrabold tracking-[0.14em] uppercase text-slate-600">
+                  <Lock className="w-2.5 h-2.5 text-emerald-600" />
+                  <span>Acesso Restrito</span>
+                </span>
               </div>
+
+              <h2 className="text-xl sm:text-2xl font-extrabold tracking-[-0.025em] text-slate-900">
+                Bem-vindo ao EnDoc
+              </h2>
+              <p className="text-xs sm:text-[13px] text-slate-500 font-medium mt-0.5">
+                Autentique-se com suas credenciais da equipe
+              </p>
             </div>
 
             {/* Feedback de Erro Elegante (sem revelar existência do usuário) */}
             {erro ? (
               <div
                 role="alert"
-                className="cl-error-enter rounded-2xl bg-rose-50/90 border border-rose-200/90 px-3.5 py-3 flex items-start gap-2.5"
+                className="cl-error-enter rounded-2xl bg-rose-50/90 border border-rose-200/90 px-3.5 py-2.5 flex items-start gap-2.5"
               >
                 <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <p className="text-xs font-semibold text-rose-800 leading-relaxed">
@@ -470,7 +519,7 @@ export default function LoginPage() {
             ) : null}
 
             {/* Formulário Cirúrgico */}
-            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
               {/* Campo: Usuário ou E-mail */}
               <div className="space-y-1.5">
                 <label
@@ -558,7 +607,7 @@ export default function LoginPage() {
               </div>
 
               {/* Botão Primário de Alto Impacto */}
-              <div className="pt-2">
+              <div className="pt-1">
                 <button
                   type="submit"
                   disabled={carregando}
@@ -580,7 +629,7 @@ export default function LoginPage() {
             </form>
 
             {/* Rodapé do Card */}
-            <div className="pt-5 border-t border-slate-100 space-y-3">
+            <div className="pt-4 border-t border-slate-100 space-y-2.5">
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 Acesso exclusivo para profissionais autorizados da Clínica FAAZ.
                 Precisa de acesso ou redefinição? Contate a administração.
