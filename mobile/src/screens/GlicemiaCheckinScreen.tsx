@@ -45,7 +45,7 @@ export function GlicemiaCheckinScreen({
   const { paciente } = usePatientAuth();
   const realPacienteId =
     paciente?.id || "92dab67a-1977-4690-ae23-7cc60499a0c5";
-  const nomePaciente = paciente?.nome || "Carlos Eduardo Fantini";
+  const nomePaciente = paciente?.nome || "Paciente FAAZ";
 
   const [valorInput, setValorInput] = useState<string>("");
   const [momentoSelecionado, setMomentoSelecionado] =
