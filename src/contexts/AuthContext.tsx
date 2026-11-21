@@ -130,7 +130,13 @@ const FALLBACK_AUTH_CONTEXT: AuthContextType = {
 
 export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
-  return context ?? FALLBACK_AUTH_CONTEXT;
+  if (context === undefined) {
+    console.warn(
+      "[AuthContext] useAuth chamado fora de um AuthProvider; retornando fallback seguro."
+    );
+    return FALLBACK_AUTH_CONTEXT;
+  }
+  return context;
 }
 
 export default AuthContext;
