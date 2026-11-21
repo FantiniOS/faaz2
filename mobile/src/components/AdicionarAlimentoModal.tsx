@@ -6,11 +6,13 @@ import {
   TextInput,
   TouchableOpacity,
   FlatList,
+  ScrollView,
   ActivityIndicator,
   StyleSheet,
   Platform,
   KeyboardAvoidingView,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, X, Plus, Flame, Check, Sparkles } from "lucide-react-native";
 import api from "../services/api";
 import { FoodThumbnail } from "./FoodThumbnail";
@@ -31,6 +33,7 @@ export interface AlimentoBuscaOption {
 interface AdicionarAlimentoModalProps {
   visible: boolean;
   refeicaoNome?: string;
+  bottomInset?: number;
   onClose: () => void;
   onConfirm: (alimento: AlimentoBuscaOption, gramas: number) => void;
 }
@@ -38,9 +41,15 @@ interface AdicionarAlimentoModalProps {
 export function AdicionarAlimentoModal({
   visible,
   refeicaoNome = "Refeição",
+  bottomInset,
   onClose,
   onConfirm,
 }: AdicionarAlimentoModalProps) {
+  const insets = useSafeAreaInsets();
+  const effectiveBottomInset =
+    typeof bottomInset === "number" ? bottomInset : insets.bottom;
+  const sheetBottomPadding = Math.max(effectiveBottomInset, 24) + 16;
+
   const [busca, setBusca] = useState("");
   const [carregando, setCarregando] = useState(false);
   const [resultados, setResultados] = useState<AlimentoBuscaOption[]>([]);
@@ -120,12 +129,17 @@ export function AdicionarAlimentoModal({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.modalOverlay}
       >
-        <View style={styles.sheetContainer}>
+        <View
+          style={[
+            styles.sheetContainer,
+            { paddingBottom: sheetBottomPadding },
+          ]}
+        >
           {/* BARRA SUPERIOR E CABEÇALHO */}
           <View style={styles.dragIndicator} />
           
           <View style={styles.headerRow}>
-            <View>
+            <View style={styles.headerTitleCol}>
               <Text style={styles.headerTitle}>Adicionar ao Diário</Text>
               <Text style={styles.headerSubtitle}>{refeicaoNome} • Tabela TACO</Text>
             </View>
@@ -166,94 +180,101 @@ export function AdicionarAlimentoModal({
 
           {/* PAINEL DE SELEÇÃO E QUANTIDADE (QUANDO ALIMENTO FOI SELECIONADO) */}
           {alimentoSelecionado ? (
-            <View style={styles.selectedFoodCard}>
-              <View style={styles.selectedFoodHeader}>
-                <FoodThumbnail
-                  nome={alimentoSelecionado.nome}
-                  categoria={alimentoSelecionado.categoria}
-                  imageUrl={alimentoSelecionado.thumbnailUrl}
-                  size={46}
-                />
-                <View style={styles.selectedFoodTexts}>
-                  <Text style={styles.selectedFoodName} numberOfLines={2}>
-                    {alimentoSelecionado.nome}
-                  </Text>
-                  <Text style={styles.selectedFoodCategory}>
-                    {alimentoSelecionado.categoria || "Geral"} • {alimentoSelecionado.calorias} kcal / 100g
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setAlimentoSelecionado(null)}
-                  style={styles.changeSelectionBtn}
-                >
-                  <Text style={styles.changeSelectionText}>Trocar</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* SELETOR DE QUANTIDADE EM GRAMAS */}
-              <View style={styles.portionControlBox}>
-                <Text style={styles.portionLabel}>Quantidade consumida (gramas):</Text>
-                <View style={styles.portionInputRow}>
-                  <TextInput
-                    value={gramas}
-                    onChangeText={setGramas}
-                    keyboardType="numeric"
-                    style={styles.portionInput}
-                    maxLength={5}
+            <ScrollView
+              style={styles.selectedFoodScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              bounces={false}
+            >
+              <View style={styles.selectedFoodCard}>
+                <View style={styles.selectedFoodHeader}>
+                  <FoodThumbnail
+                    nome={alimentoSelecionado.nome}
+                    categoria={alimentoSelecionado.categoria}
+                    imageUrl={alimentoSelecionado.thumbnailUrl}
+                    size={46}
                   />
-                  <Text style={styles.portionUnitLabel}>gramas</Text>
-
-                  {/* Calorias Calculadas em Tempo Real */}
-                  <View style={styles.calcCaloriesBadge}>
-                    <Flame size={14} color="#ea580c" />
-                    <Text style={styles.calcCaloriesText}>
-                      {caloriasCalculadas} kcal
+                  <View style={styles.selectedFoodTexts}>
+                    <Text style={styles.selectedFoodName} numberOfLines={2}>
+                      {alimentoSelecionado.nome}
                     </Text>
+                    <Text style={styles.selectedFoodCategory}>
+                      {alimentoSelecionado.categoria || "Geral"} • {alimentoSelecionado.calorias} kcal / 100g
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setAlimentoSelecionado(null)}
+                    style={styles.changeSelectionBtn}
+                  >
+                    <Text style={styles.changeSelectionText}>Trocar</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* SELETOR DE QUANTIDADE EM GRAMAS */}
+                <View style={styles.portionControlBox}>
+                  <Text style={styles.portionLabel}>Quantidade consumida (gramas):</Text>
+                  <View style={styles.portionInputRow}>
+                    <TextInput
+                      value={gramas}
+                      onChangeText={setGramas}
+                      keyboardType="numeric"
+                      style={styles.portionInput}
+                      maxLength={5}
+                    />
+                    <Text style={styles.portionUnitLabel}>gramas</Text>
+
+                    {/* Calorias Calculadas em Tempo Real */}
+                    <View style={styles.calcCaloriesBadge}>
+                      <Flame size={14} color="#ea580c" />
+                      <Text style={styles.calcCaloriesText}>
+                        {caloriasCalculadas} kcal
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Botões de Ajuste Rápido */}
+                  <View style={styles.quickAddRow}>
+                    {[50, 100, 150, 200].map((qtd) => (
+                      <TouchableOpacity
+                        key={qtd}
+                        onPress={() => setGramas(String(qtd))}
+                        style={[
+                          styles.quickAddBtn,
+                          gramas === String(qtd) && styles.quickAddBtnActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.quickAddText,
+                            gramas === String(qtd) && styles.quickAddTextActive,
+                          ]}
+                        >
+                          {qtd}g
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity
+                      onPress={() => handleIncrementarGramas(25)}
+                      style={styles.quickAddBtn}
+                    >
+                      <Text style={styles.quickAddText}>+25g</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
 
-                {/* Botões de Ajuste Rápido */}
-                <View style={styles.quickAddRow}>
-                  {[50, 100, 150, 200].map((qtd) => (
-                    <TouchableOpacity
-                      key={qtd}
-                      onPress={() => setGramas(String(qtd))}
-                      style={[
-                        styles.quickAddBtn,
-                        gramas === String(qtd) && styles.quickAddBtnActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.quickAddText,
-                          gramas === String(qtd) && styles.quickAddTextActive,
-                        ]}
-                      >
-                        {qtd}g
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    onPress={() => handleIncrementarGramas(25)}
-                    style={styles.quickAddBtn}
-                  >
-                    <Text style={styles.quickAddText}>+25g</Text>
-                  </TouchableOpacity>
-                </View>
+                {/* BOTÃO CONFIRMAR ADIÇÃO */}
+                <TouchableOpacity
+                  onPress={handleConfirmar}
+                  style={styles.confirmButton}
+                  activeOpacity={0.85}
+                >
+                  <Check size={18} color="#ffffff" strokeWidth={2.5} />
+                  <Text style={styles.confirmButtonText}>
+                    ADICIONAR À REFEIÇÃO ({caloriasCalculadas} KCAL)
+                  </Text>
+                </TouchableOpacity>
               </View>
-
-              {/* BOTÃO CONFIRMAR ADIÇÃO */}
-              <TouchableOpacity
-                onPress={handleConfirmar}
-                style={styles.confirmButton}
-                activeOpacity={0.85}
-              >
-                <Check size={18} color="#ffffff" strokeWidth={2.5} />
-                <Text style={styles.confirmButtonText}>
-                  ADICIONAR À REFEIÇÃO ({caloriasCalculadas} KCAL)
-                </Text>
-              </TouchableOpacity>
-            </View>
+            </ScrollView>
           ) : (
             /* LISTA DE RESULTADOS DA BUSCA */
             <View style={styles.resultsContainer}>
@@ -342,7 +363,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 8,
     marginBottom: 14,
+  },
+  headerTitleCol: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
   },
   headerTitle: {
     fontSize: 17,
@@ -360,6 +387,7 @@ const styles = StyleSheet.create({
     padding: 6,
     borderRadius: 10,
     backgroundColor: "#f1f5f9",
+    flexShrink: 0,
   },
   searchBox: {
     flexDirection: "row",
@@ -385,7 +413,12 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   resultsContainer: {
-    height: 380,
+    flexShrink: 1,
+    maxHeight: 380,
+    minHeight: 200,
+  },
+  selectedFoodScroll: {
+    flexGrow: 0,
   },
   listContent: {
     paddingBottom: 20,

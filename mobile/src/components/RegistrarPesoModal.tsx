@@ -5,12 +5,14 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  ScrollView,
   StyleSheet,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Alert,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Scale, X, Check } from "lucide-react-native";
 import { api } from "../services/api";
 
@@ -18,6 +20,8 @@ export interface RegistrarPesoModalProps {
   visible: boolean;
   pacienteId: string;
   pesoAtual?: number | null;
+  topInset?: number;
+  bottomInset?: number;
   onClose: () => void;
   onSuccess?: (novoPeso: number, novoImc?: number | null) => void;
 }
@@ -26,9 +30,19 @@ export function RegistrarPesoModal({
   visible,
   pacienteId,
   pesoAtual,
+  topInset,
+  bottomInset,
   onClose,
   onSuccess,
 }: RegistrarPesoModalProps) {
+  const insets = useSafeAreaInsets();
+  const effectiveTopInset =
+    typeof topInset === "number" ? topInset : insets.top;
+  const effectiveBottomInset =
+    typeof bottomInset === "number" ? bottomInset : insets.bottom;
+  const modalPaddingTop = Math.max(effectiveTopInset, 20);
+  const modalPaddingBottom = Math.max(effectiveBottomInset, 24) + 16;
+
   const [pesoInput, setPesoInput] = useState<string>("");
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -85,74 +99,84 @@ export function RegistrarPesoModal({
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.backdrop}
+        style={[
+          styles.backdrop,
+          { paddingTop: modalPaddingTop, paddingBottom: modalPaddingBottom },
+        ]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.card}>
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.iconBox}>
-                <Scale size={18} color="#0f766e" />
+          <ScrollView
+            style={styles.cardScroll}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            bounces={false}
+          >
+            <View style={styles.header}>
+              <View style={styles.headerLeft}>
+                <View style={styles.iconBox}>
+                  <Scale size={18} color="#0f766e" />
+                </View>
+                <View style={styles.headerTextCol}>
+                  <Text style={styles.title}>Registrar Peso</Text>
+                  <Text style={styles.subtitle}>
+                    Sincronização direta com o prontuário
+                  </Text>
+                </View>
               </View>
-              <View>
-                <Text style={styles.title}>Registrar Peso</Text>
-                <Text style={styles.subtitle}>
-                  Sincronização direta com o prontuário
-                </Text>
-              </View>
+              <TouchableOpacity
+                onPress={onClose}
+                style={styles.closeBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <X size={18} color="#64748b" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <X size={18} color="#64748b" />
-            </TouchableOpacity>
-          </View>
 
-          <View style={styles.inputWrap}>
-            <TextInput
-              value={pesoInput}
-              onChangeText={(txt) => {
-                setPesoInput(txt.replace(/[^0-9.,]/g, "").slice(0, 6));
-                if (errorMsg) setErrorMsg(null);
-              }}
-              placeholder="Ex: 74,5"
-              placeholderTextColor="#94a3b8"
-              keyboardType="decimal-pad"
-              autoFocus
-              style={styles.input}
-            />
-            <Text style={styles.unit}>kg</Text>
-          </View>
+            <View style={styles.inputWrap}>
+              <TextInput
+                value={pesoInput}
+                onChangeText={(txt) => {
+                  setPesoInput(txt.replace(/[^0-9.,]/g, "").slice(0, 6));
+                  if (errorMsg) setErrorMsg(null);
+                }}
+                placeholder="Ex: 74,5"
+                placeholderTextColor="#94a3b8"
+                keyboardType="decimal-pad"
+                autoFocus
+                style={styles.input}
+              />
+              <Text style={styles.unit}>kg</Text>
+            </View>
 
-          {errorMsg ? <Text style={styles.errorText}>{errorMsg}</Text> : null}
+            {errorMsg ? <Text style={styles.errorText}>{errorMsg}</Text> : null}
 
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              onPress={onClose}
-              disabled={isSaving}
-              style={styles.cancelBtn}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.cancelText}>Cancelar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleSalvar}
-              disabled={isSaving}
-              style={[styles.saveBtn, isSaving && { opacity: 0.65 }]}
-              activeOpacity={0.85}
-            >
-              {isSaving ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <>
-                  <Check size={16} color="#ffffff" />
-                  <Text style={styles.saveText}>Salvar Peso</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                onPress={onClose}
+                disabled={isSaving}
+                style={styles.cancelBtn}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.cancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSalvar}
+                disabled={isSaving}
+                style={[styles.saveBtn, isSaving && { opacity: 0.65 }]}
+                activeOpacity={0.85}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <Check size={16} color="#ffffff" />
+                    <Text style={styles.saveText}>Salvar Peso</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -170,6 +194,7 @@ const styles = StyleSheet.create({
   card: {
     width: "100%",
     maxWidth: 380,
+    maxHeight: "88%",
     backgroundColor: "#ffffff",
     borderRadius: 20,
     padding: 20,
@@ -181,16 +206,27 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 10,
   },
+  cardScroll: {
+    flexGrow: 0,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 8,
     marginBottom: 18,
   },
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  headerTextCol: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
   },
   iconBox: {
     width: 36,
@@ -201,6 +237,7 @@ const styles = StyleSheet.create({
     borderColor: "#ccfbf1",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   title: {
     fontSize: 16,
@@ -219,6 +256,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f1f5f9",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   inputWrap: {
     flexDirection: "row",

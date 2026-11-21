@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Polyline, Circle as SvgCircle } from "react-native-svg";
 import {
   Scale,
@@ -116,6 +117,7 @@ export function MetasScreen({
   onNavigateToCheckin,
 }: MetasScreenProps) {
   const { paciente: authPaciente } = usePatientAuth();
+  const insets = useSafeAreaInsets();
   const realPacienteId = pacienteId || authPaciente?.id || "";
 
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -1066,6 +1068,8 @@ export function MetasScreen({
         visible={isPesoModalOpen}
         pacienteId={realPacienteId}
         pesoAtual={pesoEvolucao.pesoAtualKg || null}
+        topInset={insets.top}
+        bottomInset={insets.bottom}
         onClose={() => setIsPesoModalOpen(false)}
         onSuccess={() => {
           carregarEvolucao();

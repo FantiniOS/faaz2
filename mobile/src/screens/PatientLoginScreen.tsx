@@ -38,6 +38,7 @@ import {
   Activity,
   Lock,
 } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import logoFaaz from "../assets/logo.png";
 import { usePatientAuth } from "../contexts/PatientAuthContext";
 import { TermosPrivacidadeModal } from "../components/TermosPrivacidadeModal";
@@ -57,6 +58,7 @@ function formatCpf(text: string): string {
 
 export function PatientLoginScreen() {
   const { loginComCpf, isLoading } = usePatientAuth();
+  const insets = useSafeAreaInsets();
   const [cpf, setCpf] = useState<string>("");
   const [manterConectado, setManterConectado] = useState<boolean>(true);
   const [cpfFocused, setCpfFocused] = useState<boolean>(false);
@@ -211,7 +213,13 @@ export function PatientLoginScreen() {
       >
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: insets.top + 8,
+              paddingBottom: Math.max(insets.bottom, 16) + 8,
+            },
+          ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
@@ -265,9 +273,14 @@ export function PatientLoginScreen() {
               <View style={styles.hudHeaderRow}>
                 <View style={styles.hudBadgeLeft}>
                   <View style={styles.hudIconBox}>
-                    <Activity size={12} color="#047857" />
+                    <Activity size={11} color="#047857" />
                   </View>
-                  <Text style={styles.hudLabel}>
+                  <Text
+                    style={styles.hudLabel}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.8}
+                  >
                     Acompanhamento Clínico Sincronizado
                   </Text>
                 </View>
@@ -280,7 +293,7 @@ export function PatientLoginScreen() {
               <Svg
                 pointerEvents="none"
                 width="100%"
-                height={34}
+                height={22}
                 viewBox="0 0 320 40"
                 preserveAspectRatio="none"
               >
@@ -502,6 +515,8 @@ export function PatientLoginScreen() {
       <TermosPrivacidadeModal
         visible={isTermosOpen}
         mode="leitura"
+        topInset={insets.top}
+        bottomInset={insets.bottom}
         onClose={() => setIsTermosOpen(false)}
       />
     </View>
@@ -531,58 +546,57 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: "center",
     paddingHorizontal: 20,
-    paddingVertical: 28,
   },
   brandingSection: {
     alignItems: "center",
-    marginBottom: 22,
+    marginBottom: 12,
   },
   logoHaloWrap: {
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 12,
+    marginBottom: 7,
   },
   logoMedallion: {
     backgroundColor: "rgba(255, 255, 255, 0.92)",
-    borderRadius: 22,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    borderRadius: 18,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: "rgba(217, 169, 78, 0.28)",
     shadowColor: "#b4821e",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    elevation: 5,
   },
   logoImage: {
-    width: 62,
-    height: 74,
+    width: 48,
+    height: 56,
   },
   brandTitle: {
-    fontSize: 22,
+    fontSize: 19.5,
     fontWeight: "900",
     color: "#0f172a",
-    letterSpacing: 1.6,
+    letterSpacing: 1.5,
   },
   brandSubtitle: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: "700",
     color: "#64748b",
-    letterSpacing: 2.1,
-    marginTop: 4,
+    letterSpacing: 2,
+    marginTop: 2,
   },
   portalPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 6,
     backgroundColor: "rgba(255, 255, 255, 0.9)",
     borderWidth: 1,
     borderColor: "#a7f3d0",
-    paddingHorizontal: 13,
-    paddingVertical: 5.5,
+    paddingHorizontal: 11,
+    paddingVertical: 4,
     borderRadius: 999,
-    marginTop: 12,
+    marginTop: 7,
     shadowColor: "#0f766e",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
@@ -609,39 +623,40 @@ const styles = StyleSheet.create({
     backgroundColor: "#10b981",
   },
   portalPillText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: "800",
     color: "#065f46",
-    letterSpacing: 1.1,
+    letterSpacing: 1,
   },
   loginCard: {
     backgroundColor: "#ffffff",
-    borderRadius: 26,
-    padding: 20,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderWidth: 1,
     borderColor: "rgba(226, 232, 240, 0.95)",
     shadowColor: "#0f172a",
-    shadowOffset: { width: 0, height: 14 },
+    shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.08,
-    shadowRadius: 26,
+    shadowRadius: 22,
     elevation: 6,
   },
   hudStrip: {
     backgroundColor: "#f8fafc",
-    borderRadius: 16,
+    borderRadius: 13,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    paddingHorizontal: 11,
-    paddingTop: 9,
-    paddingBottom: 5,
-    marginBottom: 16,
+    paddingHorizontal: 10,
+    paddingTop: 7,
+    paddingBottom: 4,
+    marginBottom: 10,
     overflow: "hidden",
   },
   hudHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 4,
+    marginBottom: 3,
     gap: 8,
   },
   hudBadgeLeft: {
@@ -649,19 +664,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     flex: 1,
+    minWidth: 0,
   },
   hudIconBox: {
-    width: 22,
-    height: 22,
-    borderRadius: 7,
+    width: 20,
+    height: 20,
+    borderRadius: 6,
     backgroundColor: "#ecfdf5",
     borderWidth: 1,
     borderColor: "#a7f3d0",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   hudLabel: {
-    fontSize: 10.5,
+    flex: 1,
+    minWidth: 0,
+    fontSize: 11,
     fontWeight: "700",
     color: "#334155",
   },
@@ -675,6 +694,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
+    flexShrink: 0,
   },
   hudLockText: {
     fontSize: 9.5,
@@ -683,19 +703,19 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   cardHeader: {
-    marginBottom: 16,
+    marginBottom: 10,
   },
   cardTitle: {
-    fontSize: 18.5,
+    fontSize: 17,
     fontWeight: "800",
     color: "#0f172a",
     letterSpacing: -0.3,
   },
   cardDescription: {
-    fontSize: 12.8,
+    fontSize: 12,
     color: "#475569",
-    lineHeight: 18.5,
-    marginTop: 5,
+    lineHeight: 16.5,
+    marginTop: 3,
     fontWeight: "500",
   },
   errorBanner: {
@@ -706,26 +726,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#fecdd3",
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 14,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    marginBottom: 10,
   },
   errorBannerText: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: "600",
     color: "#be123c",
-    lineHeight: 17,
+    lineHeight: 16,
   },
   inputContainer: {
-    marginBottom: 14,
+    marginBottom: 10,
   },
   inputLabel: {
     fontSize: 10.5,
     fontWeight: "700",
     color: "#334155",
     letterSpacing: 0.8,
-    marginBottom: 7,
+    marginBottom: 5,
   },
   inputWrapper: {
     flexDirection: "row",
@@ -733,9 +753,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc",
     borderWidth: 1.5,
     borderColor: "#e2e8f0",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 52,
+    borderRadius: 13,
+    paddingHorizontal: 13,
+    height: 46,
   },
   inputWrapperFocused: {
     backgroundColor: "#ffffff",
@@ -753,7 +773,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: "100%",
     paddingVertical: 0,
-    fontSize: 16,
+    fontSize: 15.5,
     fontWeight: "700",
     color: "#0f172a",
     letterSpacing: 1.1,
@@ -771,14 +791,14 @@ const styles = StyleSheet.create({
   checkboxRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 9,
-    marginBottom: 16,
+    gap: 8,
+    marginBottom: 11,
     alignSelf: "flex-start",
-    paddingVertical: 2,
+    paddingVertical: 1,
   },
   checkboxBox: {
-    width: 20,
-    height: 20,
+    width: 19,
+    height: 19,
     borderRadius: 6,
     borderWidth: 1.6,
     borderColor: "#94a3b8",
@@ -791,20 +811,20 @@ const styles = StyleSheet.create({
     borderColor: "#059669",
   },
   checkboxLabel: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: "#334155",
     fontWeight: "600",
   },
   loginButton: {
     backgroundColor: "#059669",
-    height: 51,
-    borderRadius: 14,
+    height: 46,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#059669",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.26,
+    shadowRadius: 12,
     elevation: 4,
   },
   loginButtonDisabled: {
@@ -817,20 +837,20 @@ const styles = StyleSheet.create({
   },
   loginButtonText: {
     color: "#ffffff",
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
   helpRow: {
-    marginTop: 16,
-    paddingTop: 14,
+    marginTop: 11,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: "#f1f5f9",
     alignItems: "center",
-    gap: 5,
+    gap: 3,
   },
   helpPromptText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#64748b",
     fontWeight: "500",
   },
@@ -838,29 +858,30 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    paddingVertical: 3,
+    paddingVertical: 2,
     paddingHorizontal: 8,
     borderRadius: 8,
   },
   helpLinkText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "800",
     color: "#047857",
   },
   footerBlock: {
     alignItems: "center",
-    marginTop: 22,
-    gap: 10,
+    marginTop: 12,
+    gap: 7,
   },
   securityRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    paddingHorizontal: 10,
+    gap: 5,
+    paddingHorizontal: 8,
   },
   securityText: {
-    fontSize: 11,
+    flexShrink: 1,
+    fontSize: 10.5,
     fontWeight: "600",
     color: "#0f766e",
     textAlign: "center",
@@ -877,7 +898,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(226, 232, 240, 0.9)",
   },
   termsLinkText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: "600",
     color: "#475569",
   },

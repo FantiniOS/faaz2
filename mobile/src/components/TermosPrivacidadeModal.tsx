@@ -11,6 +11,7 @@ import {
   Platform,
   Alert,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ShieldCheck,
   AlertTriangle,
@@ -36,6 +37,8 @@ export interface TermosPrivacidadeModalProps {
   pacienteId?: string;
   termosVersaoAceita?: string | null;
   termosAceitoEm?: string | null;
+  topInset?: number;
+  bottomInset?: number;
   onAccepted?: (versao: string, aceitoEm: string) => Promise<void> | void;
   onLogout?: () => Promise<void> | void;
   onClose?: () => void;
@@ -51,10 +54,21 @@ export function TermosPrivacidadeModal({
   pacienteId,
   termosVersaoAceita,
   termosAceitoEm,
+  topInset,
+  bottomInset,
   onAccepted,
   onLogout,
   onClose,
 }: TermosPrivacidadeModalProps) {
+  const insets = useSafeAreaInsets();
+  const effectiveTopInset =
+    typeof topInset === "number" ? topInset : insets.top;
+  const effectiveBottomInset =
+    typeof bottomInset === "number" ? bottomInset : insets.bottom;
+  const headerPaddingTop =
+    Math.max(effectiveTopInset, Platform.OS === "ios" ? 44 : 16) + 10;
+  const footerPaddingBottom = Math.max(effectiveBottomInset, 24) + 16;
+
   const [concordou, setConcordou] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -127,12 +141,12 @@ export function TermosPrivacidadeModal({
     >
       <View style={styles.root}>
         {/* CABEÇALHO EXECUTIVO */}
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
           <View style={styles.headerTopRow}>
             <View style={styles.headerIconBox}>
               <ShieldCheck size={18} color="#2dd4bf" />
             </View>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
               <Text style={styles.headerTitle}>
                 {mode === "aceite"
                   ? "Antes de começar — Termos & Privacidade"
@@ -241,7 +255,7 @@ export function TermosPrivacidadeModal({
 
         {/* RODAPÉ FIXO CONFORME MODO */}
         {mode === "aceite" ? (
-          <View style={styles.footer}>
+          <View style={[styles.footer, { paddingBottom: footerPaddingBottom }]}>
             {erro ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{erro}</Text>
@@ -304,7 +318,7 @@ export function TermosPrivacidadeModal({
             </TouchableOpacity>
           </View>
         ) : (
-          <View style={styles.footer}>
+          <View style={[styles.footer, { paddingBottom: footerPaddingBottom }]}>
             <TouchableOpacity
               activeOpacity={0.76}
               onPress={() => void handleAbrirVersaoWeb()}
@@ -356,6 +370,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(45, 212, 191, 0.28)",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   headerTitle: {
     fontSize: 15.5,
@@ -376,6 +391,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.1)",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   proofPill: {
     flexDirection: "row",

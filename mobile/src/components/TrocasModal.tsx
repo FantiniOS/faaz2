@@ -24,6 +24,7 @@ export interface TrocasModalProps {
   visible: boolean;
   item: ItemRefeicaoApi | null;
   substituicaoAtivaId: string | null;
+  bottomInset?: number;
   onSelectSubstituicao: (substituicaoId: string | null) => void;
   onClose: () => void;
 }
@@ -32,6 +33,7 @@ export function TrocasModal({
   visible,
   item,
   substituicaoAtivaId,
+  bottomInset,
   onSelectSubstituicao,
   onClose,
 }: TrocasModalProps) {
@@ -53,7 +55,9 @@ export function TrocasModal({
       )
     : [];
 
-  const bottomPadding = Math.max(insets.bottom + 16, 24);
+  const effectiveBottomInset =
+    typeof bottomInset === "number" ? bottomInset : insets.bottom;
+  const bottomPadding = Math.max(effectiveBottomInset, 24) + 16;
 
   return (
     <Modal
@@ -244,7 +248,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: "82%",
+    maxHeight: "88%",
     overflow: "hidden",
     shadowColor: "#0f172a",
     shadowOffset: { width: 0, height: -6 },
@@ -272,10 +276,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 8,
   },
   headerTitleCol: {
     flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
   },
   kickerRow: {
     flexDirection: "row",
@@ -303,6 +309,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   originalChipRow: {
     flexDirection: "row",

@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Coffee,
   Sun,
@@ -25,6 +26,7 @@ import { FoodThumbnail } from "./FoodThumbnail";
 import { AdicionarAlimentoModal, AlimentoBuscaOption } from "./AdicionarAlimentoModal";
 
 export function DiarioAlimentarSection() {
+  const insets = useSafeAreaInsets();
   const {
     refeicoes,
     toggleCheckinRefeicao,
@@ -336,6 +338,7 @@ export function DiarioAlimentarSection() {
       <AdicionarAlimentoModal
         visible={modalRefeicaoId !== null}
         refeicaoNome={refeicaoModalAtiva?.nome || "Refeição"}
+        bottomInset={insets.bottom}
         onClose={() => setModalRefeicaoId(null)}
         onConfirm={handleConfirmarAdicionar}
       />
@@ -348,6 +351,7 @@ export function DiarioAlimentarSection() {
             ? `Substituir: ${itemParaSubstituir.itemNome}`
             : "Substituição"
         }
+        bottomInset={insets.bottom}
         onClose={() => setItemParaSubstituir(null)}
         onConfirm={handleConfirmarSubstituicao}
       />

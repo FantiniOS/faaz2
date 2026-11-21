@@ -29,6 +29,7 @@ import {
   SafeAreaProvider,
   SafeAreaView,
   initialWindowMetrics,
+  useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { BristolCheckinScreen } from "./src/screens/BristolCheckinScreen";
@@ -122,6 +123,7 @@ function AppRouter({
   onPacienteUpdated,
   onLogout,
 }: AppRouterProps) {
+  const insets = useSafeAreaInsets();
   const [screenStack, setScreenStack] = useState<ScreenRoute[]>(["home"]);
   const stackRef = useRef<ScreenRoute[]>(["home"]);
   const [completedCheckins, setCompletedCheckins] = useState<string[]>([]);
@@ -335,6 +337,8 @@ function AppRouter({
         pacienteId={paciente.id}
         termosVersaoAceita={paciente.termosVersaoAceita}
         termosAceitoEm={paciente.termosAceitoEm}
+        topInset={insets.top}
+        bottomInset={insets.bottom}
         onAccepted={async (versao, aceitoEm) => {
           await onPacienteUpdated({
             termosVersaoAceita: versao,
@@ -351,13 +355,16 @@ function MainNavigator() {
   const { paciente, isInitializing, atualizarPacienteLocal, logout } =
     usePatientAuth();
   const isAuthenticated = Boolean(paciente) && !isInitializing;
+  const isLoginScreen = !paciente && !isInitializing;
 
   return (
     <SafeAreaView
       edges={
         isAuthenticated
           ? ["bottom", "left", "right"]
-          : ["top", "bottom", "left", "right"]
+          : isLoginScreen
+            ? ["left", "right"]
+            : ["top", "bottom", "left", "right"]
       }
       className="flex-1 w-full h-full"
       style={styles.safeAreaContainer}

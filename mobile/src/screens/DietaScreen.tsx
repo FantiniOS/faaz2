@@ -23,6 +23,7 @@ import {
   AlertCircle,
   RotateCcw,
 } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StandardHeader } from "../components/StandardHeader";
 import { BottomTabBar } from "../components/BottomTabBar";
 import { FoodThumbnail } from "../components/FoodThumbnail";
@@ -95,6 +96,7 @@ function getStatusBadgeConfig(status?: CheckinRefeicaoStatus | null) {
 
 export function DietaScreen({ onTabPress }: DietaScreenProps) {
   const { paciente } = usePatientAuth();
+  const insets = useSafeAreaInsets();
   const {
     plano,
     pacienteDieta,
@@ -800,6 +802,7 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
       <TrocasModal
         visible={Boolean(itemModalTroca)}
         item={itemModalTroca?.item ?? null}
+        bottomInset={insets.bottom}
         substituicaoAtivaId={
           itemModalTroca
             ? trocasSelecionadas[itemModalTroca.item.id] ?? null

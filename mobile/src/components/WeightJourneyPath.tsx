@@ -17,6 +17,7 @@ import {
   Keyboard,
   ScrollView,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Star, Trophy, Sparkles, Scale, X, Check } from "lucide-react-native";
 import Svg, { Polyline } from "react-native-svg";
 import { api } from "../services/api";
@@ -69,6 +70,10 @@ export function WeightJourneyPath({
   onPressStar,
   onPesoUpdated,
 }: WeightJourneyPathProps) {
+  const insets = useSafeAreaInsets();
+  const modalPaddingTop = Math.max(insets.top, 20);
+  const modalPaddingBottom = Math.max(insets.bottom, 24) + 16;
+
   const [trackWidth, setTrackWidth] = useState<number>(0);
 
   // Estado local reativo do peso atual (permite recalcular instantaneamente)
@@ -569,7 +574,12 @@ export function WeightJourneyPath({
         }}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.modalOverlay,
+              { paddingTop: modalPaddingTop, paddingBottom: modalPaddingBottom },
+            ]}
+          >
             <KeyboardAvoidingView
               behavior={Platform.OS === "ios" ? "padding" : undefined}
               style={styles.modalKeyboardAvoid}
@@ -585,77 +595,84 @@ export function WeightJourneyPath({
                   <X size={18} color="#64748b" />
                 </TouchableOpacity>
 
-                {/* Ícone e Título do Modal */}
-                <View style={styles.modalHeader}>
-                  <View style={styles.modalIconBox}>
-                    <Scale size={24} color="#0f766e" strokeWidth={2.4} />
+                <ScrollView
+                  style={styles.modalScroll}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  bounces={false}
+                >
+                  {/* Ícone e Título do Modal */}
+                  <View style={styles.modalHeader}>
+                    <View style={styles.modalIconBox}>
+                      <Scale size={24} color="#0f766e" strokeWidth={2.4} />
+                    </View>
+                    <Text style={styles.modalTitle}>QUAL O SEU PESO HOJE?</Text>
+                    <Text style={styles.modalSubtitle}>
+                      DIGITE SEU PESO AFERIDO EM KG PARA RECALCULAR SUA JORNADA EM TEMPO REAL.
+                    </Text>
                   </View>
-                  <Text style={styles.modalTitle}>QUAL O SEU PESO HOJE?</Text>
-                  <Text style={styles.modalSubtitle}>
-                    DIGITE SEU PESO AFERIDO EM KG PARA RECALCULAR SUA JORNADA EM TEMPO REAL.
-                  </Text>
-                </View>
 
-                {/* Input de Peso Numérico */}
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={[
-                      styles.pesoInput,
-                      Platform.OS === "web" && ({ outlineStyle: "none" } as any),
-                    ]}
-                    value={inputPeso}
-                    onChangeText={(txt) => setInputPeso(txt.replace(/[^0-9.,]/g, ""))}
-                    placeholder="EX: 84.5"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="decimal-pad"
-                    autoFocus
-                    editable={!isSaving}
-                    maxLength={6}
-                  />
-                  <View style={styles.kgBadge}>
-                    <Text style={styles.kgBadgeText}>KG</Text>
+                  {/* Input de Peso Numérico */}
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={[
+                        styles.pesoInput,
+                        Platform.OS === "web" && ({ outlineStyle: "none" } as any),
+                      ]}
+                      value={inputPeso}
+                      onChangeText={(txt) => setInputPeso(txt.replace(/[^0-9.,]/g, ""))}
+                      placeholder="EX: 84.5"
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="decimal-pad"
+                      autoFocus
+                      editable={!isSaving}
+                      maxLength={6}
+                    />
+                    <View style={styles.kgBadge}>
+                      <Text style={styles.kgBadgeText}>KG</Text>
+                    </View>
                   </View>
-                </View>
 
-                {/* Aviso Sutil de Sincronização */}
-                <View style={styles.syncNoticeBox}>
-                  <Check size={12} color="#0f766e" />
-                  <Text style={styles.syncNoticeText}>
-                    SINCRONIZAÇÃO AUTOMÁTICA COM SEU PRONTUÁRIO MÉDICO
-                  </Text>
-                </View>
+                  {/* Aviso Sutil de Sincronização */}
+                  <View style={styles.syncNoticeBox}>
+                    <Check size={12} color="#0f766e" />
+                    <Text style={styles.syncNoticeText}>
+                      SINCRONIZAÇÃO AUTOMÁTICA COM SEU PRONTUÁRIO MÉDICO
+                    </Text>
+                  </View>
 
-                {/* Botões de Ação */}
-                <View style={styles.modalActionsRow}>
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={() => setIsModalOpen(false)}
-                    style={styles.modalCancelButton}
-                    disabled={isSaving}
-                  >
-                    <Text style={styles.modalCancelButtonText}>CANCELAR</Text>
-                  </TouchableOpacity>
+                  {/* Botões de Ação */}
+                  <View style={styles.modalActionsRow}>
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={() => setIsModalOpen(false)}
+                      style={styles.modalCancelButton}
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.modalCancelButtonText}>CANCELAR</Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    activeOpacity={0.85}
-                    onPress={handleSalvarPeso}
-                    style={[
-                      styles.modalSaveButton,
-                      isSaving && styles.modalSaveButtonDisabled,
-                      isSaving && { opacity: 0.6 },
-                    ]}
-                    disabled={isSaving}
-                  >
-                    {isSaving ? (
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <ActivityIndicator size="small" color="#ffffff" />
-                        <Text style={styles.modalSaveButtonText}>SALVANDO...</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.modalSaveButtonText}>SALVAR PESO</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={handleSalvarPeso}
+                      style={[
+                        styles.modalSaveButton,
+                        isSaving && styles.modalSaveButtonDisabled,
+                        isSaving && { opacity: 0.6 },
+                      ]}
+                      disabled={isSaving}
+                    >
+                      {isSaving ? (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <ActivityIndicator size="small" color="#ffffff" />
+                          <Text style={styles.modalSaveButtonText}>SALVANDO...</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.modalSaveButtonText}>SALVAR PESO</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
               </View>
             </KeyboardAvoidingView>
           </View>
@@ -934,10 +951,12 @@ const styles = StyleSheet.create({
   modalKeyboardAvoid: {
     width: "100%",
     maxWidth: 380,
+    maxHeight: "88%",
     alignItems: "center",
   },
   modalCard: {
     width: "100%",
+    maxHeight: "100%",
     backgroundColor: "#ffffff",
     borderRadius: 24,
     paddingHorizontal: 22,
@@ -949,6 +968,9 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 10,
     position: "relative",
+  },
+  modalScroll: {
+    flexGrow: 0,
   },
   modalCloseButton: {
     position: "absolute",

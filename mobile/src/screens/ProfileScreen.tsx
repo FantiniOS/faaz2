@@ -37,6 +37,7 @@ import {
   Pencil,
   Mail,
 } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
@@ -171,6 +172,8 @@ export function ProfileScreen({
 }: ProfileScreenProps) {
   const { paciente, logout, atualizarAvatarUrl, atualizarPacienteLocal } =
     usePatientAuth();
+  const insets = useSafeAreaInsets();
+  const modalBottomPadding = Math.max(insets.bottom, 24) + 16;
   const pacienteId = paciente?.id || "";
 
   const [isUploading, setIsUploading] = useState(false);
@@ -734,7 +737,7 @@ export function ProfileScreen({
               <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
                 <Calendar size={16} color="#0f766e" />
               </View>
-              <View>
+              <View style={[styles.cardTitleTextCol, { paddingRight: 8 }]}>
                 <Text style={styles.cardTitle}>Próxima Consulta</Text>
                 <Text style={styles.cardSubtitle}>Agenda oficial Clínica FAAZ</Text>
               </View>
@@ -918,7 +921,7 @@ export function ProfileScreen({
               <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
                 <HeartPulse size={16} color="#0f766e" />
               </View>
-              <View>
+              <View style={[styles.cardTitleTextCol, { paddingRight: 8 }]}>
                 <Text style={styles.cardTitle}>Protocolo Clínico</Text>
                 <Text style={styles.cardSubtitle}>
                   Diretrizes definidas pela equipe médica
@@ -1169,7 +1172,7 @@ export function ProfileScreen({
               <View style={[styles.iconBox, { backgroundColor: "#f1f5f9" }]}>
                 <UserIcon size={16} color="#334155" />
               </View>
-              <View>
+              <View style={[styles.cardTitleTextCol, { marginRight: 8 }]}>
                 <Text style={styles.cardTitle}>Dados do Paciente & Conta</Text>
                 <Text style={styles.cardSubtitle}>
                   Prontuário {prontuarioCodigo}
@@ -1333,7 +1336,9 @@ export function ProfileScreen({
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={styles.modalBackdrop}
         >
-          <View style={styles.modalSheet}>
+          <View
+            style={[styles.modalSheet, { paddingBottom: modalBottomPadding }]}
+          >
             <View style={styles.modalHandle} />
 
             <View style={styles.modalHeaderRow}>
@@ -1341,7 +1346,7 @@ export function ProfileScreen({
                 <View style={styles.modalIconBox}>
                   <Pencil size={15} color="#047857" />
                 </View>
-                <View>
+                <View style={styles.modalTitleTextCol}>
                   <Text style={styles.modalTitle}>
                     Atualizar Dados de Contato
                   </Text>
@@ -1361,89 +1366,97 @@ export function ProfileScreen({
               </TouchableOpacity>
             </View>
 
-            {erroContato ? (
-              <View style={styles.modalErrorBox}>
-                <Text style={styles.modalErrorText}>{erroContato}</Text>
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              bounces={false}
+            >
+              {erroContato ? (
+                <View style={styles.modalErrorBox}>
+                  <Text style={styles.modalErrorText}>{erroContato}</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalFieldLabel}>WhatsApp / Telefone *</Text>
+                <View style={styles.modalInputWrapper}>
+                  <Phone size={15} color="#0f766e" />
+                  <TextInput
+                    value={editTelefone}
+                    onChangeText={(txt) => {
+                      setEditTelefone(formatTelefoneBrInput(txt));
+                      if (erroContato) setErroContato(null);
+                    }}
+                    placeholder="(31) 99999-9999"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="phone-pad"
+                    maxLength={15}
+                    editable={!salvandoContato}
+                    style={styles.modalInput}
+                  />
+                </View>
               </View>
-            ) : null}
 
-            <View style={styles.modalFieldGroup}>
-              <Text style={styles.modalFieldLabel}>WhatsApp / Telefone *</Text>
-              <View style={styles.modalInputWrapper}>
-                <Phone size={15} color="#0f766e" />
-                <TextInput
-                  value={editTelefone}
-                  onChangeText={(txt) => {
-                    setEditTelefone(formatTelefoneBrInput(txt));
-                    if (erroContato) setErroContato(null);
-                  }}
-                  placeholder="(31) 99999-9999"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="phone-pad"
-                  maxLength={15}
-                  editable={!salvandoContato}
-                  style={styles.modalInput}
-                />
+              <View style={styles.modalFieldGroup}>
+                <Text style={styles.modalFieldLabel}>E-mail</Text>
+                <View style={styles.modalInputWrapper}>
+                  <Mail size={15} color="#0f766e" />
+                  <TextInput
+                    value={editEmail}
+                    onChangeText={(txt) => {
+                      setEditEmail(txt);
+                      if (erroContato) setErroContato(null);
+                    }}
+                    placeholder="seu.email@exemplo.com"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!salvandoContato}
+                    style={styles.modalInput}
+                  />
+                </View>
               </View>
-            </View>
 
-            <View style={styles.modalFieldGroup}>
-              <Text style={styles.modalFieldLabel}>E-mail</Text>
-              <View style={styles.modalInputWrapper}>
-                <Mail size={15} color="#0f766e" />
-                <TextInput
-                  value={editEmail}
-                  onChangeText={(txt) => {
-                    setEditEmail(txt);
-                    if (erroContato) setErroContato(null);
-                  }}
-                  placeholder="seu.email@exemplo.com"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!salvandoContato}
-                  style={styles.modalInput}
-                />
+              <Text style={styles.modalSecurityNote}>
+                Nome, CPF e dados do prontuário só podem ser alterados pela
+                recepção da Clínica FAAZ.
+              </Text>
+
+              <View style={styles.modalActionsRow}>
+                <TouchableOpacity
+                  activeOpacity={0.78}
+                  disabled={salvandoContato}
+                  onPress={() => setIsEditContatoOpen(false)}
+                  style={styles.modalCancelBtn}
+                >
+                  <Text style={styles.modalCancelBtnText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.84}
+                  disabled={salvandoContato}
+                  onPress={() => void handleSalvarContato()}
+                  style={[
+                    styles.modalSaveBtn,
+                    salvandoContato && styles.btnDisabled,
+                  ]}
+                >
+                  {salvandoContato ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <Check size={15} color="#ffffff" />
+                      <Text style={styles.modalSaveBtnText}>
+                        Salvar Alterações
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               </View>
-            </View>
-
-            <Text style={styles.modalSecurityNote}>
-              Nome, CPF e dados do prontuário só podem ser alterados pela
-              recepção da Clínica FAAZ.
-            </Text>
-
-            <View style={styles.modalActionsRow}>
-              <TouchableOpacity
-                activeOpacity={0.78}
-                disabled={salvandoContato}
-                onPress={() => setIsEditContatoOpen(false)}
-                style={styles.modalCancelBtn}
-              >
-                <Text style={styles.modalCancelBtnText}>Cancelar</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.84}
-                disabled={salvandoContato}
-                onPress={() => void handleSalvarContato()}
-                style={[
-                  styles.modalSaveBtn,
-                  salvandoContato && styles.btnDisabled,
-                ]}
-              >
-                {salvandoContato ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <>
-                    <Check size={15} color="#ffffff" />
-                    <Text style={styles.modalSaveBtnText}>
-                      Salvar Alterações
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -1459,6 +1472,8 @@ export function ProfileScreen({
         termosAceitoEm={
           planoResumo?.termosAceitoEm ?? paciente?.termosAceitoEm ?? null
         }
+        topInset={insets.top}
+        bottomInset={insets.bottom}
         onClose={() => setIsTermosModalOpen(false)}
       />
 
@@ -1524,6 +1539,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     flex: 1,
+    minWidth: 0,
+  },
+  cardTitleTextCol: {
+    flex: 1,
+    minWidth: 0,
   },
   iconBox: {
     width: 34,
@@ -1531,6 +1551,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   cardTitle: {
     fontSize: 15,
@@ -1549,6 +1570,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
+    flexShrink: 0,
   },
   countdownText: {
     fontSize: 11,
@@ -1772,6 +1794,8 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 999,
     borderWidth: 1,
+    flexShrink: 0,
+    alignSelf: "flex-start",
   },
   profileTypeText: {
     fontSize: 11,
@@ -2183,6 +2207,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
+    flexShrink: 0,
   },
   editContatoPillText: {
     fontSize: 11.5,
@@ -2230,13 +2255,21 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     paddingHorizontal: 20,
     paddingTop: 10,
-    paddingBottom: Platform.OS === "ios" ? 32 : 22,
-    gap: 14,
+    paddingBottom: 40,
+    maxHeight: "88%",
+    gap: 12,
     shadowColor: "#0f172a",
     shadowOffset: { width: 0, height: -8 },
     shadowOpacity: 0.16,
     shadowRadius: 20,
     elevation: 16,
+  },
+  modalScroll: {
+    flexGrow: 0,
+  },
+  modalScrollContent: {
+    gap: 14,
+    paddingBottom: 4,
   },
   modalHandle: {
     width: 40,
@@ -2250,13 +2283,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: 8,
   },
   modalTitleGroup: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     flex: 1,
+    minWidth: 0,
+  },
+  modalTitleTextCol: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
   },
   modalIconBox: {
     width: 34,
@@ -2267,6 +2306,7 @@ const styles = StyleSheet.create({
     borderColor: "#a7f3d0",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   modalTitle: {
     fontSize: 15.5,
@@ -2285,6 +2325,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f1f5f9",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   modalErrorBox: {
     backgroundColor: "#fff1f2",
