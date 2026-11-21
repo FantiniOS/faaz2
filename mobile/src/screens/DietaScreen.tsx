@@ -28,6 +28,7 @@ import { BottomTabBar } from "../components/BottomTabBar";
 import { FoodThumbnail } from "../components/FoodThumbnail";
 import { TrocasModal } from "../components/TrocasModal";
 import { useDiarioAlimentar } from "../contexts/DiarioAlimentarContext";
+import { usePatientAuth } from "../contexts/PatientAuthContext";
 import {
   CheckinRefeicaoStatus,
   ItemRefeicaoApi,
@@ -93,6 +94,7 @@ function getStatusBadgeConfig(status?: CheckinRefeicaoStatus | null) {
 }
 
 export function DietaScreen({ onTabPress }: DietaScreenProps) {
+  const { paciente } = usePatientAuth();
   const {
     plano,
     pacienteDieta,
@@ -208,7 +210,14 @@ export function DietaScreen({ onTabPress }: DietaScreenProps) {
   );
 
   const medicoResponsavel =
-    pacienteDieta?.medico?.trim() || "Equipe Clínica FAAZ";
+    pacienteDieta?.medicoResponsavel?.nome?.trim() ||
+    pacienteDieta?.medico?.trim() ||
+    paciente?.medicoResponsavelDetalhes?.nome?.trim() ||
+    (paciente?.medicoResponsavel?.trim() &&
+    paciente.medicoResponsavel.trim() !== "Equipe Clínica FAAZ"
+      ? paciente.medicoResponsavel.trim()
+      : "") ||
+    "Equipe Clínica FAAZ";
 
   const tituloPlanoHeader =
     plano?.titulo?.trim() || plano?.nome?.trim() || "Prescrição nutricional";

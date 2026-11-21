@@ -443,6 +443,13 @@ export interface PlanoAlimentarApi {
   variacoes: VariacaoDietaApi[];
 }
 
+export interface MedicoResponsavelInfo {
+  id?: string;
+  nome: string;
+  especialidade?: string | null;
+  crm?: string | null;
+}
+
 export interface PacienteDietaResponse {
   sucesso: boolean;
   temPlano?: boolean;
@@ -453,6 +460,8 @@ export interface PacienteDietaResponse {
     nome: string;
     medico?: string | null;
     especialidade?: string | null;
+    crm?: string | null;
+    medicoResponsavel?: MedicoResponsavelInfo | null;
     focoClinico?: string | null;
   };
   plano?: PlanoAlimentarApi | null;
@@ -578,6 +587,7 @@ export interface PlanoResumoResponse {
   possuiPacote: boolean;
   planoLabel: string;
   pacote: PlanoResumoPacoteItem | null;
+  medicoResponsavel?: MedicoResponsavelInfo | null;
 }
 
 /**
@@ -770,6 +780,7 @@ export const api = {
           possuiPacote: false,
           planoLabel: "",
           pacote: null,
+          medicoResponsavel: null,
         }));
     },
     responderConsulta(

@@ -1,5 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { api, setAuthToken, setAuthPatientId } from "../services/api";
+import {
+  api,
+  setAuthToken,
+  setAuthPatientId,
+  type MedicoResponsavelInfo,
+} from "../services/api";
 import { secureStorage, USER_TOKEN_KEY, USER_DATA_KEY } from "../services/storage";
 
 export interface PacienteLogado {
@@ -9,8 +14,10 @@ export interface PacienteLogado {
   cpf: string;
   metaDiariaMl: number;
   recordCode?: string;
-  medicoResponsavel?: string;
-  especialidadeMedico?: string;
+  medicoResponsavel?: string | null;
+  especialidadeMedico?: string | null;
+  crmMedico?: string | null;
+  medicoResponsavelDetalhes?: MedicoResponsavelInfo | null;
   focoClinico?: string;
   treatmentObjective?: string;
   medicacoes?: string | null;
@@ -18,6 +25,54 @@ export interface PacienteLogado {
   telefoneWhatsapp?: string | null;
   email?: string | null;
   avatarUrl?: string | null;
+}
+
+function extrairMedicoResponsavelApi(p: any): MedicoResponsavelInfo | null {
+  if (
+    p?.medicoResponsavel &&
+    typeof p.medicoResponsavel === "object" &&
+    typeof p.medicoResponsavel.nome === "string" &&
+    p.medicoResponsavel.nome.trim()
+  ) {
+    return {
+      id: p.medicoResponsavel.id,
+      nome: p.medicoResponsavel.nome.trim(),
+      especialidade: p.medicoResponsavel.especialidade?.trim() || null,
+      crm: p.medicoResponsavel.crm?.trim() || null,
+    };
+  }
+  if (
+    p?.medicoResponsavelDetalhes &&
+    typeof p.medicoResponsavelDetalhes.nome === "string" &&
+    p.medicoResponsavelDetalhes.nome.trim()
+  ) {
+    return {
+      id: p.medicoResponsavelDetalhes.id,
+      nome: p.medicoResponsavelDetalhes.nome.trim(),
+      especialidade: p.medicoResponsavelDetalhes.especialidade?.trim() || null,
+      crm: p.medicoResponsavelDetalhes.crm?.trim() || null,
+    };
+  }
+  if (p?.primaryDoctor?.fullName?.trim()) {
+    return {
+      id: p.primaryDoctor.id,
+      nome: p.primaryDoctor.fullName.trim(),
+      especialidade: p.primaryDoctor.specialty?.trim() || null,
+      crm: null,
+    };
+  }
+  if (
+    typeof p?.medicoResponsavel === "string" &&
+    p.medicoResponsavel.trim() &&
+    p.medicoResponsavel.trim() !== "Equipe Clínica FAAZ"
+  ) {
+    return {
+      nome: p.medicoResponsavel.trim(),
+      especialidade: p.especialidadeMedico?.trim() || null,
+      crm: p.crmMedico?.trim() || null,
+    };
+  }
+  return null;
 }
 
 interface PatientAuthContextData {
@@ -45,7 +100,24 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
       const res = await api.get(`/pacientes/${encodeURIComponent(pacienteId)}`);
       if (!res?.paciente) return;
       const p = res.paciente;
+      const medicoApi = extrairMedicoResponsavelApi(p);
       setPaciente((prev) => {
+        const prevNomeValido =
+          prev?.medicoResponsavel &&
+          prev.medicoResponsavel.trim() !== "Equipe Clínica FAAZ"
+            ? prev.medicoResponsavel.trim()
+            : null;
+        const medicoResolvido =
+          medicoApi ??
+          prev?.medicoResponsavelDetalhes ??
+          (prevNomeValido
+            ? {
+                nome: prevNomeValido,
+                especialidade: prev?.especialidadeMedico ?? null,
+                crm: prev?.crmMedico ?? null,
+              }
+            : null);
+
         const merged: PacienteLogado = {
           id: p.id || prev?.id || pacienteId,
           nome: p.fullName || p.nome || prev?.nome || "Paciente",
@@ -53,12 +125,10 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
           cpf: p.cpf || prev?.cpf || "",
           metaDiariaMl: p.metaDiariaMl || prev?.metaDiariaMl || 2500,
           recordCode: p.recordCode || prev?.recordCode,
-          medicoResponsavel:
-            p.primaryDoctor?.fullName || prev?.medicoResponsavel || "Equipe Clínica FAAZ",
-          especialidadeMedico:
-            p.primaryDoctor?.specialty ||
-            prev?.especialidadeMedico ||
-            "Endocrinologia & Metabologia",
+          medicoResponsavel: medicoResolvido?.nome ?? null,
+          especialidadeMedico: medicoResolvido?.especialidade ?? null,
+          crmMedico: medicoResolvido?.crm ?? null,
+          medicoResponsavelDetalhes: medicoResolvido,
           focoClinico:
             p.treatmentObjective || p.clinicalFocus || prev?.focoClinico || "",
           treatmentObjective:
@@ -116,6 +186,7 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
             try {
               const res = await api.get(`/pacientes/${encodeURIComponent(savedToken)}`);
               if (res?.paciente && isMounted) {
+                const medicoFresh = extrairMedicoResponsavelApi(res.paciente);
                 const fresh: PacienteLogado = {
                   id: res.paciente.id,
                   nome: res.paciente.fullName || res.paciente.nome,
@@ -123,8 +194,10 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
                   cpf: res.paciente.cpf,
                   metaDiariaMl: res.paciente.metaDiariaMl || 2500,
                   recordCode: res.paciente.recordCode,
-                  medicoResponsavel: res.paciente.primaryDoctor?.fullName || "Equipe Clínica FAAZ",
-                  especialidadeMedico: res.paciente.primaryDoctor?.specialty || "Endocrinologia & Metabologia",
+                  medicoResponsavel: medicoFresh?.nome ?? null,
+                  especialidadeMedico: medicoFresh?.especialidade ?? null,
+                  crmMedico: medicoFresh?.crm ?? null,
+                  medicoResponsavelDetalhes: medicoFresh,
                   focoClinico: res.paciente.treatmentObjective || res.paciente.clinicalFocus,
                   treatmentObjective: res.paciente.treatmentObjective || res.paciente.clinicalFocus,
                   medicacoes: res.paciente.medicacoes ?? null,
@@ -178,10 +251,18 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
       const data = await api.auth.loginComCpf(cleanCpf);
 
       if (data.sucesso && data.paciente) {
-        setPaciente(data.paciente);
-        setAuthPatientId(data.paciente.id);
+        const medicoLogin = extrairMedicoResponsavelApi(data.paciente);
+        const pacienteNormalizado: PacienteLogado = {
+          ...data.paciente,
+          medicoResponsavel: medicoLogin?.nome ?? null,
+          especialidadeMedico: medicoLogin?.especialidade ?? null,
+          crmMedico: medicoLogin?.crm ?? null,
+          medicoResponsavelDetalhes: medicoLogin,
+        };
+        setPaciente(pacienteNormalizado);
+        setAuthPatientId(pacienteNormalizado.id);
 
-        const token = data.token || data.paciente.id;
+        const token = data.token || pacienteNormalizado.id;
         if (token) {
           setAuthToken(token);
         }
@@ -189,7 +270,10 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
         // Armazenamento Seguro Criptografado (Persistent Login)
         if (manterConectado) {
           await secureStorage.setItem(USER_TOKEN_KEY, token);
-          await secureStorage.setItem(USER_DATA_KEY, JSON.stringify(data.paciente));
+          await secureStorage.setItem(
+            USER_DATA_KEY,
+            JSON.stringify(pacienteNormalizado)
+          );
         } else {
           await secureStorage.deleteItem(USER_TOKEN_KEY);
           await secureStorage.deleteItem(USER_DATA_KEY);

@@ -41,6 +41,7 @@ import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
 import {
   api,
   resolveAssetUrl,
+  type MedicoResponsavelInfo,
   type PlanoResumoResponse,
   type ProximaConsultaItem,
 } from "../services/api";
@@ -199,6 +200,10 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
   const [planoResumo, setPlanoResumo] = useState<PlanoResumoResponse | null>(
     null
   );
+  const [medicoResponsavelApi, setMedicoResponsavelApi] =
+    useState<MedicoResponsavelInfo | null>(
+      paciente?.medicoResponsavelDetalhes ?? null
+    );
   const [historicoPlanoAberto, setHistoricoPlanoAberto] =
     useState<boolean>(false);
   const [telefone, setTelefone] = useState<string | null>(
@@ -221,14 +226,34 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
     proximaConsulta?.medicoEspecialidade?.trim() ||
     proximaConsulta?.medico?.especialidade?.trim() ||
     "";
-  const medicoResponsavel =
-    medicoConsulta ||
-    paciente?.medicoResponsavel?.trim() ||
-    "Equipe Clínica FAAZ";
-  const especialidade =
-    especialidadeConsulta ||
-    paciente?.especialidadeMedico?.trim() ||
-    "Endocrinologia & Metabologia";
+
+  const medicoFonte: MedicoResponsavelInfo | null =
+    medicoResponsavelApi?.nome?.trim()
+      ? medicoResponsavelApi
+      : paciente?.medicoResponsavelDetalhes?.nome?.trim()
+        ? paciente.medicoResponsavelDetalhes
+        : paciente?.medicoResponsavel?.trim() &&
+            paciente.medicoResponsavel.trim() !== "Equipe Clínica FAAZ"
+          ? {
+              nome: paciente.medicoResponsavel.trim(),
+              especialidade: paciente?.especialidadeMedico?.trim() || null,
+              crm: paciente?.crmMedico?.trim() || null,
+            }
+          : medicoConsulta
+            ? {
+                nome: medicoConsulta,
+                especialidade: especialidadeConsulta || null,
+                crm: null,
+              }
+            : null;
+
+  const medicoResponsavel = medicoFonte?.nome?.trim() || "Equipe Clínica FAAZ";
+  const subtituloMedicoResponsavel = [
+    medicoFonte?.especialidade?.trim() || null,
+    medicoFonte?.crm?.trim() || null,
+  ]
+    .filter((item): item is string => Boolean(item))
+    .join(" • ");
   const metaAguaLitros = (metaAguaMl / 1000).toFixed(1).replace(".", ",");
 
   const fullAvatarUrl = useMemo(
@@ -269,6 +294,9 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
 
       if (planoRes.status === "fulfilled" && planoRes.value?.success) {
         setPlanoResumo(planoRes.value);
+        if (planoRes.value.medicoResponsavel?.nome?.trim()) {
+          setMedicoResponsavelApi(planoRes.value.medicoResponsavel);
+        }
       }
 
       // Micro-onda 2 (máx. 2 queries concorrentes): perfil cadastral + metas
@@ -289,6 +317,14 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
         if (p.phoneWhatsapp) setTelefone(p.phoneWhatsapp);
         if (p.email) setEmail(p.email);
         if (p.metaDiariaMl) setMetaAguaMl(Number(p.metaDiariaMl));
+        if (
+          p.medicoResponsavel &&
+          typeof p.medicoResponsavel === "object" &&
+          typeof p.medicoResponsavel.nome === "string" &&
+          p.medicoResponsavel.nome.trim()
+        ) {
+          setMedicoResponsavelApi(p.medicoResponsavel);
+        }
       }
 
       if (metasRes.status === "fulfilled" && metasRes.value?.metas) {
@@ -668,9 +704,11 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
                 <Text style={styles.consultaDoctorName}>
                   {medicoConsulta || medicoResponsavel}
                 </Text>
-                <Text style={styles.consultaSpecialty}>
-                  {especialidadeConsulta || especialidade}
-                </Text>
+                {especialidadeConsulta || subtituloMedicoResponsavel ? (
+                  <Text style={styles.consultaSpecialty}>
+                    {especialidadeConsulta || subtituloMedicoResponsavel}
+                  </Text>
+                ) : null}
               </View>
 
               <View style={styles.consultaTagsRow}>
@@ -1029,7 +1067,11 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
           <View style={styles.protocolBlock}>
             <Text style={styles.protocolBlockLabel}>Médico Responsável</Text>
             <Text style={styles.protocolBlockValue}>{medicoResponsavel}</Text>
-            <Text style={styles.protocolBlockSub}>{especialidade}</Text>
+            {subtituloMedicoResponsavel ? (
+              <Text style={styles.protocolBlockSub}>
+                {subtituloMedicoResponsavel}
+              </Text>
+            ) : null}
           </View>
 
           {/* Medicações em Uso */}
