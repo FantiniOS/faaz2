@@ -863,7 +863,7 @@ export default function PacientesPage() {
                               type="button"
                               onClick={() => setPatientToDelete(p)}
                               className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
-                              title="Excluir paciente (Apenas Dono/Admin)"
+                              title="Excluir paciente (Apenas Diretoria Clínica/Admin)"
                             >
                               <Trash2 className="w-3 h-3 text-rose-600" />
                               <span>Apagar</span>

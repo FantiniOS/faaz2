@@ -3552,7 +3552,7 @@ export function ProntuarioModal({
                                       type="button"
                                       onClick={() => setItemToDelete(item)}
                                       className="inline-flex items-center gap-1 p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-lg transition-colors cursor-pointer"
-                                      title="Excluir atendimento (Apenas Dono/Admin)"
+                                      title="Excluir atendimento (Apenas Diretoria Clínica/Admin)"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
                                     </button>

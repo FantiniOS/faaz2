@@ -41,7 +41,7 @@ interface MembroEquipe {
 }
 
 const cargoConfig: Record<string, { label: string; cor: string; icon: React.ElementType }> = {
-  DONO_CLINICA: { label: "Dono da Clínica", cor: "bg-emerald-50 text-emerald-800 border border-emerald-200", icon: Shield },
+  DONO_CLINICA: { label: "Diretoria Clínica", cor: "bg-emerald-50 text-emerald-800 border border-emerald-200", icon: Shield },
   MEDICO: { label: "Médico", cor: "bg-sky-50 text-sky-800 border border-sky-200", icon: Stethoscope },
   SECRETARIA: { label: "Secretária", cor: "bg-amber-50 text-amber-800 border border-amber-200", icon: ClipboardList },
   ADMINISTRADOR: { label: "Administrador", cor: "bg-violet-50 text-violet-800 border border-violet-200", icon: Building2 },
@@ -107,12 +107,19 @@ export default function EquipePage() {
     };
   }, [carregarEquipe]);
 
+  const normalizarBusca = (valor: string) =>
+    valor
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  const termoBusca = normalizarBusca(busca);
+
   const equipeFiltrada = equipe.filter(
     (m) =>
-      m.fullName.toLowerCase().includes(busca.toLowerCase()) ||
-      (m.username && m.username.toLowerCase().includes(busca.toLowerCase())) ||
-      (m.email && m.email.toLowerCase().includes(busca.toLowerCase())) ||
-      (cargoConfig[m.cargo]?.label || "").toLowerCase().includes(busca.toLowerCase())
+      normalizarBusca(m.fullName).includes(termoBusca) ||
+      (m.username && normalizarBusca(m.username).includes(termoBusca)) ||
+      (m.email && normalizarBusca(m.email).includes(termoBusca)) ||
+      normalizarBusca(cargoConfig[m.cargo]?.label || "").includes(termoBusca)
   );
 
   function handleAbrirNovoModal() {
@@ -243,7 +250,7 @@ export default function EquipePage() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="cl-badge-emerald px-2.5 py-0.5 text-[10px] uppercase tracking-widest">
                   <Settings className="w-3 h-3" />
-                  <span>Administração • RBAC</span>
+                  <span>Administração • Acessos</span>
                 </span>
                 <span className="cl-badge-slate px-2.5 py-0.5 text-[11px] font-mono tabular-nums">
                   {equipe.length} {equipe.length === 1 ? "membro" : "membros"}
@@ -253,7 +260,7 @@ export default function EquipePage() {
                 Configurações & Gestão da Equipe
               </h1>
               <p className="text-xs text-slate-500 font-medium">
-                Cadastre, edite e gerencie os acessos por Username (Nome de Usuário) e perfis RBAC da clínica.
+                Cadastre, edite e gerencie os acessos e perfis da equipe da clínica.
               </p>
             </div>
           </div>
@@ -497,7 +504,7 @@ export default function EquipePage() {
 
               {/* Cargo / Perfil */}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Cargo / Perfil (RBAC) *</label>
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Cargo / Perfil *</label>
                 <select
                   value={formCargo}
                   onChange={(e) => setFormCargo(e.target.value)}
@@ -506,7 +513,7 @@ export default function EquipePage() {
                   <option value="MEDICO">Médico (Atendimento Clínico)</option>
                   <option value="SECRETARIA">Secretária (Agenda & Recepção)</option>
                   <option value="ADMINISTRADOR">Administrador (Gestão Financeira/Equipe)</option>
-                  <option value="DONO_CLINICA">Dono da Clínica (Acesso Total)</option>
+                  <option value="DONO_CLINICA">Diretoria Clínica (Acesso Total)</option>
                 </select>
               </div>
 
