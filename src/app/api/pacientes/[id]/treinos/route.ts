@@ -6,6 +6,7 @@ import { getRepository } from "@/lib/db/data-source";
 import { PatientEntity, WorkoutLogEntity } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos, podeCadastrarPacientes } from "@/lib/auth-rbac";
+import { getDataBR, getIntervaloDiasBR, toIsoUtc } from "@/lib/date-br";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -51,9 +52,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const trintaDiasAtras = new Date();
-    trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
-    trintaDiasAtras.setHours(0, 0, 0, 0);
+    const { inicioUtc: trintaDiasAtras } = getIntervaloDiasBR(30);
 
     const checkins30Dias = await workoutRepo.find({
       where: {
@@ -66,7 +65,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const mapDias = new Map<string, Date>();
     checkins30Dias.forEach((c) => {
       const dt = new Date(c.date);
-      const diaKey = dt.toISOString().slice(0, 10);
+      const diaKey = getDataBR(dt);
       if (!mapDias.has(diaKey)) {
         mapDias.set(diaKey, dt);
       }
@@ -103,7 +102,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         totalLogs: checkins30Dias.length,
         historicoCheckins: checkins30Dias.map((c) => ({
           id: c.id,
-          data: c.date,
+          data: toIsoUtc(c.date) ?? new Date(c.date).toISOString(),
         })),
       },
     });

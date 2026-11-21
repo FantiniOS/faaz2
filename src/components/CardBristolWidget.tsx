@@ -13,6 +13,11 @@ import {
   ArrowUpRight,
   Radio,
 } from "lucide-react";
+import {
+  formatarDataBR,
+  formatarDataCurtaBR,
+  getHoraBR,
+} from "@/lib/date-br";
 
 export interface CheckinIntestinalItem {
   id: string;
@@ -113,17 +118,23 @@ export function CardBristolWidget({
 
   // EFEITO DE POLLING AUTOMÁTICO A CADA 5 SEGUNDOS
   useEffect(() => {
+    let ativo = true;
     // 1. Chamada imediata ao montar
-    fetchCheckins(true);
+    void Promise.resolve().then(() => {
+      if (ativo) void fetchCheckins(true);
+    });
 
     // 2. Intervalo de atualização automática contínua
     const intervalId = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        fetchCheckins(false);
+        void fetchCheckins(false);
       }
     }, pollingIntervalMs);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      ativo = false;
+      clearInterval(intervalId);
+    };
   }, [fetchCheckins, pollingIntervalMs]);
 
   const hasRecordToday = checkins.length > 0;
@@ -145,14 +156,12 @@ export function CardBristolWidget({
   const isDiarreia = hasRecordToday && latest.categoria === "diarreia";
   const isAlert = isConstipacao || isDiarreia;
 
-  const formattedDate = new Date(latest.data).toLocaleDateString("pt-BR", {
+  const formattedDate = formatarDataBR(latest.data, {
     day: "2-digit",
     month: "short",
+    year: undefined,
   });
-  const formattedTime = new Date(latest.data).toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const formattedTime = getHoraBR(latest.data);
 
   return (
     <div
@@ -395,15 +404,8 @@ export function CardBristolWidget({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {checkins.slice(1, 4).map((item) => {
                 const itemIdeal = item.categoria === "ideal";
-                const d = new Date(item.data);
-                const dia = d.toLocaleDateString("pt-BR", {
-                  day: "2-digit",
-                  month: "2-digit",
-                });
-                const hora = d.toLocaleTimeString("pt-BR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
+                const dia = formatarDataCurtaBR(item.data);
+                const hora = getHoraBR(item.data);
 
                 return (
                   <div

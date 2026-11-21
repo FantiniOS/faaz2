@@ -178,7 +178,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         sucesso: true,
         mensagem: "Treino de hoje já estava registrado com sucesso!",
-        checkin: existente,
+        checkin: { ...existente, date: toIsoUtc(existente.date) },
         jaRegistrado: true,
       });
     }
@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       sucesso: true,
       mensagem: "Treino de hoje registrado com sucesso!",
-      checkin: novoCheckin,
+      checkin: { ...novoCheckin, date: toIsoUtc(novoCheckin.date) },
       treinouHoje: true,
     });
   } catch (error: unknown) {

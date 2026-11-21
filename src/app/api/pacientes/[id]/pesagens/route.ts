@@ -11,6 +11,7 @@ import {
   ProntuarioPacienteEntity,
 } from "@/lib/db/entities";
 import { invalidarCacheMetricaPeso } from "@/lib/metrica-peso-eliminado";
+import { toIsoUtc } from "@/lib/date-br";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -64,7 +65,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       imc: prontuario?.imc != null ? Number(prontuario.imc) : null,
       historico: evolucoes.map((e) => ({
         id: e.id,
-        data: e.dataAtendimento,
+        data: toIsoUtc(e.dataAtendimento) ?? e.dataAtendimento,
         peso: e.pesoAtual,
         imc: e.imc,
         observacao: e.condutaEvolucao,

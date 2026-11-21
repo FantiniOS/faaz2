@@ -9,6 +9,7 @@ import {
   PatientEntity,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
+import { getHoraBR, getIntervaloDiaBR, toIsoUtc } from "@/lib/date-br";
 
 const bristolLabels: Record<number, string> = {
   1: "Tipo 1 - Constipação Severa (Esferas duras)",
@@ -46,11 +47,7 @@ export async function GET(req: NextRequest) {
         ? "hidrico"
         : "bristol";
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+    const { inicioUtc: startOfDay, fimUtc: endOfDay } = getIntervaloDiaBR();
 
     const patientRepo = await getRepository(PatientEntity);
     const pacientesAtivos = await patientRepo.find({
@@ -98,11 +95,7 @@ export async function GET(req: NextRequest) {
           p = pacientesAtivos.find((pac) => pac.fullName.includes("Carlos"));
         }
 
-        const d = new Date(c.data);
-        const hora = d.toLocaleTimeString("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+        const hora = getHoraBR(c.data);
 
         const rotulo =
           bristolLabels[c.tipoBristol] || `Bristol Tipo ${c.tipoBristol}`;
@@ -118,7 +111,7 @@ export async function GET(req: NextRequest) {
           tipoBristol: c.tipoBristol,
           sintomas: c.sintomas || [],
           horario: `Hoje às ${hora}`,
-          dataRaw: c.data,
+          dataRaw: toIsoUtc(c.data) ?? c.data,
         };
       });
 
@@ -171,11 +164,7 @@ export async function GET(req: NextRequest) {
           p = pacientesAtivos.find((pac) => pac.fullName.includes("Carlos"));
         }
 
-        const d = new Date(c.data);
-        const hora = d.toLocaleTimeString("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+        const hora = getHoraBR(c.data);
 
         return {
           id: c.id,
@@ -187,7 +176,7 @@ export async function GET(req: NextRequest) {
           volumeMl: c.volumeMl,
           metaDiariaMl: c.metaDiariaMl,
           horario: `Hoje às ${hora}`,
-          dataRaw: c.data,
+          dataRaw: toIsoUtc(c.data) ?? c.data,
         };
       });
 

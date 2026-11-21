@@ -9,6 +9,7 @@ import {
   MeasurementEntity,
   PatientEntity,
 } from "@/lib/db/entities";
+import { criarDataBR, toIsoUtc } from "@/lib/date-br";
 
 const PATIENT_APP_CREATED_BY = "PATIENT_APP_SELF_REPORT";
 
@@ -192,9 +193,9 @@ export async function POST(
     let measuredAtDate = new Date();
     if (typeof body.measuredAt === "string" && body.measuredAt.trim()) {
       const rawDate = body.measuredAt.trim();
-      const candidate = new Date(
-        rawDate.includes("T") ? rawDate : `${rawDate}T12:00:00`,
-      );
+      const candidate = rawDate.includes("T")
+        ? new Date(rawDate)
+        : criarDataBR(rawDate, "12:00");
       if (Number.isNaN(candidate.getTime())) {
         return NextResponse.json(
           { error: "Data da medição inválida." },
@@ -252,7 +253,7 @@ export async function POST(
         mensagem: "Medidas corporais registradas com sucesso!",
         measurement: {
           id: created.id,
-          measuredAt: new Date(created.measuredAt).toISOString(),
+          measuredAt: toIsoUtc(created.measuredAt) ?? new Date(created.measuredAt).toISOString(),
           bodyFatPercentage: created.bodyFatPercentage ?? null,
           waist: created.waist ?? null,
           abdomen: created.abdomen ?? null,

@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos, podeExcluirPacientes } from "@/lib/auth-rbac";
+import { criarDataBR } from "@/lib/date-br";
 
 interface RouteParams {
   params: Promise<{ id: string; evolucaoId: string }>;
@@ -88,7 +89,15 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         .toUpperCase();
     }
     if (dataAtendimento) {
-      evolucaoExistente.dataAtendimento = new Date(dataAtendimento);
+      const rawDt = String(dataAtendimento).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(rawDt)) {
+        evolucaoExistente.dataAtendimento = criarDataBR(rawDt, "12:00");
+      } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(rawDt)) {
+        const [dPart, hPart] = rawDt.split("T");
+        evolucaoExistente.dataAtendimento = criarDataBR(dPart, hPart);
+      } else {
+        evolucaoExistente.dataAtendimento = new Date(rawDt);
+      }
     }
     if (medicoResponsavel) {
       evolucaoExistente.medicoResponsavel = String(medicoResponsavel)

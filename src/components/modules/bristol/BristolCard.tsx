@@ -12,6 +12,12 @@ import {
   Database,
 } from "lucide-react";
 import { mockBristolHistory, BristolHistory, BristolRecord } from "./mockData";
+import {
+  formatarDataBR,
+  getDataBR,
+  getHojeBR,
+  getHoraBR,
+} from "@/lib/date-br";
 
 interface BristolCardProps {
   data?: BristolHistory;
@@ -50,17 +56,26 @@ export function BristolCard({
 
       const json = await res.json();
       if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        const mapped: BristolRecord[] = json.data.map((item: any, idx: number) => {
-          const d = new Date(item.data);
-          const now = new Date();
-          const isToday = d.toDateString() === now.toDateString();
+        interface BristolApiItem {
+          id?: string | number;
+          data: string;
+          tipoBristol: number;
+          categoria?: string;
+        }
+        const mapped: BristolRecord[] = (json.data as BristolApiItem[]).map((item, idx) => {
+          const isToday = getDataBR(item.data) === getHojeBR();
           const dia = isToday
             ? "Hoje"
-            : d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
-          const hora = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+            : formatarDataBR(item.data, {
+                weekday: "short",
+                day: "2-digit",
+                month: "2-digit",
+                year: undefined,
+              });
+          const hora = getHoraBR(item.data);
 
           return {
-            id: item.id || idx + 100,
+            id: typeof item.id === "number" ? item.id : idx + 100,
             dia,
             hora,
             tipo: item.tipoBristol,
@@ -81,13 +96,19 @@ export function BristolCard({
   }, [pacienteId]);
 
   useEffect(() => {
-    fetchLiveRegistros(true);
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) void fetchLiveRegistros(true);
+    });
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        fetchLiveRegistros(false);
+        void fetchLiveRegistros(false);
       }
     }, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      ativo = false;
+      clearInterval(interval);
+    };
   }, [fetchLiveRegistros]);
 
   return (

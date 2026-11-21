@@ -10,6 +10,7 @@ import {
   PatientEntity,
   PatientGoalEntity,
 } from "@/lib/db/entities";
+import { getIntervaloDiaBR, toIsoUtc } from "@/lib/date-br";
 
 export async function POST(req: NextRequest) {
   try {
@@ -99,8 +100,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const todayDate = new Date();
-      todayDate.setHours(0, 0, 0, 0);
+      const { inicioUtc: todayDate } = getIntervaloDiaBR();
 
       await goalCheckinRepo.save(
         goalCheckinRepo.create({
@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
         horasDormidas: checkin.horas,
         qualidade: checkin.qualidade,
         observacao: checkin.observacao,
-        data: checkin.data,
+        data: toIsoUtc(checkin.data) ?? checkin.data,
       },
     });
   } catch (error: unknown) {
@@ -189,7 +189,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       sucesso: true,
       total: checkins.length,
-      checkins,
+      checkins: checkins.map((c) => ({
+        ...c,
+        data: toIsoUtc(c.data) ?? c.data,
+        createdAt: toIsoUtc(c.createdAt) ?? c.createdAt,
+        updatedAt: toIsoUtc(c.updatedAt) ?? c.updatedAt,
+      })),
     });
   } catch (error: unknown) {
     const details = error instanceof Error ? error.message : String(error);

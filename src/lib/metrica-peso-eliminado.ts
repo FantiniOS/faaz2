@@ -1,6 +1,7 @@
 import { IsNull } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import { PatientEntity } from "@/lib/db/entities";
+import { getInicioMesBR, getPartesDataHoraBR } from "@/lib/date-br";
 
 export interface MetricaPesoEliminadoData {
   pesoTotalEliminadoKg: number;
@@ -65,11 +66,13 @@ export async function calcularMetricaPesoEliminado(
   }
 
   const now = new Date();
-  const anoAtual = now.getFullYear();
-  const mesAtual = now.getMonth();
+  const partesBR = getPartesDataHoraBR(now);
+  const anoAtual = partesBR.year;
+  const mesAtual = partesBR.month - 1; // 0-indexed (0 = Janeiro .. 11 = Dezembro)
 
-  const primeiroDiaDoMes = new Date(anoAtual, mesAtual, 1, 0, 0, 0, 0);
-  const primeiroDiaMesAnterior = new Date(anoAtual, mesAtual - 1, 1, 0, 0, 0, 0);
+  const limitesMes = getInicioMesBR(now);
+  const primeiroDiaDoMes = limitesMes.inicioUtc;
+  const primeiroDiaMesAnterior = limitesMes.inicioMesAnteriorUtc;
 
   const nomesMeses = [
     "Janeiro",

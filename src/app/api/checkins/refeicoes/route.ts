@@ -11,16 +11,16 @@ import {
   type StatusCheckinRefeicao,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
-import { getDataDiaBR, subtrairDiasDataBR } from "@/lib/date-br";
+import { getHojeBR, somarDiasBR, toIsoUtc } from "@/lib/date-br";
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function getHojeDataDia(): string {
-  return getDataDiaBR();
+  return getHojeBR();
 }
 
 function subtrairDiasIso(baseIso: string, dias: number): string {
-  return subtrairDiasDataBR(baseIso, dias);
+  return somarDiasBR(baseIso, -dias);
 }
 
 const checkinRefeicaoSchema = z.object({
@@ -133,8 +133,8 @@ export async function POST(req: NextRequest) {
           status: salvo.status,
           opcaoEscolhida: salvo.opcaoEscolhida ?? null,
           trocas: salvo.trocasJson ?? null,
-          criadoEm: new Date(salvo.criadoEm).toISOString(),
-          atualizadoEm: new Date(salvo.atualizadoEm).toISOString(),
+          criadoEm: toIsoUtc(salvo.criadoEm) ?? new Date(salvo.criadoEm).toISOString(),
+          atualizadoEm: toIsoUtc(salvo.atualizadoEm) ?? new Date(salvo.atualizadoEm).toISOString(),
         },
       },
       { status: existente ? 200 : 201 },

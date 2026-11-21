@@ -79,7 +79,10 @@ export async function POST(req: NextRequest) {
       {
         success: true,
         message: "Check-in intestinal salvo com sucesso!",
-        data: checkin,
+        data: {
+          ...checkin,
+          data: toIsoUtc(checkin.data) ?? new Date(checkin.data).toISOString(),
+        },
       },
       { status: 201 },
     );

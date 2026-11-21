@@ -33,6 +33,7 @@ import {
   Area,
 } from "recharts";
 import { DashboardWidgetConfig, ChartDataItem, AlertItem } from "@/mocks/dashboard";
+import { getHoraBR } from "@/lib/date-br";
 import { GlicemiaLiveSummary } from "@/components/AlertasGlicemicosModal";
 import type { MetricaPesoEliminadoData } from "@/lib/metrica-peso-eliminado";
 
@@ -112,7 +113,13 @@ export function WidgetCard({
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) setMounted(true);
+    });
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   return (
@@ -331,7 +338,13 @@ function LiveBristolCardContent({
   // Busca apenas 1 vez caso o componente seja usado isoladamente sem liveData do DashboardPage
   useEffect(() => {
     if (typeof window === "undefined" || liveData !== undefined) return;
-    fetchLiveCheckins(true);
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) void fetchLiveCheckins(true);
+    });
+    return () => {
+      ativo = false;
+    };
   }, [fetchLiveCheckins, liveData]);
 
   // Se liveData foi provido pelo DashboardPage (unificado), dá precedência a ele
@@ -361,11 +374,7 @@ function LiveBristolCardContent({
 
   let hora = "--:--";
   if (latest?.data) {
-    const d = new Date(latest.data);
-    hora = d.toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    hora = getHoraBR(latest.data);
   }
 
   const isIdeal = latest?.categoria === "ideal";
@@ -620,7 +629,13 @@ function LiveHidratacaoCardContent({
   // Busca apenas 1 vez caso o componente seja usado isoladamente sem liveData do DashboardPage
   useEffect(() => {
     if (typeof window === "undefined" || liveData !== undefined) return;
-    fetchLiveHidratacao(true);
+    let ativo = true;
+    void Promise.resolve().then(() => {
+      if (ativo) void fetchLiveHidratacao(true);
+    });
+    return () => {
+      ativo = false;
+    };
   }, [fetchLiveHidratacao, liveData]);
 
   const activeData = liveData || data;

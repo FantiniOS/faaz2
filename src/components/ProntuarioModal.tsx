@@ -57,6 +57,7 @@ import {
 import type { MeasurementDTO } from "@/actions/measurement-actions";
 import type { PacotesPacienteResponse } from "@/lib/pacotes-faaz";
 import {
+  calcularIdadeBR,
   criarDataBR,
   formatarDataBR,
   formatarHoraBR,
@@ -786,18 +787,9 @@ export function ProntuarioModal({
     [],
   );
 
-  // Cálculo de idade a partir de data de nascimento
+  // Cálculo de idade a partir de data de nascimento (sempre em America/Sao_Paulo)
   function calcularIdade(dataNascStr?: string | null): number | null {
-    if (!dataNascStr) return null;
-    const hoje = new Date();
-    const nasc = new Date(dataNascStr);
-    if (isNaN(nasc.getTime())) return null;
-    let idade = hoje.getFullYear() - nasc.getFullYear();
-    const m = hoje.getMonth() - nasc.getMonth();
-    if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) {
-      idade--;
-    }
-    return idade >= 0 ? idade : null;
+    return calcularIdadeBR(dataNascStr);
   }
 
   // Formatação de CPF

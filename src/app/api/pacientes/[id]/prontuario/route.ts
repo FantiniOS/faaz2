@@ -28,7 +28,7 @@ import {
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { invalidarCacheMetricaPeso } from "@/lib/metrica-peso-eliminado";
-import { formatarHoraBR, getDataDiaBR, toIsoUtc } from "@/lib/date-br";
+import { calcularIdadeBR, formatarHoraBR, getDataDiaBR, toIsoUtc } from "@/lib/date-br";
 import { consultaDescontaSaldo } from "@/lib/pacotes-faaz";
 import {
   normalizarObjetivoClinicoValor,
@@ -275,16 +275,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
     const dbDurMs = Math.round(performance.now() - dbStart);
 
-    let idade: number | null = null;
-    if (paciente.birthDate) {
-      const hoje = new Date();
-      const nascimento = new Date(paciente.birthDate);
-      idade = hoje.getFullYear() - nascimento.getFullYear();
-      const m = hoje.getMonth() - nascimento.getMonth();
-      if (m < 0 || (m === 0 && hoje.getDate() < nascimento.getDate())) {
-        idade--;
-      }
-    }
+    const idade = calcularIdadeBR(paciente.birthDate);
 
     const statusFormatado =
       paciente.patientStatus === "ACTIVE" ? "Ativo" : "Inativo";

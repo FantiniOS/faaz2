@@ -16,13 +16,21 @@ import {
   WorkoutLogEntity,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
-import { getDataDiaBR, getInicioFimDiaBR } from "@/lib/date-br";
+import {
+  getHojeBR,
+  getIntervaloDiaBR,
+  somarDiasBR,
+  toIsoUtc,
+} from "@/lib/date-br";
 
 async function calcularMetricasReaisClinica(
   startOfDay: Date,
   endOfDay: Date,
+  dataDiaHoje: string,
 ) {
-  const sevenDaysAgo = new Date(startOfDay.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const { inicioUtc: sevenDaysAgo } = getIntervaloDiaBR(
+    somarDiasBR(dataDiaHoje, -7),
+  );
 
   const [
     patientRepo,
@@ -299,15 +307,20 @@ export async function POST(req: NextRequest) {
         pacienteId,
         volumeMl,
         metaDiariaMl,
-        ...(data ? { data: new Date(data) } : {}),
+        data: data ? new Date(data) : new Date(),
       }),
     );
 
-    const { inicioUtc: startOfDay, fimUtc: endOfDay } = getInicioFimDiaBR();
+    const {
+      dataDia: hojeBR,
+      inicioUtc: startOfDay,
+      fimUtc: endOfDay,
+    } = getIntervaloDiaBR();
 
     const metricasClinica = await calcularMetricasReaisClinica(
       startOfDay,
       endOfDay,
+      hojeBR,
     );
 
     const pacienteHojeRegistros = metricasClinica.todosRegistrosHoje.filter(
@@ -327,7 +340,11 @@ export async function POST(req: NextRequest) {
       {
         success: true,
         message: `+${volumeMl}ml de água registrados com sucesso!`,
-        data: checkin,
+        data: {
+          ...checkin,
+          data: toIsoUtc(checkin.data) ?? new Date(checkin.data).toISOString(),
+        },
+        dataReferencia: hojeBR,
         totalHojeMl: pacienteTotalHojeMl,
         metaDiariaMl,
         percentual: pacientePercentual,
@@ -378,11 +395,16 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const pacienteIdParam = searchParams.get("pacienteId");
 
-    const { inicioUtc: startOfDay, fimUtc: endOfDay } = getInicioFimDiaBR();
+    const {
+      dataDia: hojeBR,
+      inicioUtc: startOfDay,
+      fimUtc: endOfDay,
+    } = getIntervaloDiaBR();
 
     const metricasClinica = await calcularMetricasReaisClinica(
       startOfDay,
       endOfDay,
+      hojeBR,
     );
     const {
       todosRegistrosHoje,
@@ -431,7 +453,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        dataReferencia: getDataDiaBR(),
+        dataReferencia: hojeBR || getHojeBR(),
         totalConsumidoHojeMl,
         totalConsumidoHojeL,
         metaTotalHojeMl,

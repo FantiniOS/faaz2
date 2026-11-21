@@ -36,8 +36,10 @@ import {
 } from "@/components/AgendaExtendedViews";
 import {
   adicionarDiasDataBR,
+  criarDataBR,
   formatarHoraBR,
   getDataDiaBR,
+  getHojeBR,
   getPartesDataHoraBR,
   subtrairDiasDataBR,
   TIMEZONE_BR,
@@ -122,13 +124,12 @@ const DURACAO_OPCOES = [
   { value: 90, label: "1h 30m (90 min)" },
 ];
 
-function getLocalIsoDate(d: Date): string {
-  return getDataDiaBR(d);
+function getLocalIsoDate(d?: Date): string {
+  return d ? getDataDiaBR(d) : getHojeBR();
 }
 
 function parseLocalIsoDate(isoDate: string): Date {
-  const clean = isoDate.trim().slice(0, 10);
-  return new Date(`${clean}T12:00:00-03:00`);
+  return criarDataBR(isoDate, "12:00");
 }
 
 function getAgendamentoHorarioBR(item: AgendamentoItem): string {

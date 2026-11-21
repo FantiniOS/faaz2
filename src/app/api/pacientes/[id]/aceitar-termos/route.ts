@@ -37,7 +37,7 @@ export async function OPTIONS(req: NextRequest) {
 /**
  * POST /api/pacientes/[id]/aceitar-termos
  * Registra o aceite único da versão vigente dos Termos de Uso e Privacidade (LGPD/CFM).
- * Executa 1 UPDATE leve em PATIENTS (TERMOS_VERSAO_ACEITA e TERMOS_ACEITO_EM = CURRENT_TIMESTAMP).
+ * Executa 1 UPDATE leve em PATIENTS (TERMOS_VERSAO_ACEITA e TERMOS_ACEITO_EM em UTC padronizado).
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const headers = buildCorsHeaders(req);
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     const aceitoAgora = new Date();
 
-    // 1 UPDATE leve direto em PATIENTS gravando CURRENT_TIMESTAMP no Oracle ADB
+    // 1 UPDATE leve direto em PATIENTS gravando timestamp UTC explícito (alinhado a America/Sao_Paulo na exibição)
     await withRepositoryRetry(
       PatientEntity,
       (repo) =>
@@ -135,8 +135,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           .update(PatientEntity)
           .set({
             termosVersaoAceita: versao,
-            termosAceitoEm: () => "CURRENT_TIMESTAMP",
-            updatedAt: () => "CURRENT_TIMESTAMP",
+            termosAceitoEm: aceitoAgora,
+            updatedAt: aceitoAgora,
           })
           .where("ID = :id", { id: paciente.id })
           .execute(),
