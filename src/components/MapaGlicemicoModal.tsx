@@ -5,6 +5,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -59,6 +60,7 @@ export interface MapaGlicemicoModalProps {
   initialTab?: SubAbaMapaGlicemico;
   protocoloAtual: ProtocoloGlicemicoDTO;
   onProtocoloChange: (novoProtocolo: ProtocoloGlicemicoDTO) => void;
+  onSaved?: (novoProtocolo: ProtocoloGlicemicoDTO) => void;
 }
 
 function getCellBadgeClasses(status: StatusCelulaGlicemia): string {
@@ -119,6 +121,7 @@ export function MapaGlicemicoModal({
   initialTab = "grade",
   protocoloAtual,
   onProtocoloChange,
+  onSaved,
 }: MapaGlicemicoModalProps) {
   const authContext = useContext(AuthContext);
   const [fetchedSessionUser, setFetchedSessionUser] =
@@ -152,6 +155,24 @@ export function MapaGlicemicoModal({
   const [salvandoProtocolo, setSalvandoProtocolo] = useState(false);
   const [salvandoSwitchRapido, setSalvandoSwitchRapido] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [erroSalvar, setErroSalvar] = useState<string | null>(null);
+
+  // Refs estáveis evitam loops de refetch e reset acidental dos campos editados
+  const onProtocoloChangeRef = useRef(onProtocoloChange);
+  const onSavedRef = useRef(onSaved);
+  const onCloseRef = useRef(onClose);
+  const protocoloAtualRef = useRef(protocoloAtual);
+  const hasEditedFormRef = useRef(false);
+  const lastSessionKeyRef = useRef<string>(
+    `${pacienteId}:${isOpen ? "open" : "closed"}:${initialTab}`,
+  );
+
+  useEffect(() => {
+    onProtocoloChangeRef.current = onProtocoloChange;
+    onSavedRef.current = onSaved;
+    onCloseRef.current = onClose;
+    protocoloAtualRef.current = protocoloAtual;
+  }, [onProtocoloChange, onSaved, onClose, protocoloAtual]);
 
   // Estado local do formulário na aba "Protocolo & Insulina"
   const [ativo, setAtivo] = useState<boolean>(protocoloAtual.ativo);
@@ -193,45 +214,48 @@ export function MapaGlicemicoModal({
     protocoloAtual.orientacaoHiper || "",
   );
 
-  // Sincroniza aba inicial e campos do protocolo ao abrir o modal
-  useEffect(() => {
-    if (!isOpen) return;
-    let mounted = true;
-    void Promise.resolve().then(() => {
-      if (mounted) setSubAba(initialTab);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [isOpen, initialTab]);
+  const syncFormFromProtocolo = useCallback((prot: ProtocoloGlicemicoDTO) => {
+    setAtivo(prot.ativo);
+    setUsaInsulina(prot.usaInsulina);
+    setModo(prot.modo);
+    setSlotsAtivos(prot.slotsAtivos);
+    setAlvoJejumMin(String(prot.alvoJejumMin || 70));
+    setAlvoJejumMax(String(prot.alvoJejumMax || 130));
+    setAlvoPosMax(String(prot.alvoPosMax || 180));
+    setInsulinaBasalNome(prot.insulinaBasalNome || "");
+    setInsulinaBasalDoseRef(
+      prot.insulinaBasalDoseRef !== null &&
+        prot.insulinaBasalDoseRef !== undefined
+        ? String(prot.insulinaBasalDoseRef)
+        : "",
+    );
+    setInsulinaBasalHorario(prot.insulinaBasalHorario || "");
+    setInsulinaRapidaNome(prot.insulinaRapidaNome || "");
+    setOrientacaoHipo(prot.orientacaoHipo || "");
+    setOrientacaoHiper(prot.orientacaoHiper || "");
+  }, []);
 
+  // Re-hidrata apenas quando o modal reabre ou muda de paciente (nunca durante edição ativa)
   useEffect(() => {
+    const nextKey = `${pacienteId}:${isOpen ? "open" : "closed"}:${initialTab}`;
+    if (!isOpen) {
+      lastSessionKeyRef.current = nextKey;
+      return;
+    }
+    if (lastSessionKeyRef.current === nextKey) return;
+    lastSessionKeyRef.current = nextKey;
+    hasEditedFormRef.current = false;
     let mounted = true;
     void Promise.resolve().then(() => {
       if (!mounted) return;
-      setAtivo(protocoloAtual.ativo);
-      setUsaInsulina(protocoloAtual.usaInsulina);
-      setModo(protocoloAtual.modo);
-      setSlotsAtivos(protocoloAtual.slotsAtivos);
-      setAlvoJejumMin(String(protocoloAtual.alvoJejumMin || 70));
-      setAlvoJejumMax(String(protocoloAtual.alvoJejumMax || 130));
-      setAlvoPosMax(String(protocoloAtual.alvoPosMax || 180));
-      setInsulinaBasalNome(protocoloAtual.insulinaBasalNome || "");
-      setInsulinaBasalDoseRef(
-        protocoloAtual.insulinaBasalDoseRef !== null &&
-          protocoloAtual.insulinaBasalDoseRef !== undefined
-          ? String(protocoloAtual.insulinaBasalDoseRef)
-          : "",
-      );
-      setInsulinaBasalHorario(protocoloAtual.insulinaBasalHorario || "");
-      setInsulinaRapidaNome(protocoloAtual.insulinaRapidaNome || "");
-      setOrientacaoHipo(protocoloAtual.orientacaoHipo || "");
-      setOrientacaoHiper(protocoloAtual.orientacaoHiper || "");
+      setSubAba(initialTab);
+      setErroSalvar(null);
+      syncFormFromProtocolo(protocoloAtualRef.current);
     });
     return () => {
       mounted = false;
     };
-  }, [protocoloAtual]);
+  }, [isOpen, pacienteId, initialTab, syncFormFromProtocolo]);
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -257,7 +281,19 @@ export function MapaGlicemicoModal({
       if (json?.success) {
         setMapaData(json);
         if (json.protocolo) {
-          onProtocoloChange(json.protocolo);
+          const atual = protocoloAtualRef.current;
+          const mudouNoServidor =
+            json.protocolo.updatedAt !== atual.updatedAt ||
+            json.protocolo.ativo !== atual.ativo ||
+            json.protocolo.usaInsulina !== atual.usaInsulina ||
+            json.protocolo.modo !== atual.modo ||
+            json.protocolo.slotsAtivos.join(",") !== atual.slotsAtivos.join(",");
+          if (mudouNoServidor) {
+            onProtocoloChangeRef.current(json.protocolo);
+            if (!hasEditedFormRef.current) {
+              syncFormFromProtocolo(json.protocolo);
+            }
+          }
         }
       }
     } catch (err) {
@@ -265,7 +301,7 @@ export function MapaGlicemicoModal({
     } finally {
       setCarregandoMapa(false);
     }
-  }, [isOpen, pacienteId, dias, onProtocoloChange]);
+  }, [isOpen, pacienteId, dias, syncFormFromProtocolo]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -282,19 +318,22 @@ export function MapaGlicemicoModal({
   useEffect(() => {
     if (!isOpen) return;
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   const handleQuickToggle = async (
     nextAtivo: boolean,
     nextUsaInsulina: boolean,
   ) => {
+    const prevAtivo = ativo;
+    const prevUsaInsulina = usaInsulina;
     const resolvedUsaInsulina = nextAtivo ? nextUsaInsulina : false;
     setAtivo(nextAtivo);
     setUsaInsulina(resolvedUsaInsulina);
+    setErroSalvar(null);
     setSalvandoSwitchRapido(true);
 
     try {
@@ -309,9 +348,9 @@ export function MapaGlicemicoModal({
           }),
         },
       );
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (res.ok && json?.success && json.protocolo) {
-        onProtocoloChange(json.protocolo as ProtocoloGlicemicoDTO);
+        onProtocoloChangeRef.current(json.protocolo as ProtocoloGlicemicoDTO);
         showToast(
           nextAtivo
             ? resolvedUsaInsulina
@@ -319,9 +358,20 @@ export function MapaGlicemicoModal({
               : "Monitoramento Glicêmico ativado"
             : "Monitoramento Glicêmico desativado no App",
         );
+      } else {
+        setAtivo(prevAtivo);
+        setUsaInsulina(prevUsaInsulina);
+        setErroSalvar(
+          json?.error ||
+            json?.motivo ||
+            "Não foi possível atualizar a chave de monitoramento.",
+        );
       }
     } catch (err) {
       console.error("[MapaGlicemicoModal] Erro ao alternar switch:", err);
+      setAtivo(prevAtivo);
+      setUsaInsulina(prevUsaInsulina);
+      setErroSalvar("Erro de conexão ao atualizar a chave de monitoramento.");
     } finally {
       setSalvandoSwitchRapido(false);
     }
@@ -331,22 +381,25 @@ export function MapaGlicemicoModal({
     presetModo: Exclude<ModoProtocoloGlicemico, "PERSONALIZADO">,
     presetSlots: SlotMapaGlicemico[],
   ) => {
+    hasEditedFormRef.current = true;
+    setErroSalvar(null);
     setModo(presetModo);
     setSlotsAtivos([...presetSlots]);
   };
 
   const handleToggleSlot = (slot: SlotMapaGlicemico) => {
-    setSlotsAtivos((prev) => {
-      const exists = prev.includes(slot);
-      const next = exists
-        ? prev.filter((s) => s !== slot)
-        : SLOTS_MAPA_ORDER.filter((s) => s === slot || prev.includes(s));
-      setModo(detectarModoPorSlots(next));
-      return next;
-    });
+    hasEditedFormRef.current = true;
+    setErroSalvar(null);
+    const exists = slotsAtivos.includes(slot);
+    const next = exists
+      ? slotsAtivos.filter((s) => s !== slot)
+      : SLOTS_MAPA_ORDER.filter((s) => s === slot || slotsAtivos.includes(s));
+    setSlotsAtivos(next);
+    setModo(detectarModoPorSlots(next));
   };
 
   const handleSalvarProtocolo = async () => {
+    setErroSalvar(null);
     setSalvandoProtocolo(true);
     try {
       const minNum = Math.max(40, Math.min(150, parseInt(alvoJejumMin, 10) || 70));
@@ -363,6 +416,7 @@ export function MapaGlicemicoModal({
         !Number.isNaN(doseNum) && doseNum > 0
           ? Math.round(doseNum * 100) / 100
           : null;
+      const modoResolvido = detectarModoPorSlots(slotsAtivos);
 
       const res = await fetch(
         `/api/pacientes/${encodeURIComponent(pacienteId)}/protocolo-glicemico`,
@@ -372,7 +426,7 @@ export function MapaGlicemicoModal({
           body: JSON.stringify({
             ativo,
             usaInsulina: ativo ? usaInsulina : false,
-            modo,
+            modo: modoResolvido,
             slotsAtivos,
             alvoJejumMin: minNum,
             alvoJejumMax: maxJejumNum,
@@ -387,14 +441,31 @@ export function MapaGlicemicoModal({
         },
       );
 
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (res.ok && json?.success && json.protocolo) {
-        onProtocoloChange(json.protocolo as ProtocoloGlicemicoDTO);
-        showToast("Protocolo glicêmico e insulinas salvos com sucesso!");
-        void carregarMapa();
+        const protocoloSalvo = json.protocolo as ProtocoloGlicemicoDTO;
+        hasEditedFormRef.current = false;
+        if (onSavedRef.current) {
+          onSavedRef.current(protocoloSalvo);
+        } else {
+          onProtocoloChangeRef.current(protocoloSalvo);
+        }
+        onCloseRef.current();
+        return;
       }
+
+      setErroSalvar(
+        json?.error ||
+          json?.motivo ||
+          "Não foi possível salvar o protocolo glicêmico. Tente novamente.",
+      );
     } catch (err) {
       console.error("[MapaGlicemicoModal] Erro ao salvar protocolo:", err);
+      setErroSalvar(
+        err instanceof Error && err.message
+          ? err.message
+          : "Erro de conexão ao salvar o protocolo glicêmico.",
+      );
     } finally {
       setSalvandoProtocolo(false);
     }
@@ -1120,12 +1191,13 @@ export function MapaGlicemicoModal({
                         <button
                           key={preset.modo}
                           type="button"
+                          aria-pressed={isSelected}
                           onClick={() =>
                             handleSelectPreset(preset.modo, preset.slots)
                           }
                           className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                             isSelected
-                              ? "bg-teal-50/80 border-teal-600 text-teal-950 shadow-2xs"
+                              ? "bg-emerald-50/80 border-emerald-600 text-emerald-950 shadow-2xs ring-1 ring-emerald-500/20"
                               : "bg-white border-slate-200 hover:border-slate-300 text-slate-700"
                           }`}
                         >
@@ -1134,7 +1206,7 @@ export function MapaGlicemicoModal({
                               {preset.label}
                             </span>
                             {isSelected ? (
-                              <Check className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                              <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
                             ) : null}
                           </div>
                           <span className="text-[10px] text-slate-500 block mt-1">
@@ -1146,7 +1218,7 @@ export function MapaGlicemicoModal({
                   </div>
                 </div>
 
-                {/* Chips clicáveis dos 7 momentos */}
+                {/* Chips clicáveis dos 7 momentos (sempre clicáveis, inclusive no modo Livre) */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-[11px] font-bold text-slate-700">
@@ -1154,8 +1226,8 @@ export function MapaGlicemicoModal({
                       selecionado{slotsAtivos.length === 1 ? "" : "s"})
                     </label>
                     {modo === "PERSONALIZADO" ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full cl-badge-teal">
-                        Personalizado
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full cl-badge-emerald">
+                        Personalizado · {slotsAtivos.length}x
                       </span>
                     ) : null}
                   </div>
@@ -1166,14 +1238,17 @@ export function MapaGlicemicoModal({
                         <button
                           key={slot}
                           type="button"
+                          aria-pressed={active}
                           onClick={() => handleToggleSlot(slot)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all inline-flex items-center gap-1.5 cursor-pointer ${
+                          className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all inline-flex items-center gap-1.5 cursor-pointer select-none ${
                             active
-                              ? "bg-teal-600 text-white border-teal-700 shadow-2xs"
-                              : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                              ? "bg-emerald-600 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-500/20"
+                              : "bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:text-emerald-800 hover:bg-emerald-50/40"
                           }`}
                         >
-                          {active ? <Check className="w-3 h-3" /> : null}
+                          {active ? (
+                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          ) : null}
                           <span>{SLOT_META[slot].label}</span>
                         </button>
                       );
@@ -1192,7 +1267,10 @@ export function MapaGlicemicoModal({
                       min={40}
                       max={150}
                       value={alvoJejumMin}
-                      onChange={(e) => setAlvoJejumMin(e.target.value)}
+                      onChange={(e) => {
+                        hasEditedFormRef.current = true;
+                        setAlvoJejumMin(e.target.value);
+                      }}
                       className="cl-input w-full text-xs font-bold px-3 py-2"
                     />
                   </div>
@@ -1205,7 +1283,10 @@ export function MapaGlicemicoModal({
                       min={80}
                       max={250}
                       value={alvoJejumMax}
-                      onChange={(e) => setAlvoJejumMax(e.target.value)}
+                      onChange={(e) => {
+                        hasEditedFormRef.current = true;
+                        setAlvoJejumMax(e.target.value);
+                      }}
                       className="cl-input w-full text-xs font-bold px-3 py-2"
                     />
                   </div>
@@ -1218,7 +1299,10 @@ export function MapaGlicemicoModal({
                       min={100}
                       max={350}
                       value={alvoPosMax}
-                      onChange={(e) => setAlvoPosMax(e.target.value)}
+                      onChange={(e) => {
+                        hasEditedFormRef.current = true;
+                        setAlvoPosMax(e.target.value);
+                      }}
                       className="cl-input w-full text-xs font-bold px-3 py-2"
                     />
                   </div>
@@ -1249,7 +1333,10 @@ export function MapaGlicemicoModal({
                         <input
                           type="text"
                           value={insulinaBasalNome}
-                          onChange={(e) => setInsulinaBasalNome(e.target.value)}
+                          onChange={(e) => {
+                            hasEditedFormRef.current = true;
+                            setInsulinaBasalNome(e.target.value);
+                          }}
                           placeholder="Ex: Lantus, Tresiba, Toujeo, NPH..."
                           className="cl-input w-full text-xs font-semibold px-3 py-2 bg-white"
                         />
@@ -1258,7 +1345,10 @@ export function MapaGlicemicoModal({
                             <button
                               key={sug}
                               type="button"
-                              onClick={() => setInsulinaBasalNome(sug)}
+                              onClick={() => {
+                                hasEditedFormRef.current = true;
+                                setInsulinaBasalNome(sug);
+                              }}
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-md border cursor-pointer transition-colors ${
                                 insulinaBasalNome.toLowerCase() ===
                                 sug.toLowerCase()
@@ -1280,9 +1370,10 @@ export function MapaGlicemicoModal({
                           <input
                             type="text"
                             value={insulinaBasalDoseRef}
-                            onChange={(e) =>
-                              setInsulinaBasalDoseRef(e.target.value)
-                            }
+                            onChange={(e) => {
+                              hasEditedFormRef.current = true;
+                              setInsulinaBasalDoseRef(e.target.value);
+                            }}
                             placeholder="Ex: 18"
                             className="cl-input w-full text-xs font-bold px-3 py-2 bg-white"
                           />
@@ -1294,9 +1385,10 @@ export function MapaGlicemicoModal({
                           <input
                             type="text"
                             value={insulinaBasalHorario}
-                            onChange={(e) =>
-                              setInsulinaBasalHorario(e.target.value)
-                            }
+                            onChange={(e) => {
+                              hasEditedFormRef.current = true;
+                              setInsulinaBasalHorario(e.target.value);
+                            }}
                             placeholder="Ex: 22:00 ou Noite"
                             className="cl-input w-full text-xs font-semibold px-3 py-2 bg-white"
                           />
@@ -1317,9 +1409,10 @@ export function MapaGlicemicoModal({
                         <input
                           type="text"
                           value={insulinaRapidaNome}
-                          onChange={(e) =>
-                            setInsulinaRapidaNome(e.target.value)
-                          }
+                          onChange={(e) => {
+                            hasEditedFormRef.current = true;
+                            setInsulinaRapidaNome(e.target.value);
+                          }}
                           placeholder="Ex: NovoRapid, Humalog, Fiasp, Regular..."
                           className="cl-input w-full text-xs font-semibold px-3 py-2 bg-white"
                         />
@@ -1328,7 +1421,10 @@ export function MapaGlicemicoModal({
                             <button
                               key={sug}
                               type="button"
-                              onClick={() => setInsulinaRapidaNome(sug)}
+                              onClick={() => {
+                                hasEditedFormRef.current = true;
+                                setInsulinaRapidaNome(sug);
+                              }}
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-md border cursor-pointer transition-colors ${
                                 insulinaRapidaNome.toLowerCase() ===
                                 sug.toLowerCase()
@@ -1374,7 +1470,10 @@ export function MapaGlicemicoModal({
                       type="text"
                       maxLength={300}
                       value={orientacaoHipo}
-                      onChange={(e) => setOrientacaoHipo(e.target.value)}
+                      onChange={(e) => {
+                        hasEditedFormRef.current = true;
+                        setOrientacaoHipo(e.target.value);
+                      }}
                       placeholder="Ex: Ingerir 15g de carboidrato rápido e repetir medição em 15 min."
                       className="cl-input w-full text-xs px-3 py-2"
                     />
@@ -1387,7 +1486,10 @@ export function MapaGlicemicoModal({
                       type="text"
                       maxLength={300}
                       value={orientacaoHiper}
-                      onChange={(e) => setOrientacaoHiper(e.target.value)}
+                      onChange={(e) => {
+                        hasEditedFormRef.current = true;
+                        setOrientacaoHiper(e.target.value);
+                      }}
                       placeholder="Ex: Hidratar-se bem, verificar dose corretiva prescrita e avisar a clínica se persistir."
                       className="cl-input w-full text-xs px-3 py-2"
                     />
@@ -1400,10 +1502,22 @@ export function MapaGlicemicoModal({
 
         {/* RODAPÉ DO MODAL */}
         <div className="px-5 py-3.5 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="text-xs text-slate-500 font-medium">
-            {subAba === "protocolo"
-              ? "As chaves de 1 clique sincronizam imediatamente com o App Mobile do paciente."
-              : `Exibindo ${linhas.length} dia(s) com registros nos últimos ${dias} dias.`}
+          <div className="min-w-0 flex-1">
+            {erroSalvar ? (
+              <div
+                role="alert"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span>{erroSalvar}</span>
+              </div>
+            ) : (
+              <span className="text-xs text-slate-500 font-medium">
+                {subAba === "protocolo"
+                  ? "As chaves de 1 clique sincronizam imediatamente com o App Mobile do paciente."
+                  : `Exibindo ${linhas.length} dia(s) com registros nos últimos ${dias} dias.`}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2.5">

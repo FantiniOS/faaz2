@@ -404,10 +404,10 @@ export function resumirEtiquetaProtocolo(protocolo: ProtocoloGlicemicoDTO): stri
   if (!protocolo.ativo) return "Não ativado";
   const count = protocolo.slotsAtivos.length;
   if (protocolo.modo === "LIVRE" || count === 0) return "Livre";
-  if (protocolo.modo === "JEJUM" || count === 1) return "Jejum 1x";
+  if (protocolo.modo === "JEJUM") return "Jejum 1x";
   if (protocolo.modo === "PAREADO") return `Pareado ${count}x`;
   if (protocolo.modo === "MAPA_COMPLETO") return `Mapa ${count}x`;
-  return `Mapa ${count}x`;
+  return `Personalizado · ${count}x`;
 }
 
 export function detectarModoPorSlots(

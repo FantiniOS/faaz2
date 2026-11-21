@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import {
   X,
@@ -752,6 +752,32 @@ export function ProntuarioModal({
       setSalvandoProtocoloSwitch(false);
     }
   }
+
+  const handleCloseMapaGlicemico = useCallback(() => {
+    setIsMapaGlicemicoOpen(false);
+  }, []);
+
+  const handleProtocoloGlicemicoChange = useCallback(
+    (novoProt: ProtocoloGlicemicoDTO) => {
+      setProtocoloGlicemico(novoProt);
+      setTermometroRefreshKey((k) => k + 1);
+    },
+    [],
+  );
+
+  const handleProtocoloGlicemicoSaved = useCallback(
+    (novoProt: ProtocoloGlicemicoDTO) => {
+      setProtocoloGlicemico(novoProt);
+      setTermometroRefreshKey((k) => k + 1);
+      setSuccessToast("Protocolo glicêmico salvo");
+      setTimeout(() => {
+        setSuccessToast((prev) =>
+          prev === "Protocolo glicêmico salvo" ? null : prev,
+        );
+      }, 3200);
+    },
+    [],
+  );
 
   // Cálculo de idade a partir de data de nascimento
   function calcularIdade(dataNascStr?: string | null): number | null {
@@ -4330,16 +4356,14 @@ export function ProntuarioModal({
         {paciente && isOpen && isMapaGlicemicoOpen && (
           <MapaGlicemicoModal
             isOpen={true}
-            onClose={() => setIsMapaGlicemicoOpen(false)}
+            onClose={handleCloseMapaGlicemico}
             pacienteId={paciente.id}
             pacienteNome={pacienteNome}
             pacienteRecordCode={pacienteRecordCode}
             initialTab={mapaGlicemicoTabInicial}
             protocoloAtual={protocoloGlicemico}
-            onProtocoloChange={(novoProt) => {
-              setProtocoloGlicemico(novoProt);
-              setTermometroRefreshKey((k) => k + 1);
-            }}
+            onProtocoloChange={handleProtocoloGlicemicoChange}
+            onSaved={handleProtocoloGlicemicoSaved}
           />
         )}
       </div>

@@ -192,14 +192,16 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         let nextModo: ModoProtocoloGlicemico =
           input.modo !== undefined ? input.modo : base.modo;
 
-        // Se o modo preset foi informado sem slots explícitos, aplica os slots do preset
-        if (input.modo !== undefined && input.slotsAtivos === undefined) {
+        // Mantém MODO e SLOTS_ATIVOS sempre consistentes no Oracle ADB
+        if (input.slotsAtivos !== undefined) {
+          nextModo = detectarModoPorSlots(nextSlots);
+        } else if (input.modo !== undefined) {
           const preset = PROTOCOLO_PRESETS.find((p) => p.modo === input.modo);
           if (preset) {
             nextSlots = [...preset.slots];
+          } else {
+            nextModo = detectarModoPorSlots(nextSlots);
           }
-        } else if (input.slotsAtivos !== undefined && input.modo === undefined) {
-          nextModo = detectarModoPorSlots(nextSlots);
         }
 
         const nextAlvoJejumMin = input.alvoJejumMin ?? base.alvoJejumMin;
