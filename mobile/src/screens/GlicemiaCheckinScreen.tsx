@@ -24,6 +24,7 @@ import {
 import { usePatientAuth } from "../contexts/PatientAuthContext";
 import { StandardHeader } from "../components/StandardHeader";
 import api from "../services/api";
+import { classificarGlicemiaClinica } from "../utils/glicemiaClassificacao";
 
 export type MomentoGlicemia = "JEJUM" | "POS_PRANDIAL" | "CASUAL";
 
@@ -55,8 +56,10 @@ export function GlicemiaCheckinScreen({
   const valorNumerico = parseInt(valorInput.replace(/\D/g, ""), 10);
   const isValorValido =
     !isNaN(valorNumerico) && valorNumerico >= 20 && valorNumerico <= 600;
-  const isAlertaCritico =
-    isValorValido && (valorNumerico < 70 || valorNumerico > 180);
+  const classificacaoAtual = isValorValido
+    ? classificarGlicemiaClinica(valorNumerico, momentoSelecionado)
+    : null;
+  const isAlertaCritico = Boolean(classificacaoAtual?.isForaDoAlvo);
 
   async function handleRegistrarGlicemia() {
     if (!isValorValido || isSubmitting) {
@@ -151,31 +154,33 @@ export function GlicemiaCheckinScreen({
             <Text style={styles.unitLabel}>mg/dL</Text>
           </View>
 
-          {isValorValido && (
+          {isValorValido && classificacaoAtual && (
             <View
               style={[
                 styles.statusPill,
-                isAlertaCritico ? styles.statusPillCritico : styles.statusPillNormal,
+                {
+                  backgroundColor: classificacaoAtual.badgeBg,
+                  borderWidth: 1,
+                  borderColor: classificacaoAtual.badgeBorder,
+                },
               ]}
             >
-              {isAlertaCritico ? (
-                <AlertTriangle size={13} color="#be123c" />
+              {classificacaoAtual.isNoAlvo ? (
+                <CheckCircle2 size={13} color={classificacaoAtual.badgeText} />
               ) : (
-                <CheckCircle2 size={13} color="#047857" />
+                <AlertTriangle size={13} color={classificacaoAtual.badgeText} />
               )}
               <Text
                 style={[
                   styles.statusPillText,
-                  isAlertaCritico
-                    ? styles.statusPillTextCritico
-                    : styles.statusPillTextNormal,
+                  { color: classificacaoAtual.badgeText },
                 ]}
               >
-                {valorNumerico < 70
-                  ? "Atenção: Abaixo de 70 mg/dL (Hipoglicemia)"
-                  : valorNumerico > 180
-                  ? "Atenção: Acima de 180 mg/dL (Alerta Médico)"
-                  : "Dentro da faixa de monitoramento"}
+                {classificacaoAtual.status === "HIPO"
+                  ? `Hipoglicemia: abaixo de ${classificacaoAtual.alvoMin} mg/dL`
+                  : classificacaoAtual.isForaDoAlvo
+                    ? `Acima do alvo (meta ≤${classificacaoAtual.alvoMax} mg/dL)`
+                    : `No alvo (${classificacaoAtual.alvoMin}–${classificacaoAtual.alvoMax} mg/dL)`}
               </Text>
             </View>
           )}

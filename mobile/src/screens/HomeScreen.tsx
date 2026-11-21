@@ -53,12 +53,17 @@ import {
   IntestinoCheckinItem,
   resolveAssetUrl,
   SlotMapaGlicemico,
-  StatusCelulaGlicemia,
 } from "../services/api";
 import {
   getConfigObjetivoClinico,
   avaliarVariacaoPeso,
 } from "../utils/objetivoClinico";
+import {
+  classificarGlicemiaClinica,
+  getFaixaAlvoMomento,
+  getLabelMomentoGlicemia,
+  MOMENTO_GLICEMIA_LABELS,
+} from "../utils/glicemiaClassificacao";
 import {
   formatHorarioCurto,
   getItemEfetivo,
@@ -285,16 +290,7 @@ function consolidarMedidasHome(
   };
 }
 
-const SLOT_LABELS: Record<MomentoClinicoGlicemia, string> = {
-  JEJUM: "Jejum",
-  POS_CAFE: "Pós-Café",
-  PRE_ALMOCO: "Pré-Almoço",
-  POS_ALMOCO: "Pós-Almoço",
-  PRE_JANTAR: "Pré-Jantar",
-  POS_JANTAR: "Pós-Jantar",
-  AO_DEITAR: "Ao Deitar",
-  AVULSO: "Avulsa",
-};
+const SLOT_LABELS = MOMENTO_GLICEMIA_LABELS;
 
 const ALL_SLOTS_ORDER: SlotMapaGlicemico[] = [
   "JEJUM",
@@ -311,19 +307,6 @@ const CONTEXTO_CHIPS = [
   { id: "EXERCICIO", label: "Exercício" },
   { id: "SINTOMA_HIPO", label: "Sintoma de hipo" },
 ] as const;
-
-function getStatusPillColors(status: StatusCelulaGlicemia) {
-  switch (status) {
-    case "HIPO":
-      return { bg: "#ffe4e6", border: "#fda4af", text: "#9f1239", sub: "#be123c" };
-    case "ALVO":
-      return { bg: "#ecfdf5", border: "#a7f3d0", text: "#065f46", sub: "#047857" };
-    case "ATENCAO":
-      return { bg: "#fffbeb", border: "#fde68a", text: "#92400e", sub: "#b45309" };
-    case "HIPER":
-      return { bg: "#e11d48", border: "#be123c", text: "#ffffff", sub: "#ffe4e6" };
-  }
-}
 
 function formatUILabel(val: number): string {
   const r = Math.round(val * 10) / 10;
@@ -539,18 +522,20 @@ export function HomeScreen({
 
           const maisRecente = todasCelulasHoje[0];
           if (maisRecente) {
+            const classifRecente = classificarGlicemiaClinica(
+              maisRecente.valor,
+              maisRecente.momentoClinico,
+              prot
+            );
             setUltimaGlicemiaHoje({
               id: maisRecente.id,
               valor: maisRecente.valor,
-              momento: maisRecente.momentoClinico,
-              momentoClinico: maisRecente.momentoClinico,
-              momentoLegivel:
-                SLOT_LABELS[maisRecente.momentoClinico] ||
-                maisRecente.momentoClinico,
+              momento: classifRecente.momentoNormalizado,
+              momentoClinico: classifRecente.momentoNormalizado,
+              momentoLegivel: getLabelMomentoGlicemia(maisRecente.momentoClinico),
               dataRegistro: maisRecente.dataRegistro,
-              isCritico:
-                maisRecente.status === "HIPO" ||
-                maisRecente.status === "HIPER",
+              isCritico: classifRecente.isForaDoAlvo,
+              tipoAlerta: classifRecente.tipoAlerta,
             });
           } else {
             setUltimaGlicemiaHoje(null);
@@ -1113,10 +1098,10 @@ export function HomeScreen({
           <View style={styles.glycemicTrailCard}>
             <View style={styles.trailHeaderRow}>
               <View style={styles.trailTitleGroup}>
-                <View style={styles.trailIconBox}>
+                <View style={[styles.trailIconBox, { flexShrink: 0 }]}>
                   <HeartPulse size={15} color="#e11d48" />
                 </View>
-                <View>
+                <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
                   <Text style={styles.trailTitle}>Mapa Glicêmico de Hoje</Text>
                   <Text style={styles.trailSubtitle}>
                     {
@@ -1146,7 +1131,11 @@ export function HomeScreen({
                 const label = SLOT_LABELS[slot] || slot;
 
                 if (cel) {
-                  const pal = getStatusPillColors(cel.status);
+                  const classif = classificarGlicemiaClinica(
+                    cel.valor,
+                    cel.momentoClinico || slot,
+                    protocoloGlicemico
+                  );
                   return (
                     <TouchableOpacity
                       key={slot}
@@ -1155,14 +1144,21 @@ export function HomeScreen({
                       style={[
                         styles.trailSlotPillDone,
                         {
-                          backgroundColor: pal.bg,
-                          borderColor: pal.border,
+                          backgroundColor: classif.pillBg,
+                          borderColor: classif.pillBorder,
                         },
                       ]}
                     >
-                      <CheckCircle2 size={13} color={pal.text} />
+                      {classif.isNoAlvo ? (
+                        <CheckCircle2 size={13} color={classif.pillText} />
+                      ) : (
+                        <AlertTriangle size={13} color={classif.pillText} />
+                      )}
                       <Text
-                        style={[styles.trailSlotDoneText, { color: pal.text }]}
+                        style={[
+                          styles.trailSlotDoneText,
+                          { color: classif.pillText },
+                        ]}
                       >
                         {label} · {cel.valor}
                       </Text>
@@ -1170,7 +1166,7 @@ export function HomeScreen({
                         <View
                           style={[
                             styles.trailRapidBadge,
-                            cel.status === "HIPER" && {
+                            classif.status === "HIPER" && {
                               backgroundColor: "rgba(255,255,255,0.22)",
                             },
                           ]}
@@ -1178,7 +1174,9 @@ export function HomeScreen({
                           <Text
                             style={[
                               styles.trailRapidBadgeText,
-                              cel.status === "HIPER" && { color: "#ffffff" },
+                              classif.status === "HIPER" && {
+                                color: "#ffffff",
+                              },
                             ]}
                           >
                             {formatUILabel(cel.insulinaUI)}
@@ -1292,53 +1290,69 @@ export function HomeScreen({
           </TouchableOpacity>
 
           {/* 2. GLICEMIA (EXIBIDO SOMENTE QUANDO protocoloGlicemico.ativo === true) */}
-          {protocoloGlicemico?.ativo ? (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => abrirGavetaGlicemia()}
-              style={styles.checkinTile}
-            >
-              <View style={styles.tileTopRow}>
-                <View style={[styles.tileIconBox, { backgroundColor: "#fff1f2" }]}>
-                  <HeartPulse size={16} color="#e11d48" />
-                </View>
-                {ultimaGlicemiaHoje ? (
-                  <View
-                    style={[
-                      styles.miniBadge,
-                      ultimaGlicemiaHoje.isCritico
-                        ? { backgroundColor: "#fff1f2", borderColor: "#fecdd3" }
-                        : { backgroundColor: "#ecfdf5", borderColor: "#a7f3d0" },
-                    ]}
+          {protocoloGlicemico?.ativo
+            ? (() => {
+                const ultimaGlicemiaClassif = ultimaGlicemiaHoje
+                  ? classificarGlicemiaClinica(
+                      ultimaGlicemiaHoje.valor,
+                      ultimaGlicemiaHoje.momentoClinico ??
+                        ultimaGlicemiaHoje.momento,
+                      protocoloGlicemico
+                    )
+                  : null;
+
+                return (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => abrirGavetaGlicemia()}
+                    style={styles.checkinTile}
                   >
-                    <Text
-                      style={[
-                        styles.miniBadgeText,
-                        {
-                          color: ultimaGlicemiaHoje.isCritico
-                            ? "#be123c"
-                            : "#047857",
-                        },
-                      ]}
-                    >
-                      {ultimaGlicemiaHoje.isCritico ? "Alerta" : "Na meta"}
+                    <View style={styles.tileTopRow}>
+                      <View
+                        style={[
+                          styles.tileIconBox,
+                          { backgroundColor: "#fff1f2" },
+                        ]}
+                      >
+                        <HeartPulse size={16} color="#e11d48" />
+                      </View>
+                      {ultimaGlicemiaClassif ? (
+                        <View
+                          style={[
+                            styles.miniBadge,
+                            {
+                              backgroundColor: ultimaGlicemiaClassif.badgeBg,
+                              borderColor: ultimaGlicemiaClassif.badgeBorder,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.miniBadgeText,
+                              { color: ultimaGlicemiaClassif.badgeText },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {ultimaGlicemiaClassif.label}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={styles.tileLabel}>Glicemia</Text>
+                    <Text style={styles.tileValue} numberOfLines={1}>
+                      {ultimaGlicemiaHoje
+                        ? `${ultimaGlicemiaHoje.valor} mg/dL`
+                        : "Registrar"}
                     </Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.tileLabel}>Glicemia</Text>
-              <Text style={styles.tileValue} numberOfLines={1}>
-                {ultimaGlicemiaHoje
-                  ? `${ultimaGlicemiaHoje.valor} mg/dL`
-                  : "Registrar"}
-              </Text>
-              <Text style={styles.tileSub} numberOfLines={1}>
-                {ultimaGlicemiaHoje
-                  ? `${ultimaGlicemiaHoje.momentoLegivel || ultimaGlicemiaHoje.momento} • ${formatHoraLocal(ultimaGlicemiaHoje.dataRegistro)}`
-                  : "Registrar agora"}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
+                    <Text style={styles.tileSub} numberOfLines={1}>
+                      {ultimaGlicemiaHoje
+                        ? `${ultimaGlicemiaHoje.momentoLegivel || getLabelMomentoGlicemia(ultimaGlicemiaHoje.momento)} • ${formatHoraLocal(ultimaGlicemiaHoje.dataRegistro)}`
+                        : "Registrar agora"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })()
+            : null}
 
           {/* 3. INTESTINO (BRISTOL) */}
           <TouchableOpacity
@@ -1682,16 +1696,17 @@ export function HomeScreen({
                 <View style={styles.drawerTitleTextCol}>
                   <Text style={styles.drawerTitle}>Registrar Glicemia</Text>
                   <Text style={styles.drawerSubtitle}>
-                    {SLOT_LABELS[momentoDrawer] || "Medição capilar"} •{" "}
-                    Alvo{" "}
-                    {momentoDrawer === "POS_CAFE" ||
-                    momentoDrawer === "POS_ALMOCO" ||
-                    momentoDrawer === "POS_JANTAR"
-                      ? `≤${protocoloGlicemico?.alvoPosMax || 180}`
-                      : `${protocoloGlicemico?.alvoJejumMin || 70}–${
-                          protocoloGlicemico?.alvoJejumMax || 130
-                        }`}{" "}
-                    mg/dL
+                    {(() => {
+                      const faixa = getFaixaAlvoMomento(
+                        momentoDrawer,
+                        protocoloGlicemico
+                      );
+                      return `${SLOT_LABELS[momentoDrawer] || "Medição capilar"} • Alvo ${
+                        faixa.isPosPrandial
+                          ? `≤${faixa.max}`
+                          : `${faixa.min}–${faixa.max}`
+                      } mg/dL`;
+                    })()}
                   </Text>
                 </View>
               </View>
@@ -2569,11 +2584,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 8,
   },
   trailTitleGroup: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    flex: 1,
+    minWidth: 0,
   },
   trailIconBox: {
     width: 34,
@@ -2584,6 +2602,7 @@ const styles = StyleSheet.create({
     borderColor: "#fecdd3",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   trailTitle: {
     fontSize: 14,
@@ -2605,6 +2624,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
+    flexShrink: 0,
   },
   avulsaBtnText: {
     fontSize: 11,

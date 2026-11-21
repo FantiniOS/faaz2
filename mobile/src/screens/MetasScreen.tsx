@@ -31,16 +31,20 @@ import {
   CelulaMapaGlicemicoItem,
   MeasurementItem,
   GlicemiaHistoricoItem,
-  GlicemiaResumoPeriodo,
   IntestinoCheckinItem,
   MapaGlicemicoResponse,
-  MomentoClinicoGlicemia,
   PacienteTreinosResponse,
 } from "../services/api";
 import {
   getConfigObjetivoClinico,
   avaliarVariacaoPeso,
 } from "../utils/objetivoClinico";
+import {
+  classificarGlicemiaClinica,
+  getLabelMomentoGlicemia,
+  resolverAlvosGlicemicos,
+  resumirGlicemiasClinicas,
+} from "../utils/glicemiaClassificacao";
 import { formatarDataBR, formatarDataCurtaHoraBR } from "../utils/dateBr";
 
 export interface MetasScreenProps {
@@ -135,12 +139,6 @@ export function MetasScreen({
     historico: [],
   });
   const [measurements, setMeasurements] = useState<MeasurementItem[]>([]);
-  const [glicemiaResumo, setGlicemiaResumo] = useState<GlicemiaResumoPeriodo>({
-    media: null,
-    totalMedicoes: 0,
-    dentroDaMeta: 0,
-    alertas: 0,
-  });
   const [glicemiaHistorico, setGlicemiaHistorico] = useState<
     GlicemiaHistoricoItem[]
   >([]);
@@ -221,21 +219,6 @@ export function MetasScreen({
         const mapa = mapaGlicRes.value;
         setMapaGlicemico(mapa);
 
-        const r = mapa.resumo;
-        const total = r?.totalMedicoes || 0;
-        const alertas = (r?.episodiosHipo || 0) + (r?.episodiosHiper || 0);
-        const dentro =
-          r?.percentualNoAlvo !== null && r?.percentualNoAlvo !== undefined
-            ? Math.round((r.percentualNoAlvo / 100) * total)
-            : Math.max(0, total - alertas);
-
-        setGlicemiaResumo({
-          media: r?.mediaGeral ?? null,
-          totalMedicoes: total,
-          dentroDaMeta: dentro,
-          alertas,
-        });
-
         const flatList: GlicemiaHistoricoItem[] = [];
         for (const linha of mapa.linhas || []) {
           const cels: CelulaMapaGlicemicoItem[] = [
@@ -245,34 +228,24 @@ export function MetasScreen({
             ...(linha.avulsos || []),
           ];
           for (const cel of cels) {
-            const labelSlot: Record<MomentoClinicoGlicemia, string> = {
-              JEJUM: "Jejum",
-              POS_CAFE: "Pós-Café",
-              PRE_ALMOCO: "Pré-Almoço",
-              POS_ALMOCO: "Pós-Almoço",
-              PRE_JANTAR: "Pré-Jantar",
-              POS_JANTAR: "Pós-Jantar",
-              AO_DEITAR: "Ao Deitar",
-              AVULSO: "Avulsa",
-            };
             const insTxt =
               cel.insulinaUI && cel.insulinaUI > 0
                 ? ` (+${cel.insulinaUI} UI)`
                 : "";
+            const classificacao = classificarGlicemiaClinica(
+              cel.valor,
+              cel.momentoClinico,
+              mapa.protocolo
+            );
             flatList.push({
               id: cel.id,
               valor: cel.valor,
-              momento: cel.momentoClinico,
-              momentoClinico: cel.momentoClinico,
-              momentoLegivel: `${labelSlot[cel.momentoClinico] || cel.momentoClinico}${insTxt}`,
+              momento: classificacao.momentoNormalizado,
+              momentoClinico: classificacao.momentoNormalizado,
+              momentoLegivel: `${getLabelMomentoGlicemia(cel.momentoClinico)}${insTxt}`,
               dataRegistro: cel.dataRegistro,
-              isCritico: cel.status === "HIPO" || cel.status === "HIPER",
-              tipoAlerta:
-                cel.status === "HIPO"
-                  ? "HIPOGLICEMIA"
-                  : cel.status === "HIPER"
-                    ? "HIPERGLICEMIA"
-                    : "NORMAL",
+              isCritico: classificacao.isForaDoAlvo,
+              tipoAlerta: classificacao.tipoAlerta,
             });
           }
         }
@@ -436,12 +409,16 @@ export function MetasScreen({
     return { total, ideal, constipacao, diarreia, predominante, cor, bg };
   }, [intestinoHistorico]);
 
-  const percGlicemiaNaMeta =
-    glicemiaResumo.totalMedicoes > 0
-      ? Math.round(
-          (glicemiaResumo.dentroDaMeta / glicemiaResumo.totalMedicoes) * 100
-        )
-      : null;
+  const alvosGlicemicos = useMemo(
+    () => resolverAlvosGlicemicos(mapaGlicemico?.protocolo),
+    [mapaGlicemico?.protocolo]
+  );
+
+  // Fonte única de verdade para KPIs de resumo e lista individual de medições
+  const resumoGlicemiaClinico = useMemo(
+    () => resumirGlicemiasClinicas(glicemiaHistorico, alvosGlicemicos),
+    [glicemiaHistorico, alvosGlicemicos]
+  );
 
   return (
     <View style={styles.root}>
@@ -487,7 +464,7 @@ export function MetasScreen({
                 <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
                   <Scale size={16} color="#0f766e" />
                 </View>
-                <View>
+                <View style={styles.cardTitleTextCol}>
                   <Text style={styles.cardTitle}>Evolução de Peso</Text>
                   <Text style={styles.cardSubtitle}>
                     {objetivoClinico?.trim() || objetivoConfig.rotuloCurto}
@@ -623,7 +600,7 @@ export function MetasScreen({
                 <View style={[styles.iconBox, { backgroundColor: "#f0f9ff" }]}>
                   <Ruler size={16} color="#0284c7" />
                 </View>
-                <View>
+                <View style={styles.cardTitleTextCol}>
                   <Text style={styles.cardTitle}>
                     Medidas & Composição Corporal
                   </Text>
@@ -708,12 +685,12 @@ export function MetasScreen({
                   <View style={[styles.iconBox, { backgroundColor: "#fff1f2" }]}>
                     <HeartPulse size={16} color="#e11d48" />
                   </View>
-                  <View>
+                  <View style={styles.cardTitleTextCol}>
                     <Text style={styles.cardTitle}>Glicemia — Últimos 7 dias</Text>
                     <Text style={styles.cardSubtitle}>
-                      Jejum {mapaGlicemico.protocolo.alvoJejumMin}–
-                      {mapaGlicemico.protocolo.alvoJejumMax} · Pós ≤
-                      {mapaGlicemico.protocolo.alvoPosMax} mg/dL
+                      Jejum {alvosGlicemicos.alvoJejumMin}–
+                      {alvosGlicemicos.alvoJejumMax} · Pós ≤
+                      {alvosGlicemicos.alvoPosMax} mg/dL
                     </Text>
                   </View>
                 </View>
@@ -732,9 +709,8 @@ export function MetasScreen({
                 <View style={styles.kpiBox}>
                   <Text style={styles.kpiLabel}>Média Jejum</Text>
                   <Text style={styles.kpiValue}>
-                    {mapaGlicemico.resumo?.mediaJejum !== null &&
-                    mapaGlicemico.resumo?.mediaJejum !== undefined
-                      ? `${mapaGlicemico.resumo.mediaJejum}`
+                    {resumoGlicemiaClinico.mediaJejum !== null
+                      ? `${resumoGlicemiaClinico.mediaJejum}`
                       : "--"}
                   </Text>
                   <Text style={styles.kpiUnit}>mg/dL</Text>
@@ -742,9 +718,8 @@ export function MetasScreen({
                 <View style={styles.kpiBox}>
                   <Text style={styles.kpiLabel}>Média Pós</Text>
                   <Text style={styles.kpiValue}>
-                    {mapaGlicemico.resumo?.mediaPosPrandial !== null &&
-                    mapaGlicemico.resumo?.mediaPosPrandial !== undefined
-                      ? `${mapaGlicemico.resumo.mediaPosPrandial}`
+                    {resumoGlicemiaClinico.mediaPosPrandial !== null
+                      ? `${resumoGlicemiaClinico.mediaPosPrandial}`
                       : "--"}
                   </Text>
                   <Text style={styles.kpiUnit}>mg/dL</Text>
@@ -752,15 +727,12 @@ export function MetasScreen({
                 <View style={styles.kpiBox}>
                   <Text style={styles.kpiLabel}>No Alvo</Text>
                   <Text style={[styles.kpiValue, { color: "#047857" }]}>
-                    {mapaGlicemico.resumo?.percentualNoAlvo !== null &&
-                    mapaGlicemico.resumo?.percentualNoAlvo !== undefined
-                      ? `${mapaGlicemico.resumo.percentualNoAlvo}%`
-                      : percGlicemiaNaMeta !== null
-                        ? `${percGlicemiaNaMeta}%`
-                        : "--"}
+                    {resumoGlicemiaClinico.percentualNoAlvo !== null
+                      ? `${resumoGlicemiaClinico.percentualNoAlvo}%`
+                      : "--"}
                   </Text>
                   <Text style={styles.kpiUnit}>
-                    {glicemiaResumo.dentroDaMeta} ok
+                    {resumoGlicemiaClinico.dentroDaMeta} ok
                   </Text>
                 </View>
                 <View style={styles.kpiBox}>
@@ -768,14 +740,19 @@ export function MetasScreen({
                   <Text
                     style={[
                       styles.kpiValue,
-                      glicemiaResumo.alertas > 0 && { color: "#be123c" },
+                      resumoGlicemiaClinico.foraDoAlvo > 0 && {
+                        color:
+                          resumoGlicemiaClinico.alertasCriticos > 0
+                            ? "#be123c"
+                            : "#b45309",
+                      },
                     ]}
                   >
-                    {glicemiaResumo.totalMedicoes}
+                    {resumoGlicemiaClinico.totalMedicoes}
                   </Text>
                   <Text style={styles.kpiUnit}>
-                    {glicemiaResumo.alertas > 0
-                      ? `${glicemiaResumo.alertas} alerta(s)`
+                    {resumoGlicemiaClinico.foraDoAlvo > 0
+                      ? `${resumoGlicemiaClinico.foraDoAlvo} fora`
                       : "7 dias"}
                   </Text>
                 </View>
@@ -783,56 +760,67 @@ export function MetasScreen({
 
               {glicemiaHistorico.length > 0 ? (
                 <View style={styles.listContainer}>
-                  {glicemiaHistorico.slice(0, 8).map((item) => (
-                    <View key={item.id} style={styles.listRow}>
-                      <View style={styles.listLeft}>
+                  {glicemiaHistorico.slice(0, 8).map((item) => {
+                    const classificacao = classificarGlicemiaClinica(
+                      item.valor,
+                      item.momentoClinico ?? item.momento,
+                      alvosGlicemicos
+                    );
+
+                    return (
+                      <View key={item.id} style={styles.listRow}>
+                        <View style={styles.listLeft}>
+                          <View
+                            style={[
+                              styles.dotIndicator,
+                              { backgroundColor: classificacao.dotColor },
+                            ]}
+                          />
+                          <View style={styles.listTextCol}>
+                            <Text style={styles.listMainText}>
+                              {item.valor} mg/dL{" "}
+                              <Text style={styles.listSubInline}>
+                                • {item.momentoLegivel || getLabelMomentoGlicemia(item.momento)}
+                              </Text>
+                            </Text>
+                            <Text style={styles.listDateText}>
+                              {formatDataHoraLocal(item.dataRegistro)}
+                            </Text>
+                          </View>
+                        </View>
+
                         <View
                           style={[
-                            styles.dotIndicator,
+                            styles.tinyStatusPill,
                             {
-                              backgroundColor: item.isCritico
-                                ? "#e11d48"
-                                : "#059669",
+                              backgroundColor: classificacao.badgeBg,
+                              borderColor: classificacao.badgeBorder,
                             },
                           ]}
-                        />
-                        <View>
-                          <Text style={styles.listMainText}>
-                            {item.valor} mg/dL{" "}
-                            <Text style={styles.listSubInline}>
-                              • {item.momentoLegivel || item.momento}
-                            </Text>
-                          </Text>
-                          <Text style={styles.listDateText}>
-                            {formatDataHoraLocal(item.dataRegistro)}
+                        >
+                          {classificacao.isNoAlvo ? (
+                            <CheckCircle2
+                              size={11}
+                              color={classificacao.badgeText}
+                            />
+                          ) : (
+                            <AlertTriangle
+                              size={11}
+                              color={classificacao.badgeText}
+                            />
+                          )}
+                          <Text
+                            style={[
+                              styles.tinyStatusText,
+                              { color: classificacao.badgeText },
+                            ]}
+                          >
+                            {classificacao.label}
                           </Text>
                         </View>
                       </View>
-
-                      <View
-                        style={[
-                          styles.tinyStatusPill,
-                          item.isCritico
-                            ? { backgroundColor: "#fff1f2" }
-                            : { backgroundColor: "#ecfdf5" },
-                        ]}
-                      >
-                        {item.isCritico ? (
-                          <AlertTriangle size={11} color="#be123c" />
-                        ) : (
-                          <CheckCircle2 size={11} color="#047857" />
-                        )}
-                        <Text
-                          style={[
-                            styles.tinyStatusText,
-                            { color: item.isCritico ? "#be123c" : "#047857" },
-                          ]}
-                        >
-                          {item.isCritico ? "Alerta" : "No alvo"}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </View>
               ) : (
                 <View style={styles.emptyBox}>
@@ -853,7 +841,7 @@ export function MetasScreen({
                 <View style={[styles.iconBox, { backgroundColor: "#ecfdf5" }]}>
                   <Activity size={16} color="#059669" />
                 </View>
-                <View>
+                <View style={styles.cardTitleTextCol}>
                   <Text style={styles.cardTitle}>
                     Padrão Intestinal — Bristol
                   </Text>
@@ -970,7 +958,7 @@ export function MetasScreen({
                 <View style={[styles.iconBox, { backgroundColor: "#f0fdfa" }]}>
                   <Dumbbell size={16} color="#0f766e" />
                 </View>
-                <View>
+                <View style={styles.cardTitleTextCol}>
                   <Text style={styles.cardTitle}>Adesão aos Treinos — 30d</Text>
                   <Text style={styles.cardSubtitle}>
                     Diretrizes de atividade física
@@ -1146,6 +1134,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     flex: 1,
+    minWidth: 0,
+  },
+  cardTitleTextCol: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
   },
   iconBox: {
     width: 34,
@@ -1153,6 +1147,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   cardTitle: {
     fontSize: 15,
@@ -1169,6 +1164,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 999,
     borderWidth: 1,
+    flexShrink: 0,
   },
   statusPillText: {
     fontSize: 11,
@@ -1179,6 +1175,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 999,
+    flexShrink: 0,
   },
   neutralPillText: {
     fontSize: 11,
@@ -1346,6 +1343,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 10,
+    flexShrink: 0,
   },
   inlineAddBtnText: {
     fontSize: 11,
@@ -1401,11 +1399,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     flex: 1,
+    minWidth: 0,
+  },
+  listTextCol: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 6,
   },
   dotIndicator: {
     width: 8,
     height: 8,
     borderRadius: 4,
+    flexShrink: 0,
   },
   listMainText: {
     fontSize: 13,
@@ -1428,6 +1433,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
+    borderWidth: 1,
+    flexShrink: 0,
   },
   tinyStatusText: {
     fontSize: 10.5,
