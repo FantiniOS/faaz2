@@ -14,12 +14,13 @@ import {
   type PacoteAcompanhamento,
   type Patient,
 } from "@/lib/db/entities";
-import { getDataDiaBR } from "@/lib/date-br";
+import { getDataDiaBR, toIsoUtc } from "@/lib/date-br";
 import { consultaDescontaSaldo, diffDiasIso } from "@/lib/pacotes-faaz";
 import {
   resolverMedicoResponsavel,
   type MedicoResponsavelDTO,
 } from "@/lib/medico-responsavel";
+import { VERSAO_ATUAL_TERMOS } from "@/lib/termos-privacidade";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -54,6 +55,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                   primaryDoctorId: true,
                   convenio: true,
                   planoFaaz: true,
+                  termosVersaoAceita: true,
+                  termosAceitoEm: true,
                 },
               }),
             { label: "plano-resumo:paciente" },
@@ -102,6 +105,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       loaded.pacotes.find((p) => p.status === "CONCLUIDO") ?? null;
     const pacoteAlvo = pacoteAtivo ?? ultimoConcluido;
 
+    const termosVersaoAceita = loaded.paciente.termosVersaoAceita ?? null;
+    const termosAceitoEm = toIsoUtc(loaded.paciente.termosAceitoEm);
+
     if (!pacoteAlvo) {
       const medicoResponsavel = await resolverMedicoResponsavel(id, {
         primaryDoctorId: loaded.paciente.primaryDoctorId,
@@ -114,6 +120,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         planoLabel: fallbackConvenio,
         pacote: null,
         medicoResponsavel,
+        termosVersaoAceita,
+        termosAceitoEm,
+        versaoAtualTermos: VERSAO_ATUAL_TERMOS,
       });
     }
 
@@ -216,6 +225,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       possuiPacote: true,
       planoLabel: nomePlanoLimpo,
       medicoResponsavel,
+      termosVersaoAceita,
+      termosAceitoEm,
+      versaoAtualTermos: VERSAO_ATUAL_TERMOS,
       pacote: {
         nomePlano: nomePlanoLimpo,
         status: statusNormalizado,

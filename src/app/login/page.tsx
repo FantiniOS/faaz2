@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -584,8 +585,17 @@ export default function LoginPage() {
                 Acesso exclusivo para profissionais autorizados da Clínica FAAZ.
                 Precisa de acesso ou redefinição? Contate a administração.
               </p>
-              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400">
-                <span>Clínica FAAZ</span>
+              <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-400">
+                <div className="flex items-center gap-2.5">
+                  <span>Clínica FAAZ</span>
+                  <span className="text-slate-300">•</span>
+                  <Link
+                    href="/privacidade"
+                    className="text-slate-500 hover:text-emerald-700 transition-colors underline-offset-2 hover:underline"
+                  >
+                    Privacidade &amp; LGPD
+                  </Link>
+                </div>
                 <span className="font-mono px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/70 text-slate-500">
                   EnDoc 2.0
                 </span>

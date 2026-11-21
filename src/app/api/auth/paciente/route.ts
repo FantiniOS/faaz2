@@ -5,6 +5,8 @@ import { PatientEntity, ProntuarioPacienteEntity } from "@/lib/db/entities";
 import { DEFAULT_CLINICAL_OBJECTIVE } from "@/lib/clinical-objectives";
 import { resolverObjetivoAtivo } from "@/lib/objetivo-clinico";
 import { resolverMedicoResponsavel } from "@/lib/medico-responsavel";
+import { toIsoUtc } from "@/lib/date-br";
+import { VERSAO_ATUAL_TERMOS } from "@/lib/termos-privacidade";
 
 export async function POST(req: NextRequest) {
   try {
@@ -95,7 +97,11 @@ export async function POST(req: NextRequest) {
           treatmentObjective: objetivoUnificado,
           medicacoes,
           avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
+          termosVersaoAceita: paciente.termosVersaoAceita ?? null,
+          termosAceitoEm: toIsoUtc(paciente.termosAceitoEm),
+          versaoAtualTermos: VERSAO_ATUAL_TERMOS,
         },
+        versaoAtualTermos: VERSAO_ATUAL_TERMOS,
       },
       { status: 200 },
     );

@@ -7,6 +7,7 @@ import {
   emptyStringAsNull,
   integer,
   json,
+  timestampTz,
   uuidPrimary,
   uuidRef,
   varchar,
@@ -80,6 +81,8 @@ export interface Patient extends AuditFields {
   patientStatus: PatientStatus;
   /** Era String[] no PostgreSQL; agora array JSON em CLOB. */
   activeModules: string[];
+  termosVersaoAceita: string | null;
+  termosAceitoEm: Date | null;
 
   organization?: Organization;
   user?: User | null;
@@ -143,6 +146,8 @@ export const PatientEntity = new EntitySchema<Patient>({
     metaDiariaMl: { ...integer("META_DIARIA_ML"), default: 2500 },
     patientStatus: { ...varchar("PATIENT_STATUS", 20), default: "ACTIVE" },
     activeModules: json("ACTIVE_MODULES"),
+    termosVersaoAceita: varchar("TERMOS_VERSAO_ACEITA", 20, true),
+    termosAceitoEm: timestampTz("TERMOS_ACEITO_EM", true),
     ...auditColumns,
   },
   relations: {

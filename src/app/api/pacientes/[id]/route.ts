@@ -25,6 +25,8 @@ import {
   resolverMedicoResponsavel,
   resolverUsuarioMedicoId,
 } from "@/lib/medico-responsavel";
+import { toIsoUtc } from "@/lib/date-br";
+import { VERSAO_ATUAL_TERMOS } from "@/lib/termos-privacidade";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -89,6 +91,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         medicacoes,
         medicoResponsavelId: paciente.primaryDoctorId || null,
         medicoResponsavel,
+        termosVersaoAceita: paciente.termosVersaoAceita ?? null,
+        termosAceitoEm: toIsoUtc(paciente.termosAceitoEm),
+        versaoAtualTermos: VERSAO_ATUAL_TERMOS,
       },
     });
   } catch (error: unknown) {
