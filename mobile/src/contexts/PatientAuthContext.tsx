@@ -83,6 +83,7 @@ interface PatientAuthContextData {
   logout: () => Promise<void>;
   selecionarPaciente: (paciente: PacienteLogado, manterConectado?: boolean) => Promise<void>;
   atualizarAvatarUrl: (novaUrl: string) => void;
+  atualizarPacienteLocal: (parcial: Partial<PacienteLogado>) => Promise<void>;
   recarregarPerfilPaciente: () => Promise<void>;
 }
 
@@ -328,6 +329,20 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
     setPaciente((prev) => (prev ? { ...prev, avatarUrl: novaUrl } : null));
   }
 
+  const atualizarPacienteLocal = React.useCallback(
+    async (parcial: Partial<PacienteLogado>) => {
+      setPaciente((prev) => {
+        if (!prev) return prev;
+        const atualizado: PacienteLogado = { ...prev, ...parcial };
+        secureStorage
+          .setItem(USER_DATA_KEY, JSON.stringify(atualizado))
+          .catch(() => {});
+        return atualizado;
+      });
+    },
+    []
+  );
+
   return (
     <PatientAuthContext.Provider
       value={{
@@ -338,6 +353,7 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
         logout,
         selecionarPaciente,
         atualizarAvatarUrl,
+        atualizarPacienteLocal,
         recarregarPerfilPaciente,
       }}
     >
@@ -357,6 +373,7 @@ export function usePatientAuth(): PatientAuthContextData {
       logout: async () => {},
       selecionarPaciente: async () => {},
       atualizarAvatarUrl: () => {},
+      atualizarPacienteLocal: async () => {},
       recarregarPerfilPaciente: async () => {},
     };
   }

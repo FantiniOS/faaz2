@@ -11,6 +11,9 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
 } from "react-native";
 import {
   ShieldCheck,
@@ -31,11 +34,16 @@ import {
   Check,
   CheckCircle2,
   X,
+  Pencil,
+  Mail,
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
-import { usePatientAuth } from "../contexts/PatientAuthContext";
+import {
+  usePatientAuth,
+  type PacienteLogado,
+} from "../contexts/PatientAuthContext";
 import { StandardHeader } from "../components/StandardHeader";
 import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
 import {
@@ -52,6 +60,7 @@ export interface ProfileScreenProps {
   onTabPress?: (tabName: MainTabKey | string) => void;
   onNavigateToDieta?: () => void;
   onNavigateToMetas?: () => void;
+  onPacienteUpdated?: (parcial: Partial<PacienteLogado>) => Promise<void> | void;
 }
 
 type ProximaConsultaData = ProximaConsultaItem;
@@ -172,8 +181,30 @@ function formatTipoConsultaPacote(tipo?: string | null): string {
   return "Presencial";
 }
 
-export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
-  const { paciente, logout, atualizarAvatarUrl } = usePatientAuth();
+const EMAIL_REGEX_MOBILE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function formatTelefoneBrInput(val?: string | null): string {
+  if (!val) return "";
+  let digits = val.replace(/\D/g, "");
+  if ((digits.length === 12 || digits.length === 13) && digits.startsWith("55")) {
+    digits = digits.slice(2);
+  }
+  digits = digits.slice(0, 11);
+  if (digits.length === 0) return "";
+  if (digits.length <= 2) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+export function ProfileScreen({
+  onTabPress,
+  onPacienteUpdated,
+}: ProfileScreenProps) {
+  const { paciente, logout, atualizarAvatarUrl, atualizarPacienteLocal } =
+    usePatientAuth();
   const pacienteId = paciente?.id || "";
 
   const [isUploading, setIsUploading] = useState(false);
@@ -210,6 +241,12 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
     paciente?.telefoneWhatsapp ?? null
   );
   const [email, setEmail] = useState<string | null>(paciente?.email ?? null);
+  const [isEditContatoOpen, setIsEditContatoOpen] = useState<boolean>(false);
+  const [editTelefone, setEditTelefone] = useState<string>("");
+  const [editEmail, setEditEmail] = useState<string>("");
+  const [salvandoContato, setSalvandoContato] = useState<boolean>(false);
+  const [erroContato, setErroContato] = useState<string | null>(null);
+  const [contatoToast, setContatoToast] = useState<string | null>(null);
   const inFlightRef = useRef<boolean>(false);
 
   const nomeExibicao = formatNomeTitleCase(
@@ -523,6 +560,72 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
         { text: "Sair da Conta", style: "destructive", onPress: () => logout() },
       ]
     );
+  };
+
+  const handleAbrirEditarContato = () => {
+    setEditTelefone(formatTelefoneBrInput(telefone));
+    setEditEmail((email || "").trim());
+    setErroContato(null);
+    setIsEditContatoOpen(true);
+  };
+
+  const handleSalvarContato = async () => {
+    if (!pacienteId || salvandoContato) return;
+
+    const telDigits = editTelefone.replace(/\D/g, "");
+    if (telDigits.length < 10 || telDigits.length > 11) {
+      setErroContato(
+        "Informe um WhatsApp/telefone válido com DDD (10 ou 11 dígitos)."
+      );
+      return;
+    }
+
+    const emailLimpo = editEmail.trim().toLowerCase();
+    if (emailLimpo.length > 0 && !EMAIL_REGEX_MOBILE.test(emailLimpo)) {
+      setErroContato("Informe um endereço de e-mail válido.");
+      return;
+    }
+
+    setErroContato(null);
+    setSalvandoContato(true);
+
+    try {
+      const res = await api.pacientes.atualizarContato(pacienteId, {
+        telefone: formatTelefoneBrInput(editTelefone),
+        email: emailLimpo || null,
+      });
+
+      if (res?.success) {
+        const novoTelefone = res.telefone || formatTelefoneBrInput(editTelefone);
+        const novoEmail = res.email ?? null;
+        setTelefone(novoTelefone);
+        setEmail(novoEmail);
+
+        const persistFn = onPacienteUpdated ?? atualizarPacienteLocal;
+        await persistFn({
+          telefoneWhatsapp: novoTelefone,
+          email: novoEmail,
+        });
+
+        setIsEditContatoOpen(false);
+        setContatoToast("Contato atualizado com sucesso");
+        setTimeout(() => {
+          setContatoToast((prev) =>
+            prev === "Contato atualizado com sucesso" ? null : prev
+          );
+        }, 3200);
+      } else {
+        setErroContato(
+          res?.error || "Não foi possível atualizar seus dados de contato."
+        );
+      }
+    } catch (err: any) {
+      setErroContato(
+        err?.message || "Erro de conexão ao salvar seus dados de contato."
+      );
+    } finally {
+      setSalvandoContato(false);
+    }
   };
 
   const consultaFormatada = useMemo(() => {
@@ -1106,7 +1209,23 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
                 </Text>
               </View>
             </View>
+
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={handleAbrirEditarContato}
+              style={styles.editContatoPill}
+            >
+              <Pencil size={12} color="#047857" />
+              <Text style={styles.editContatoPillText}>Editar</Text>
+            </TouchableOpacity>
           </View>
+
+          {contatoToast ? (
+            <View style={styles.contatoToastBanner}>
+              <CheckCircle2 size={14} color="#047857" />
+              <Text style={styles.contatoToastText}>{contatoToast}</Text>
+            </View>
+          ) : null}
 
           {/* Avatar + Nome */}
           <View style={styles.accountProfileRow}>
@@ -1161,20 +1280,42 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
               <Text style={styles.infoRowLabel}>Código do Prontuário</Text>
               <Text style={styles.infoRowValue}>{prontuarioCodigo}</Text>
             </View>
-            {telefone ? (
-              <View style={styles.infoRow}>
-                <Text style={styles.infoRowLabel}>WhatsApp</Text>
-                <Text style={styles.infoRowValue}>{telefone}</Text>
-              </View>
-            ) : null}
-            {email ? (
-              <View style={styles.infoRow}>
-                <Text style={styles.infoRowLabel}>E-mail</Text>
-                <Text style={styles.infoRowValue} numberOfLines={1}>
-                  {email}
+            <TouchableOpacity
+              activeOpacity={0.72}
+              onPress={handleAbrirEditarContato}
+              style={styles.infoRow}
+            >
+              <Text style={styles.infoRowLabel}>WhatsApp</Text>
+              <View style={styles.editableRowRight}>
+                <Text
+                  style={
+                    telefone ? styles.infoRowValue : styles.infoRowPlaceholder
+                  }
+                  numberOfLines={1}
+                >
+                  {telefone ? formatTelefoneBrInput(telefone) || telefone : "Adicionar WhatsApp"}
                 </Text>
+                <Pencil size={12} color="#059669" />
               </View>
-            ) : null}
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.72}
+              onPress={handleAbrirEditarContato}
+              style={styles.infoRow}
+            >
+              <Text style={styles.infoRowLabel}>E-mail</Text>
+              <View style={styles.editableRowRight}>
+                <Text
+                  style={
+                    email ? styles.infoRowValue : styles.infoRowPlaceholder
+                  }
+                  numberOfLines={1}
+                >
+                  {email || "Adicionar e-mail"}
+                </Text>
+                <Pencil size={12} color="#059669" />
+              </View>
+            </TouchableOpacity>
             <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
               <Text style={styles.infoRowLabel}>Recepção Clínica FAAZ</Text>
               <TouchableOpacity
@@ -1216,6 +1357,134 @@ export function ProfileScreen({ onTabPress }: ProfileScreenProps) {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* MODAL BOTTOM-SHEET: ATUALIZAR DADOS DE CONTATO (APENAS WHATSAPP E E-MAIL) */}
+      <Modal
+        visible={isEditContatoOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!salvandoContato) setIsEditContatoOpen(false);
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalBackdrop}
+        >
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+
+            <View style={styles.modalHeaderRow}>
+              <View style={styles.modalTitleGroup}>
+                <View style={styles.modalIconBox}>
+                  <Pencil size={15} color="#047857" />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>
+                    Atualizar Dados de Contato
+                  </Text>
+                  <Text style={styles.modalSubtitle}>
+                    Sincronizado com seu cadastro na Clínica FAAZ
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.75}
+                disabled={salvandoContato}
+                onPress={() => setIsEditContatoOpen(false)}
+                style={styles.modalCloseBtn}
+              >
+                <X size={16} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {erroContato ? (
+              <View style={styles.modalErrorBox}>
+                <Text style={styles.modalErrorText}>{erroContato}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.modalFieldGroup}>
+              <Text style={styles.modalFieldLabel}>WhatsApp / Telefone *</Text>
+              <View style={styles.modalInputWrapper}>
+                <Phone size={15} color="#0f766e" />
+                <TextInput
+                  value={editTelefone}
+                  onChangeText={(txt) => {
+                    setEditTelefone(formatTelefoneBrInput(txt));
+                    if (erroContato) setErroContato(null);
+                  }}
+                  placeholder="(31) 99999-9999"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="phone-pad"
+                  maxLength={15}
+                  editable={!salvandoContato}
+                  style={styles.modalInput}
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalFieldGroup}>
+              <Text style={styles.modalFieldLabel}>E-mail</Text>
+              <View style={styles.modalInputWrapper}>
+                <Mail size={15} color="#0f766e" />
+                <TextInput
+                  value={editEmail}
+                  onChangeText={(txt) => {
+                    setEditEmail(txt);
+                    if (erroContato) setErroContato(null);
+                  }}
+                  placeholder="seu.email@exemplo.com"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!salvandoContato}
+                  style={styles.modalInput}
+                />
+              </View>
+            </View>
+
+            <Text style={styles.modalSecurityNote}>
+              Nome, CPF e dados do prontuário só podem ser alterados pela
+              recepção da Clínica FAAZ.
+            </Text>
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity
+                activeOpacity={0.78}
+                disabled={salvandoContato}
+                onPress={() => setIsEditContatoOpen(false)}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.84}
+                disabled={salvandoContato}
+                onPress={() => void handleSalvarContato()}
+                style={[
+                  styles.modalSaveBtn,
+                  salvandoContato && styles.btnDisabled,
+                ]}
+              >
+                {salvandoContato ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <Check size={15} color="#ffffff" />
+                    <Text style={styles.modalSaveBtnText}>
+                      Salvar Alterações
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* BARRA INFERIOR UNIFICADA */}
       <BottomTabBar
@@ -1927,6 +2196,205 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: "#0f766e",
+  },
+  editContatoPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  editContatoPillText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#047857",
+  },
+  contatoToastBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    borderRadius: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  contatoToastText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#065f46",
+  },
+  editableRowRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 1,
+    maxWidth: "70%",
+  },
+  infoRowPlaceholder: {
+    fontSize: 12,
+    color: "#059669",
+    fontWeight: "600",
+    fontStyle: "italic",
+    textAlign: "right",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.52)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 32 : 22,
+    gap: 14,
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    elevation: 16,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "#cbd5e1",
+    alignSelf: "center",
+    marginBottom: 4,
+  },
+  modalHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  modalTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  modalIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalTitle: {
+    fontSize: 15.5,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  modalSubtitle: {
+    fontSize: 11.5,
+    color: "#64748b",
+    marginTop: 1,
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: "#f1f5f9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalErrorBox: {
+    backgroundColor: "#fff1f2",
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  modalErrorText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#be123c",
+  },
+  modalFieldGroup: {
+    gap: 6,
+  },
+  modalFieldLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  modalInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 46,
+  },
+  modalInput: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0f172a",
+    paddingVertical: 0,
+  },
+  modalSecurityNote: {
+    fontSize: 11.5,
+    color: "#64748b",
+    lineHeight: 16.5,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  modalActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 2,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalCancelBtnText: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  modalSaveBtn: {
+    flex: 1.4,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#0f766e",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  modalSaveBtnText: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#ffffff",
   },
 });
 

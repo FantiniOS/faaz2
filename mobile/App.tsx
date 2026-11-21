@@ -104,9 +104,14 @@ type ScreenRoute =
 interface AppRouterProps {
   paciente: PacienteLogado | null;
   isInitializing: boolean;
+  onPacienteUpdated: (parcial: Partial<PacienteLogado>) => Promise<void>;
 }
 
-function AppRouter({ paciente, isInitializing }: AppRouterProps) {
+function AppRouter({
+  paciente,
+  isInitializing,
+  onPacienteUpdated,
+}: AppRouterProps) {
   const [screenStack, setScreenStack] = useState<ScreenRoute[]>(["home"]);
   const stackRef = useRef<ScreenRoute[]>(["home"]);
   const [completedCheckins, setCompletedCheckins] = useState<string[]>([]);
@@ -277,6 +282,7 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
           onTabPress={handleTabPress}
           onNavigateToDieta={() => handleTabPress("Dieta")}
           onNavigateToMetas={() => handleTabPress("Evolução")}
+          onPacienteUpdated={onPacienteUpdated}
         />
       ) : currentScreen === "glicemia" ? (
         <GlicemiaCheckinScreen
@@ -312,7 +318,7 @@ function AppRouter({ paciente, isInitializing }: AppRouterProps) {
 }
 
 function MainNavigator() {
-  const { paciente, isInitializing } = usePatientAuth();
+  const { paciente, isInitializing, atualizarPacienteLocal } = usePatientAuth();
   const isAuthenticated = Boolean(paciente) && !isInitializing;
 
   return (
@@ -337,6 +343,7 @@ function MainNavigator() {
           key={paciente?.id ?? "guest"}
           paciente={paciente}
           isInitializing={isInitializing}
+          onPacienteUpdated={atualizarPacienteLocal}
         />
       </View>
     </SafeAreaView>

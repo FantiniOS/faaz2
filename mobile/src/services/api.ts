@@ -590,6 +590,18 @@ export interface PlanoResumoResponse {
   medicoResponsavel?: MedicoResponsavelInfo | null;
 }
 
+export interface AtualizarContatoPayload {
+  telefone?: string;
+  email?: string | null;
+}
+
+export interface AtualizarContatoResponse {
+  success: boolean;
+  telefone: string;
+  email: string | null;
+  error?: string;
+}
+
 /**
  * Executa requisição HTTP tipada com headers, auth token e CORS
  */
@@ -836,6 +848,15 @@ export const api = {
     },
     getAvatar(pacienteId: string) {
       return api.get(`/pacientes/${encodeURIComponent(pacienteId)}/avatar`);
+    },
+    atualizarContato(
+      pacienteId: string,
+      payload: AtualizarContatoPayload
+    ): Promise<AtualizarContatoResponse> {
+      return api.patch<AtualizarContatoResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/contato`,
+        payload
+      );
     },
     substituirAlimento(
       pacienteId: string,
