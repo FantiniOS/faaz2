@@ -18,7 +18,13 @@ import {
   Platform,
   ActivityIndicator,
   BackHandler,
+  LogBox,
 } from "react-native";
+
+// Suprime exclusivamente o aviso de depreciação disparado internamente pelo
+// react-native-css-interop (NativeWind 4.2.x) no React Native 0.88 ao mapear ImageBackground.
+// Nenhum arquivo do app usa ImageBackground diretamente.
+LogBox.ignoreLogs(["ImageBackground is deprecated"]);
 import {
   SafeAreaProvider,
   SafeAreaView,

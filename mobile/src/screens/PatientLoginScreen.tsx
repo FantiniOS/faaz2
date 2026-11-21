@@ -5,6 +5,7 @@ import {
   Image,
   TextInput,
   TouchableOpacity,
+  Pressable,
   StyleSheet,
   ActivityIndicator,
   Alert,
@@ -61,6 +62,7 @@ export function PatientLoginScreen() {
   const [cpfFocused, setCpfFocused] = useState<boolean>(false);
   const [erroLogin, setErroLogin] = useState<string | null>(null);
   const [isTermosOpen, setIsTermosOpen] = useState<boolean>(false);
+  const cpfInputRef = useRef<React.ComponentRef<typeof TextInput> | null>(null);
 
   // Pulso vivo sutil para o indicador de telemetria ativa (GPU-friendly native driver)
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -154,6 +156,7 @@ export function PatientLoginScreen() {
       {/* ================================================================== */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         <Svg
+          pointerEvents="none"
           width="100%"
           height="100%"
           viewBox="0 0 400 840"
@@ -203,19 +206,20 @@ export function PatientLoginScreen() {
       </View>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboardContainer}
       >
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
           {/* ============================================================== */}
           {/* HERO DE MARCA PROTAGONISTA — MEDALHÃO DOURADO CLÍNICA FAAZ     */}
           {/* ============================================================== */}
-          <View style={styles.brandingSection}>
+          <View pointerEvents="none" style={styles.brandingSection}>
             <View style={styles.logoHaloWrap}>
               <View style={styles.logoMedallion}>
                 <Image
@@ -255,9 +259,9 @@ export function PatientLoginScreen() {
           {/* ============================================================== */}
           {/* CARD CIRÚRGICO DE IDENTIFICAÇÃO (GLASS / CERAMIC HIGH-TECH)    */}
           {/* ============================================================== */}
-          <View style={styles.loginCard}>
+          <View style={styles.loginCard} collapsable={false}>
             {/* Micro-HUD Biométrico no topo do card (assinatura visual da Web) */}
-            <View style={styles.hudStrip}>
+            <View pointerEvents="none" style={styles.hudStrip}>
               <View style={styles.hudHeaderRow}>
                 <View style={styles.hudBadgeLeft}>
                   <View style={styles.hudIconBox}>
@@ -274,6 +278,7 @@ export function PatientLoginScreen() {
               </View>
 
               <Svg
+                pointerEvents="none"
                 width="100%"
                 height={34}
                 viewBox="0 0 320 40"
@@ -354,28 +359,36 @@ export function PatientLoginScreen() {
             ) : null}
 
             {/* Campo CPF */}
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} collapsable={false}>
               <Text style={styles.inputLabel}>CPF DO PACIENTE</Text>
-              <View
+              <Pressable
+                collapsable={false}
+                onPress={() => {
+                  if (!isLoading) {
+                    cpfInputRef.current?.focus();
+                  }
+                }}
                 style={[
                   styles.inputWrapper,
                   cpfFocused && styles.inputWrapperFocused,
                   erroLogin && styles.inputWrapperError,
                 ]}
               >
-                <UserCheck
-                  size={19}
-                  color={cpfFocused ? "#059669" : "#64748b"}
-                  style={styles.inputIcon}
-                />
+                <View pointerEvents="none" style={styles.inputIconWrap}>
+                  <UserCheck
+                    size={19}
+                    color={cpfFocused ? "#059669" : "#64748b"}
+                  />
+                </View>
                 <TextInput
+                  ref={cpfInputRef}
                   style={[
                     styles.textInput,
                     Platform.OS === "web" && ({ outlineStyle: "none" } as any),
                   ]}
                   placeholder="000.000.000-00"
                   placeholderTextColor="#94a3b8"
-                  keyboardType="numeric"
+                  keyboardType={Platform.OS === "web" ? "numeric" : "number-pad"}
                   returnKeyType="done"
                   value={cpf}
                   onChangeText={handleCpfChange}
@@ -385,13 +398,18 @@ export function PatientLoginScreen() {
                   maxLength={14}
                   editable={!isLoading}
                   autoFocus={false}
+                  autoCorrect={false}
+                  autoComplete="off"
+                  importantForAutofill="no"
+                  underlineColorAndroid="transparent"
+                  disableFullscreenUI={true}
                 />
                 {isCpfCompleto ? (
-                  <View style={styles.cpfValidBadge}>
+                  <View pointerEvents="none" style={styles.cpfValidBadge}>
                     <Check size={12} color="#047857" strokeWidth={3} />
                   </View>
                 ) : null}
-              </View>
+              </Pressable>
             </View>
 
             {/* Checkbox: Manter conectado */}
@@ -722,20 +740,19 @@ const styles = StyleSheet.create({
   inputWrapperFocused: {
     backgroundColor: "#ffffff",
     borderColor: "#059669",
-    shadowColor: "#10b981",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.14,
-    shadowRadius: 8,
-    elevation: 2,
   },
   inputWrapperError: {
     borderColor: "#fb7185",
   },
-  inputIcon: {
+  inputIconWrap: {
     marginRight: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   textInput: {
     flex: 1,
+    height: "100%",
+    paddingVertical: 0,
     fontSize: 16,
     fontWeight: "700",
     color: "#0f172a",
