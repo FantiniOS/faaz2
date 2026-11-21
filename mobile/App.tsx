@@ -33,6 +33,8 @@ import { SleepCheckInScreen } from "./src/screens/SleepCheckInScreen";
 import { MetasScreen } from "./src/screens/MetasScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { PatientLoginScreen } from "./src/screens/PatientLoginScreen";
+import { TermosPrivacidadeModal } from "./src/components/TermosPrivacidadeModal";
+import { VERSAO_ATUAL_TERMOS } from "./src/constants/termosPrivacidade";
 import {
   PatientAuthProvider,
   usePatientAuth,
@@ -105,12 +107,14 @@ interface AppRouterProps {
   paciente: PacienteLogado | null;
   isInitializing: boolean;
   onPacienteUpdated: (parcial: Partial<PacienteLogado>) => Promise<void>;
+  onLogout: () => Promise<void>;
 }
 
 function AppRouter({
   paciente,
   isInitializing,
   onPacienteUpdated,
+  onLogout,
 }: AppRouterProps) {
   const [screenStack, setScreenStack] = useState<ScreenRoute[]>(["home"]);
   const stackRef = useRef<ScreenRoute[]>(["home"]);
@@ -257,6 +261,10 @@ function AppRouter({
     );
   }
 
+  const precisaAceitarTermos =
+    Boolean(paciente) &&
+    paciente?.termosVersaoAceita !== VERSAO_ATUAL_TERMOS;
+
   return (
     <View style={styles.screenContainer} pointerEvents="box-none">
       {currentScreen === "home" ? (
@@ -313,12 +321,29 @@ function AppRouter({
           onTabPress={handleTabPress}
         />
       )}
+
+      {/* ACEITE ÚNICO OBRIGATÓRIO NO PRIMEIRO ACESSO / NOVA VERSÃO DE TERMOS */}
+      <TermosPrivacidadeModal
+        visible={precisaAceitarTermos}
+        mode="aceite"
+        pacienteId={paciente.id}
+        termosVersaoAceita={paciente.termosVersaoAceita}
+        termosAceitoEm={paciente.termosAceitoEm}
+        onAccepted={async (versao, aceitoEm) => {
+          await onPacienteUpdated({
+            termosVersaoAceita: versao,
+            termosAceitoEm: aceitoEm,
+          });
+        }}
+        onLogout={onLogout}
+      />
     </View>
   );
 }
 
 function MainNavigator() {
-  const { paciente, isInitializing, atualizarPacienteLocal } = usePatientAuth();
+  const { paciente, isInitializing, atualizarPacienteLocal, logout } =
+    usePatientAuth();
   const isAuthenticated = Boolean(paciente) && !isInitializing;
 
   return (
@@ -344,6 +369,7 @@ function MainNavigator() {
           paciente={paciente}
           isInitializing={isInitializing}
           onPacienteUpdated={atualizarPacienteLocal}
+          onLogout={logout}
         />
       </View>
     </SafeAreaView>

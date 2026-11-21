@@ -588,6 +588,16 @@ export interface PlanoResumoResponse {
   planoLabel: string;
   pacote: PlanoResumoPacoteItem | null;
   medicoResponsavel?: MedicoResponsavelInfo | null;
+  termosVersaoAceita?: string | null;
+  termosAceitoEm?: string | null;
+  versaoAtualTermos?: string;
+}
+
+export interface AceitarTermosResponse {
+  success: boolean;
+  versao: string;
+  aceitoEm: string;
+  error?: string;
 }
 
 export interface AtualizarContatoPayload {
@@ -856,6 +866,15 @@ export const api = {
       return api.patch<AtualizarContatoResponse>(
         `/pacientes/${encodeURIComponent(pacienteId)}/contato`,
         payload
+      );
+    },
+    aceitarTermos(
+      pacienteId: string,
+      versao: string = "1.0"
+    ): Promise<AceitarTermosResponse> {
+      return api.post<AceitarTermosResponse>(
+        `/pacientes/${encodeURIComponent(pacienteId)}/aceitar-termos`,
+        { versao }
       );
     },
     substituirAlimento(

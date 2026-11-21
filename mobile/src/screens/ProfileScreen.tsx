@@ -46,6 +46,7 @@ import {
 } from "../contexts/PatientAuthContext";
 import { StandardHeader } from "../components/StandardHeader";
 import { BottomTabBar, MainTabKey } from "../components/BottomTabBar";
+import { TermosPrivacidadeModal } from "../components/TermosPrivacidadeModal";
 import {
   api,
   resolveAssetUrl,
@@ -247,6 +248,7 @@ export function ProfileScreen({
   const [salvandoContato, setSalvandoContato] = useState<boolean>(false);
   const [erroContato, setErroContato] = useState<string | null>(null);
   const [contatoToast, setContatoToast] = useState<string | null>(null);
+  const [isTermosModalOpen, setIsTermosModalOpen] = useState<boolean>(false);
   const inFlightRef = useRef<boolean>(false);
 
   const nomeExibicao = formatNomeTitleCase(
@@ -1331,16 +1333,11 @@ export function ProfileScreen({
           {/* LGPD */}
           <TouchableOpacity
             activeOpacity={0.75}
-            onPress={() =>
-              Alert.alert(
-                "Privacidade & LGPD",
-                "Seus dados clínicos são protegidos em conformidade com a LGPD e as normas do Conselho Federal de Medicina (CFM)."
-              )
-            }
+            onPress={() => setIsTermosModalOpen(true)}
             style={styles.lgpdRow}
           >
             <View style={styles.lgpdLeft}>
-              <FileText size={14} color="#64748b" />
+              <FileText size={14} color="#0f766e" />
               <Text style={styles.lgpdText}>Termos de Uso e Privacidade</Text>
             </View>
             <ChevronRight size={16} color="#94a3b8" />
@@ -1485,6 +1482,20 @@ export function ProfileScreen({
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* MODAL DE LEITURA COMPLETA — TERMOS DE USO E PRIVACIDADE (LGPD / CFM) */}
+      <TermosPrivacidadeModal
+        visible={isTermosModalOpen}
+        mode="leitura"
+        pacienteId={pacienteId}
+        termosVersaoAceita={
+          planoResumo?.termosVersaoAceita ?? paciente?.termosVersaoAceita ?? null
+        }
+        termosAceitoEm={
+          planoResumo?.termosAceitoEm ?? paciente?.termosAceitoEm ?? null
+        }
+        onClose={() => setIsTermosModalOpen(false)}
+      />
 
       {/* BARRA INFERIOR UNIFICADA */}
       <BottomTabBar

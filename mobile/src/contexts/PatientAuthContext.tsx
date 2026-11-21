@@ -25,6 +25,8 @@ export interface PacienteLogado {
   telefoneWhatsapp?: string | null;
   email?: string | null;
   avatarUrl?: string | null;
+  termosVersaoAceita?: string | null;
+  termosAceitoEm?: string | null;
 }
 
 function extrairMedicoResponsavelApi(p: any): MedicoResponsavelInfo | null {
@@ -142,6 +144,14 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
           telefoneWhatsapp: p.phoneWhatsapp ?? prev?.telefoneWhatsapp ?? null,
           email: p.email ?? prev?.email ?? null,
           avatarUrl: p.avatarUrl ?? p.photoUrl ?? prev?.avatarUrl ?? null,
+          termosVersaoAceita:
+            p.termosVersaoAceita !== undefined
+              ? p.termosVersaoAceita
+              : (prev?.termosVersaoAceita ?? null),
+          termosAceitoEm:
+            p.termosAceitoEm !== undefined
+              ? p.termosAceitoEm
+              : (prev?.termosAceitoEm ?? null),
         };
         secureStorage.setItem(USER_DATA_KEY, JSON.stringify(merged)).catch(() => {});
         return merged;
@@ -206,6 +216,8 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
                   telefoneWhatsapp: res.paciente.phoneWhatsapp ?? null,
                   email: res.paciente.email ?? null,
                   avatarUrl: res.paciente.avatarUrl || res.paciente.photoUrl || null,
+                  termosVersaoAceita: res.paciente.termosVersaoAceita ?? null,
+                  termosAceitoEm: res.paciente.termosAceitoEm ?? null,
                 };
                 setPaciente(fresh);
                 setAuthPatientId(fresh.id);
@@ -259,6 +271,8 @@ export function PatientAuthProvider({ children }: { children: ReactNode }) {
           especialidadeMedico: medicoLogin?.especialidade ?? null,
           crmMedico: medicoLogin?.crm ?? null,
           medicoResponsavelDetalhes: medicoLogin,
+          termosVersaoAceita: data.paciente.termosVersaoAceita ?? null,
+          termosAceitoEm: data.paciente.termosAceitoEm ?? null,
         };
         setPaciente(pacienteNormalizado);
         setAuthPatientId(pacienteNormalizado.id);
