@@ -9,6 +9,7 @@ import {
   type SubstituicaoItemRefeicao,
   type UnidadeMedidaDieta,
 } from "@/lib/db/entities";
+import { resolverMedicoResponsavel } from "@/lib/medico-responsavel";
 
 function normalizarUnidade(val?: string | null): UnidadeMedidaDieta {
   if (val === "ml" || val === "un") return val;
@@ -98,7 +99,13 @@ export async function GET(req: NextRequest) {
 
     const paciente = await patientRepo.findOne({
       where: { id: pacienteId },
-      relations: { primaryDoctor: true },
+      select: {
+        id: true,
+        fullName: true,
+        clinicalFocus: true,
+        organizationId: true,
+        primaryDoctorId: true,
+      },
     });
 
     if (!paciente) {
@@ -107,6 +114,11 @@ export async function GET(req: NextRequest) {
         { status: 404 },
       );
     }
+
+    const medicoResponsavel = await resolverMedicoResponsavel(paciente.id, {
+      primaryDoctorId: paciente.primaryDoctorId,
+      organizationId: paciente.organizationId,
+    });
 
     const plano = await planoRepo.findOne({
       where: { pacienteId, ativo: true },
@@ -135,8 +147,10 @@ export async function GET(req: NextRequest) {
         paciente: {
           id: paciente.id,
           nome: paciente.fullName,
-          medico: paciente.primaryDoctor?.fullName || null,
-          especialidade: paciente.primaryDoctor?.specialty || null,
+          medico: medicoResponsavel?.nome || null,
+          especialidade: medicoResponsavel?.especialidade || null,
+          crm: medicoResponsavel?.crm || null,
+          medicoResponsavel,
         },
         plano: null,
       });
@@ -301,8 +315,10 @@ export async function GET(req: NextRequest) {
         paciente: {
           id: paciente.id,
           nome: paciente.fullName,
-          medico: paciente.primaryDoctor?.fullName || null,
-          especialidade: paciente.primaryDoctor?.specialty || null,
+          medico: medicoResponsavel?.nome || null,
+          especialidade: medicoResponsavel?.especialidade || null,
+          crm: medicoResponsavel?.crm || null,
+          medicoResponsavel,
           focoClinico: paciente.clinicalFocus,
         },
         plano: {

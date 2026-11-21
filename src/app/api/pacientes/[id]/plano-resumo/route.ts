@@ -16,6 +16,10 @@ import {
 } from "@/lib/db/entities";
 import { getDataDiaBR } from "@/lib/date-br";
 import { consultaDescontaSaldo, diffDiasIso } from "@/lib/pacotes-faaz";
+import {
+  resolverMedicoResponsavel,
+  type MedicoResponsavelDTO,
+} from "@/lib/medico-responsavel";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -46,6 +50,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                 where: { id, deletedAt: IsNull() },
                 select: {
                   id: true,
+                  organizationId: true,
+                  primaryDoctorId: true,
                   convenio: true,
                   planoFaaz: true,
                 },
@@ -97,34 +103,61 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const pacoteAlvo = pacoteAtivo ?? ultimoConcluido;
 
     if (!pacoteAlvo) {
+      const medicoResponsavel = await resolverMedicoResponsavel(id, {
+        primaryDoctorId: loaded.paciente.primaryDoctorId,
+        organizationId: loaded.paciente.organizationId,
+      });
+
       return NextResponse.json({
         success: true,
         possuiPacote: false,
         planoLabel: fallbackConvenio,
         pacote: null,
+        medicoResponsavel,
       });
     }
 
-    // Onda 2: 1 query leve buscando apenas colunas seguras de CONSULTAS_PACOTE
-    const consultasBrutas: ConsultaPacote[] = await withRepositoryRetry(
-      ConsultaPacoteEntity,
-      (repo) =>
-        repo.find({
-          where: { pacoteId: pacoteAlvo.id },
-          select: {
-            id: true,
-            pacoteId: true,
-            pacienteId: true,
-            dataConsulta: true,
-            horaConsulta: true,
-            tipo: true,
-            status: true,
-            createdAt: true,
-          },
-          order: { dataConsulta: "ASC", createdAt: "ASC" },
-        }),
-      { label: "plano-resumo:consultas" },
+    // Onda 2 (máx. 2 em paralelo): consultas seguras do pacote + médico responsável real
+    const wave2 = {
+      consultasBrutas: [] as ConsultaPacote[],
+      medicoResponsavel: null as MedicoResponsavelDTO | null,
+    };
+
+    await runWithConcurrency(
+      [
+        async () => {
+          wave2.consultasBrutas = await withRepositoryRetry(
+            ConsultaPacoteEntity,
+            (repo) =>
+              repo.find({
+                where: { pacoteId: pacoteAlvo.id },
+                select: {
+                  id: true,
+                  pacoteId: true,
+                  pacienteId: true,
+                  dataConsulta: true,
+                  horaConsulta: true,
+                  tipo: true,
+                  status: true,
+                  createdAt: true,
+                },
+                order: { dataConsulta: "ASC", createdAt: "ASC" },
+              }),
+            { label: "plano-resumo:consultas" },
+          );
+        },
+        async () => {
+          wave2.medicoResponsavel = await resolverMedicoResponsavel(id, {
+            primaryDoctorId: loaded.paciente!.primaryDoctorId,
+            organizationId: loaded.paciente!.organizationId,
+          });
+        },
+      ],
+      2,
     );
+
+    const consultasBrutas = wave2.consultasBrutas;
+    const medicoResponsavel = wave2.medicoResponsavel;
 
     const ordenadas = [...consultasBrutas].sort((a, b) => {
       const cmpData = a.dataConsulta.localeCompare(b.dataConsulta);
@@ -182,6 +215,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       success: true,
       possuiPacote: true,
       planoLabel: nomePlanoLimpo,
+      medicoResponsavel,
       pacote: {
         nomePlano: nomePlanoLimpo,
         status: statusNormalizado,

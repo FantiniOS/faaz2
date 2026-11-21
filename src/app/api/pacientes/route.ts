@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { In, IsNull } from "typeorm";
 import {
   getRepository,
+  runWithConcurrency,
   withRepositoryRetry,
   withTransaction,
 } from "@/lib/db/data-source";
@@ -11,10 +12,16 @@ import {
   OrganizationEntity,
   PatientEntity,
   type BiologicalSex,
+  type Patient,
   type PatientStatus,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeCadastrarPacientes, podeExcluirPacientes } from "@/lib/auth-rbac";
+import {
+  listarMedicosClinica,
+  resolverUsuarioMedicoId,
+  type MedicoResponsavelDTO,
+} from "@/lib/medico-responsavel";
 
 export const dynamic = "force-dynamic";
 
@@ -54,83 +61,112 @@ export async function GET() {
     }
 
     // Projeção explícita: omite CLOBs pesados não usados na listagem (workoutRestrictions, activeModules)
-    const pacientes = await withRepositoryRetry(
-      PatientEntity,
-      (repo) =>
-        repo.find({
-          where: {
-            ...(orgId ? { organizationId: orgId } : {}),
-            deletedAt: IsNull(),
-          },
-          select: {
-            id: true,
-            recordCode: true,
-            fullName: true,
-            cpf: true,
-            rg: true,
-            birthDate: true,
-            biologicalSex: true,
-            estadoCivil: true,
-            profissao: true,
-            convenio: true,
-            planoFaaz: true,
-            patientStatus: true,
-            phoneWhatsapp: true,
-            telefoneSecundario: true,
-            email: true,
-            contatoEmergenciaNome: true,
-            contatoEmergenciaTelefone: true,
-            zipCode: true,
-            street: true,
-            number: true,
-            complement: true,
-            neighborhood: true,
-            city: true,
-            state: true,
-            metaDiariaMl: true,
-            avatarUrl: true,
-            photoUrl: true,
-            createdAt: true,
-          },
-          order: { fullName: "ASC" },
-        }),
-      { label: "pacientes:list" },
+    // Executa em onda leve (máx. 2 em paralelo): lista de pacientes + lista de médicos responsáveis ativos
+    const listData = {
+      pacientes: [] as Patient[],
+      medicos: [] as MedicoResponsavelDTO[],
+    };
+
+    await runWithConcurrency(
+      [
+        async () => {
+          listData.pacientes = await withRepositoryRetry(
+            PatientEntity,
+            (repo) =>
+              repo.find({
+                where: {
+                  ...(orgId ? { organizationId: orgId } : {}),
+                  deletedAt: IsNull(),
+                },
+                select: {
+                  id: true,
+                  recordCode: true,
+                  fullName: true,
+                  cpf: true,
+                  rg: true,
+                  birthDate: true,
+                  biologicalSex: true,
+                  estadoCivil: true,
+                  profissao: true,
+                  convenio: true,
+                  planoFaaz: true,
+                  patientStatus: true,
+                  phoneWhatsapp: true,
+                  telefoneSecundario: true,
+                  email: true,
+                  contatoEmergenciaNome: true,
+                  contatoEmergenciaTelefone: true,
+                  zipCode: true,
+                  street: true,
+                  number: true,
+                  complement: true,
+                  neighborhood: true,
+                  city: true,
+                  state: true,
+                  primaryDoctorId: true,
+                  metaDiariaMl: true,
+                  avatarUrl: true,
+                  photoUrl: true,
+                  createdAt: true,
+                },
+                order: { fullName: "ASC" },
+              }),
+            { label: "pacientes:list" },
+          );
+        },
+        async () => {
+          listData.medicos = await listarMedicosClinica(orgId);
+        },
+      ],
+      2,
+    );
+
+    const { pacientes, medicos } = listData;
+    const medicoById = new Map<string, MedicoResponsavelDTO>(
+      medicos.map((m) => [m.id, m]),
     );
     const dbDurMs = Math.round(performance.now() - dbStart);
 
-    const formatados = pacientes.map((p) => ({
-      id: p.id,
-      recordCode: p.recordCode,
-      nome: p.fullName,
-      cpf: p.cpf || "",
-      rg: p.rg || "",
-      dataNascimento: p.birthDate ? String(p.birthDate).split("T")[0] : "",
-      sexo: p.biologicalSex || "OTHER",
-      estadoCivil: p.estadoCivil || "Solteiro(a)",
-      profissao: p.profissao || "",
-      convenio: p.convenio || "Particular",
-      planoFaaz: Boolean(p.planoFaaz),
-      status: p.patientStatus === "ACTIVE" ? "Ativo" : "Inativo",
-      telefoneWhatsapp: p.phoneWhatsapp || "",
-      telefoneSecundario: p.telefoneSecundario || "",
-      email: p.email || "",
-      contatoEmergenciaNome: p.contatoEmergenciaNome || "",
-      contatoEmergenciaTelefone: p.contatoEmergenciaTelefone || "",
-      cep: p.zipCode || "",
-      logradouro: p.street || "",
-      numero: p.number || "",
-      complemento: p.complement || "",
-      bairro: p.neighborhood || "",
-      cidade: p.city || "",
-      estado: p.state || "",
-      metaHidricaMl: p.metaDiariaMl || 2500,
-      avatarUrl: p.avatarUrl || p.photoUrl || null,
-      criadoEm: p.createdAt,
-    }));
+    const formatados = pacientes.map((p) => {
+      const medicoResponsavel = p.primaryDoctorId
+        ? medicoById.get(p.primaryDoctorId) ?? null
+        : null;
+      return {
+        id: p.id,
+        recordCode: p.recordCode,
+        nome: p.fullName,
+        cpf: p.cpf || "",
+        rg: p.rg || "",
+        dataNascimento: p.birthDate ? String(p.birthDate).split("T")[0] : "",
+        sexo: p.biologicalSex || "OTHER",
+        estadoCivil: p.estadoCivil || "Solteiro(a)",
+        profissao: p.profissao || "",
+        convenio: p.convenio || "Particular",
+        planoFaaz: Boolean(p.planoFaaz),
+        status: p.patientStatus === "ACTIVE" ? "Ativo" : "Inativo",
+        telefoneWhatsapp: p.phoneWhatsapp || "",
+        telefoneSecundario: p.telefoneSecundario || "",
+        email: p.email || "",
+        contatoEmergenciaNome: p.contatoEmergenciaNome || "",
+        contatoEmergenciaTelefone: p.contatoEmergenciaTelefone || "",
+        cep: p.zipCode || "",
+        logradouro: p.street || "",
+        numero: p.number || "",
+        complemento: p.complement || "",
+        bairro: p.neighborhood || "",
+        cidade: p.city || "",
+        estado: p.state || "",
+        medicoResponsavelId: p.primaryDoctorId || null,
+        medicoResponsavel,
+        metaHidricaMl: p.metaDiariaMl || 2500,
+        avatarUrl: p.avatarUrl || p.photoUrl || null,
+        criadoEm: p.createdAt,
+      };
+    });
 
     const totalDurMs = Math.round(performance.now() - reqStart);
     return NextResponse.json(
-      { pacientes: formatados },
+      { pacientes: formatados, medicos },
       {
         headers: {
           "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${totalDurMs}`,
@@ -186,6 +222,8 @@ export async function POST(request: Request) {
       cidade,
       estado,
       metaHidricaMl,
+      medicoResponsavelId,
+      primaryDoctorId,
     } = body;
 
     if (!nome?.trim() || !telefoneWhatsapp?.trim()) {
@@ -233,6 +271,36 @@ export async function POST(request: Request) {
       ? String(dataNascimento).split("T")[0]
       : null;
 
+    const rawMedicoParam =
+      medicoResponsavelId !== undefined
+        ? medicoResponsavelId
+        : primaryDoctorId;
+    let resolvedPrimaryDoctorId: string | null | undefined = undefined;
+    if (rawMedicoParam !== undefined) {
+      if (rawMedicoParam === null || String(rawMedicoParam).trim() === "") {
+        resolvedPrimaryDoctorId = null;
+      } else {
+        const validUserId = await resolverUsuarioMedicoId(
+          String(rawMedicoParam),
+          orgId,
+        );
+        if (!validUserId) {
+          return NextResponse.json(
+            { error: "Médico responsável informado não foi encontrado." },
+            { status: 400 },
+          );
+        }
+        resolvedPrimaryDoctorId = validUserId;
+      }
+    } else if (
+      !id &&
+      sessao?.userId &&
+      (sessao.cargo === "MEDICO" || sessao.cargo === "DONO_CLINICA")
+    ) {
+      // No cadastro novo feito por um médico sem alterar o seletor, pré-vincula o próprio médico logado
+      resolvedPrimaryDoctorId = sessao.userId;
+    }
+
     const payloadComum = {
       fullName: String(nome).trim().toUpperCase(),
       cpf: cleanCpf || null,
@@ -264,6 +332,9 @@ export async function POST(request: Request) {
       city: cidade ? String(cidade).trim().toUpperCase() : null,
       state: estado ? String(estado).trim().toUpperCase() : null,
       metaDiariaMl: metaHidricaMl ? parseInt(String(metaHidricaMl), 10) : 2500,
+      ...(resolvedPrimaryDoctorId !== undefined
+        ? { primaryDoctorId: resolvedPrimaryDoctorId }
+        : {}),
     };
 
     if (id) {

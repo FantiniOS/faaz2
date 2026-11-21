@@ -4,6 +4,7 @@ import { getRepository } from "@/lib/db/data-source";
 import { PatientEntity, ProntuarioPacienteEntity } from "@/lib/db/entities";
 import { DEFAULT_CLINICAL_OBJECTIVE } from "@/lib/clinical-objectives";
 import { resolverObjetivoAtivo } from "@/lib/objetivo-clinico";
+import { resolverMedicoResponsavel } from "@/lib/medico-responsavel";
 
 export async function POST(req: NextRequest) {
   try {
@@ -62,6 +63,10 @@ export async function POST(req: NextRequest) {
       where: { pacienteId: paciente.id },
       select: { id: true, medicacoes: true, objetivo: true },
     });
+    const medicoResolvido = await resolverMedicoResponsavel(paciente.id, {
+      primaryDoctorId: paciente.primaryDoctorId,
+      organizationId: paciente.organizationId,
+    });
     const medicacoes = prontuario?.medicacoes?.trim() || null;
     const objetivoUnificado =
       resolverObjetivoAtivo(
@@ -82,8 +87,10 @@ export async function POST(req: NextRequest) {
           cpf: paciente.cpf,
           metaDiariaMl: paciente.metaDiariaMl || 2500,
           recordCode: paciente.recordCode,
-          medicoResponsavel: paciente.primaryDoctor?.fullName || null,
-          especialidadeMedico: paciente.primaryDoctor?.specialty || null,
+          medicoResponsavel: medicoResolvido?.nome || null,
+          especialidadeMedico: medicoResolvido?.especialidade || null,
+          crmMedico: medicoResolvido?.crm || null,
+          medicoResponsavelDetalhes: medicoResolvido,
           focoClinico: objetivoUnificado,
           treatmentObjective: objetivoUnificado,
           medicacoes,

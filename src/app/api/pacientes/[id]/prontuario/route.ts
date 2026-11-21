@@ -34,6 +34,7 @@ import {
   normalizarObjetivoClinicoValor,
   resolverObjetivoAtivo,
 } from "@/lib/objetivo-clinico";
+import { resolverMedicoResponsavel } from "@/lib/medico-responsavel";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -84,6 +85,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                 where: { id },
                 select: {
                   id: true,
+                  organizationId: true,
+                  primaryDoctorId: true,
                   recordCode: true,
                   fullName: true,
                   socialName: true,
@@ -431,6 +434,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       prontuario?.objetivo,
     );
 
+    const medicoResponsavel = await resolverMedicoResponsavel(paciente.id, {
+      primaryDoctorId: paciente.primaryDoctorId,
+      organizationId: paciente.organizationId,
+    });
+
     return NextResponse.json(
       {
         success: true,
@@ -450,6 +458,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           clinicalFocus: objetivoUnificado || null,
           treatmentObjective: objetivoUnificado || null,
           avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
+          medicoResponsavelId: paciente.primaryDoctorId || null,
+          medicoResponsavel,
           glicemiaRecente,
           glicemiaStatus,
           circunferenciaAbdominal,

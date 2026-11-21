@@ -21,6 +21,10 @@ import {
   normalizarObjetivoClinicoValor,
   resolverObjetivoAtivo,
 } from "@/lib/objetivo-clinico";
+import {
+  resolverMedicoResponsavel,
+  resolverUsuarioMedicoId,
+} from "@/lib/medico-responsavel";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -66,6 +70,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       prontuarioObjetivo = prontuario?.objetivo?.trim() || null;
     }
 
+    const medicoResponsavel = await resolverMedicoResponsavel(paciente.id, {
+      primaryDoctorId: paciente.primaryDoctorId,
+      organizationId: paciente.organizationId,
+    });
+
     const objetivoUnificado = resolverObjetivoAtivo(
       paciente.treatmentObjective,
       paciente.clinicalFocus,
@@ -78,6 +87,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         treatmentObjective: objetivoUnificado || paciente.treatmentObjective,
         clinicalFocus: objetivoUnificado || paciente.clinicalFocus,
         medicacoes,
+        medicoResponsavelId: paciente.primaryDoctorId || null,
+        medicoResponsavel,
       },
     });
   } catch (error: unknown) {
@@ -145,6 +156,8 @@ async function handleUpdate(
       workoutFrequency,
       workoutDuration,
       workoutRestrictions,
+      medicoResponsavelId,
+      primaryDoctorId,
     } = body;
 
     const cleanCpf = cpf !== undefined ? String(cpf).replace(/\D/g, "") : undefined;
@@ -164,6 +177,29 @@ async function handleUpdate(
           ? "INACTIVE"
           : "ACTIVE"
         : undefined;
+
+    const rawMedicoParam =
+      medicoResponsavelId !== undefined
+        ? medicoResponsavelId
+        : primaryDoctorId;
+    let resolvedPrimaryDoctorId: string | null | undefined = undefined;
+    if (rawMedicoParam !== undefined) {
+      if (rawMedicoParam === null || String(rawMedicoParam).trim() === "") {
+        resolvedPrimaryDoctorId = null;
+      } else {
+        const validUserId = await resolverUsuarioMedicoId(
+          String(rawMedicoParam),
+          sessao?.organizationId,
+        );
+        if (!validUserId) {
+          return NextResponse.json(
+            { error: "Médico responsável informado não foi encontrado." },
+            { status: 400 },
+          );
+        }
+        resolvedPrimaryDoctorId = validUserId;
+      }
+    }
 
     const patientRepo = await getRepository(PatientEntity);
 
@@ -296,6 +332,9 @@ async function handleUpdate(
                 : null,
             }
           : {}),
+        ...(resolvedPrimaryDoctorId !== undefined
+          ? { primaryDoctorId: resolvedPrimaryDoctorId }
+          : {}),
       },
     );
 
@@ -312,11 +351,23 @@ async function handleUpdate(
     }
 
     const pacienteAtualizado = await patientRepo.findOne({ where: { id } });
+    const medicoResponsavelAtualizado = pacienteAtualizado
+      ? await resolverMedicoResponsavel(pacienteAtualizado.id, {
+          primaryDoctorId: pacienteAtualizado.primaryDoctorId,
+          organizationId: pacienteAtualizado.organizationId,
+        })
+      : null;
 
     return NextResponse.json({
       sucesso: true,
       mensagem: "Paciente alterado com sucesso!",
-      paciente: pacienteAtualizado,
+      paciente: pacienteAtualizado
+        ? {
+            ...pacienteAtualizado,
+            medicoResponsavelId: pacienteAtualizado.primaryDoctorId || null,
+            medicoResponsavel: medicoResponsavelAtualizado,
+          }
+        : null,
     });
   } catch (error: unknown) {
     console.error("[PACIENTES/[ID]/UPDATE] Erro:", error);

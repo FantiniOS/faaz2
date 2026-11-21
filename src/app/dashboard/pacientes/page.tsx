@@ -30,6 +30,13 @@ import {
   setClientCache,
 } from "@/lib/client-swr-cache";
 
+export interface MedicoResponsavelOption {
+  id: string;
+  nome: string;
+  especialidade: string | null;
+  crm: string | null;
+}
+
 export interface PacienteCadastral {
   id: string;
   recordCode?: string;
@@ -55,6 +62,8 @@ export interface PacienteCadastral {
   bairro?: string;
   cidade?: string;
   estado?: string;
+  medicoResponsavelId?: string | null;
+  medicoResponsavel?: MedicoResponsavelOption | null;
   metaHidricaMl?: number;
   avatarUrl?: string | null;
   criadoEm?: string;
@@ -75,8 +84,12 @@ export default function PacientesPage() {
   const [isCepLoading, setIsCepLoading] = useState(false);
 
   // Perfil RBAC do Usuário Logado
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserCargo, setCurrentUserCargo] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+
+  // Médicos responsáveis da clínica (populado dinamicamente via API)
+  const [medicosClinica, setMedicosClinica] = useState<MedicoResponsavelOption[]>([]);
 
   // Estado do Modal de Prontuário Clínico (Ficha Digital)
   const [selectedPatientForProntuario, setSelectedPatientForProntuario] = useState<PacienteCadastral | null>(null);
@@ -97,6 +110,7 @@ export default function PacientesPage() {
   const [convenio, setConvenio] = useState("Particular");
   const [planoFaaz, setPlanoFaaz] = useState(false);
   const [status, setStatus] = useState("Ativo");
+  const [medicoResponsavelId, setMedicoResponsavelId] = useState("");
 
   // Contato
   const [telefoneWhatsapp, setTelefoneWhatsapp] = useState("");
@@ -125,8 +139,13 @@ export default function PacientesPage() {
   // Carrega pacientes da API com cache SWR em memória (~30s) para navegação instantânea
   async function loadPacientes(isInitial = false, forceBypassCache = false) {
     const cacheKey = "pacientes:list";
+    const medicosCacheKey = "medicos:responsaveis";
 
     if (!forceBypassCache) {
+      const cachedMedicos = getClientCache<MedicoResponsavelOption[]>(medicosCacheKey, 60_000);
+      if (cachedMedicos?.data) {
+        setMedicosClinica(cachedMedicos.data);
+      }
       const cached = getClientCache<PacienteCadastral[]>(cacheKey);
       if (cached) {
         setPacientes(cached.data);
@@ -149,6 +168,10 @@ export default function PacientesPage() {
         setClientCache(cacheKey, json.pacientes as PacienteCadastral[]);
         setPacientes(json.pacientes);
       }
+      if (Array.isArray(json.medicos)) {
+        setClientCache(medicosCacheKey, json.medicos as MedicoResponsavelOption[]);
+        setMedicosClinica(json.medicos as MedicoResponsavelOption[]);
+      }
     } catch (err) {
       console.error("[PacientesPage] Erro ao carregar pacientes:", err);
     } finally {
@@ -165,8 +188,35 @@ export default function PacientesPage() {
       if (!ativo) return;
       void loadPacientes(true, false);
 
-      const cachedAuth = getClientCache<{ cargo?: string; role?: string }>("auth:me", 60_000);
-      if (cachedAuth?.isFresh) {
+      // Garante lista de médicos responsáveis mesmo se pacientes:list veio do cache SWR
+      const cachedMedicos = getClientCache<MedicoResponsavelOption[]>(
+        "medicos:responsaveis",
+        60_000,
+      );
+      if (cachedMedicos?.isFresh) {
+        setMedicosClinica(cachedMedicos.data);
+      } else {
+        fetch("/api/medicos/responsaveis", { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (ativo && Array.isArray(data?.medicos)) {
+              setClientCache(
+                "medicos:responsaveis",
+                data.medicos as MedicoResponsavelOption[],
+              );
+              setMedicosClinica(data.medicos as MedicoResponsavelOption[]);
+            }
+          })
+          .catch(() => {});
+      }
+
+      const cachedAuth = getClientCache<{
+        userId?: string;
+        cargo?: string;
+        role?: string;
+      }>("auth:me", 60_000);
+      if (cachedAuth?.isFresh && cachedAuth.data.userId) {
+        setCurrentUserId(cachedAuth.data.userId);
         if (cachedAuth.data.cargo) setCurrentUserCargo(cachedAuth.data.cargo);
         if (cachedAuth.data.role) setCurrentUserRole(cachedAuth.data.role);
         return;
@@ -177,10 +227,13 @@ export default function PacientesPage() {
         .then((data) => {
           if (!ativo) return;
           if (data.autenticado && data.usuario) {
+            const uid = data.usuario.userId || data.usuario.id || null;
             setClientCache("auth:me", {
+              userId: uid || undefined,
               cargo: data.usuario.cargo,
               role: data.usuario.role,
             });
+            if (uid) setCurrentUserId(uid);
             if (data.usuario.cargo) setCurrentUserCargo(data.usuario.cargo);
             if (data.usuario.role) setCurrentUserRole(data.usuario.role);
           }
@@ -381,6 +434,12 @@ export default function PacientesPage() {
     setConvenio("Particular");
     setPlanoFaaz(false);
     setStatus("Ativo");
+    // Pré-seleciona o médico logado quando ele faz parte do corpo clínico
+    const medicoLogado =
+      currentUserId && medicosClinica.some((m) => m.id === currentUserId)
+        ? currentUserId
+        : "";
+    setMedicoResponsavelId(medicoLogado);
     setTelefoneWhatsapp("");
     setTelefoneSecundario("");
     setEmail("");
@@ -409,6 +468,7 @@ export default function PacientesPage() {
     setConvenio(p.convenio || "Particular");
     setPlanoFaaz(Boolean(p.planoFaaz || p.convenio === "Plano FAAZ"));
     setStatus(p.status || "Ativo");
+    setMedicoResponsavelId(p.medicoResponsavelId || "");
     setTelefoneWhatsapp(p.telefoneWhatsapp ? formatPhone(p.telefoneWhatsapp) : "");
     setTelefoneSecundario(p.telefoneSecundario ? formatPhone(p.telefoneSecundario) : "");
     setEmail(p.email || "");
@@ -448,6 +508,7 @@ export default function PacientesPage() {
         convenio,
         planoFaaz,
         status,
+        medicoResponsavelId: medicoResponsavelId || null,
         telefoneWhatsapp: telefoneWhatsapp.trim(),
         telefoneSecundario: telefoneSecundario.trim(),
         email: email.trim(), // Regra: E-mail não é forçado em uppercase
@@ -476,6 +537,23 @@ export default function PacientesPage() {
       }
 
       setIsModalOpen(false);
+      if (editingId && selectedPatientForProntuario?.id === editingId) {
+        const medicoObj =
+          medicosClinica.find((m) => m.id === medicoResponsavelId) ?? null;
+        setSelectedPatientForProntuario((prev) =>
+          prev
+            ? {
+                ...prev,
+                nome: payload.nome,
+                convenio: payload.convenio,
+                planoFaaz: payload.planoFaaz,
+                status: payload.status,
+                medicoResponsavelId: medicoResponsavelId || null,
+                medicoResponsavel: medicoObj,
+              }
+            : null,
+        );
+      }
       showToast(editingId ? "Paciente atualizado com sucesso!" : "Paciente cadastrado com sucesso!");
       invalidateClientCache("pacientes:list");
       invalidateClientCache("telemetria:");
@@ -997,8 +1075,30 @@ export default function PacientesPage() {
                     </select>
                   </div>
 
+                  {/* Médico Responsável */}
+                  <div className="md:col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                      Médico Responsável
+                    </label>
+                    <select
+                      value={medicoResponsavelId}
+                      onChange={(e) => setMedicoResponsavelId(e.target.value)}
+                      className="w-full h-8 px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="">
+                        Automático (conforme consultas / clínica)
+                      </option>
+                      {medicosClinica.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.nome}
+                          {m.especialidade ? ` — ${m.especialidade}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Toggle / Switch Elegante: Membro Plano FAAZ */}
-                  <div className="md:col-span-3 flex items-end">
+                  <div className="md:col-span-4 flex items-end">
                     <label
                       htmlFor="toggle-plano-faaz"
                       className={`w-full h-8 px-3 rounded-lg border flex items-center justify-between cursor-pointer select-none transition-all ${

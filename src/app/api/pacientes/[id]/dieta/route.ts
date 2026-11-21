@@ -22,6 +22,7 @@ import {
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
+import { resolverMedicoResponsavel } from "@/lib/medico-responsavel";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -121,13 +122,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         select: {
           id: true,
           fullName: true,
-          primaryDoctor: {
-            id: true,
-            fullName: true,
-            specialty: true,
-          },
+          organizationId: true,
+          primaryDoctorId: true,
         },
-        relations: { primaryDoctor: true },
       }),
       carregarPlanoCompleto(id),
     ]);
@@ -408,6 +405,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       };
     });
 
+    const medicoResponsavel = await resolverMedicoResponsavel(paciente.id, {
+      primaryDoctorId: paciente.primaryDoctorId,
+      organizationId: paciente.organizationId,
+    });
+
     return NextResponse.json(
       {
         sucesso: true,
@@ -415,8 +417,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         paciente: {
           id: paciente.id,
           nome: paciente.fullName,
-          medico: paciente.primaryDoctor?.fullName || null,
-          especialidade: paciente.primaryDoctor?.specialty || null,
+          medico: medicoResponsavel?.nome || null,
+          especialidade: medicoResponsavel?.especialidade || null,
+          crm: medicoResponsavel?.crm || null,
+          medicoResponsavel,
         },
         plano: {
           ...plano,

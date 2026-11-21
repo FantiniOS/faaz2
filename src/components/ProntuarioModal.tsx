@@ -129,6 +129,13 @@ interface PacienteApiData {
   treatmentObjective?: string | null;
   avatarUrl?: string | null;
   photoUrl?: string | null;
+  medicoResponsavelId?: string | null;
+  medicoResponsavel?: {
+    id: string;
+    nome: string;
+    especialidade?: string | null;
+    crm?: string | null;
+  } | null;
   glicemiaRecente?: number | null;
   glicemiaStatus?: string | null;
   circunferenciaAbdominal?: number | null;
@@ -919,6 +926,8 @@ export function ProntuarioModal({
   const pacienteCpf = pacienteApiData?.cpf || paciente?.cpf;
   const pacienteStatus = pacienteApiData?.status || paciente?.status || "Ativo";
   const pacienteConvenio = pacienteApiData?.convenio || paciente?.convenio || "Particular";
+  const pacienteMedicoResponsavel =
+    pacienteApiData?.medicoResponsavel ?? paciente?.medicoResponsavel ?? null;
   const pacienteAvatarUrl =
     pacienteApiData?.avatarUrl ||
     pacienteApiData?.photoUrl ||
@@ -2295,6 +2304,30 @@ export function ProntuarioModal({
                   <span>
                     Idade: <strong className="text-emerald-700 font-bold">{idadeDisplay}</strong>
                   </span>
+                  {pacienteMedicoResponsavel?.nome && (
+                    <>
+                      <span className="text-slate-300 hidden sm:inline">•</span>
+                      <span
+                        className="text-slate-500 inline-flex items-center gap-1"
+                        title={
+                          [
+                            pacienteMedicoResponsavel.especialidade,
+                            pacienteMedicoResponsavel.crm,
+                          ]
+                            .filter(Boolean)
+                            .join(" • ") || undefined
+                        }
+                      >
+                        <Stethoscope className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                        <span>
+                          Médico:{" "}
+                          <strong className="text-slate-800 font-semibold">
+                            {pacienteMedicoResponsavel.nome}
+                          </strong>
+                        </span>
+                      </span>
+                    </>
+                  )}
                   {ultimaAtualizacao && (
                     <>
                       <span className="text-slate-300 hidden sm:inline">•</span>
