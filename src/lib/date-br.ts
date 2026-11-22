@@ -88,13 +88,15 @@ function toValidDate(input?: Date | string | number | null): Date {
   if (input instanceof Date) return input;
   if (typeof input === "string") {
     const trimmed = input.trim();
+    if (!trimmed) return new Date(Number.NaN);
     if (ISO_DATE_RE.test(trimmed)) {
       return new Date(`${trimmed}T12:00:00${OFFSET_BR}`);
     }
     return new Date(trimmed);
   }
-  if (typeof input === "number") return new Date(input);
-  return new Date();
+  if (typeof input === "number" && Number.isFinite(input)) return new Date(input);
+  if (input === null || input === undefined) return new Date();
+  return new Date(Number.NaN);
 }
 
 export interface PartesDataHoraBR {
@@ -112,9 +114,10 @@ export interface PartesDataHoraBR {
  * Extrai componentes de data e hora exatamente no fuso America/Sao_Paulo.
  */
 export function getPartesDataHoraBR(
-  input?: Date | string | number
+  input?: Date | string | number | null
 ): PartesDataHoraBR {
-  const date = toValidDate(input);
+  const parsed = toValidDate(input);
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 
   if (HAS_INTL_SAO_PAULO) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -319,9 +322,14 @@ export function getIntervaloDiasBR(
  */
 export function toIsoUtc(input?: Date | string | number | null): string | null {
   if (input === null || input === undefined) return null;
+  if (typeof input === "string" && !input.trim()) return null;
   const d = toValidDate(input);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+  try {
+    return d.toISOString();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -429,7 +437,10 @@ export function formatarDataHumanaBR(
   input?: Date | string | number | null
 ): string {
   if (input === null || input === undefined) return "";
-  const sp = getPartesDataHoraBR(input);
+  if (typeof input === "string" && !input.trim()) return "";
+  const d = toValidDate(input);
+  if (Number.isNaN(d.getTime())) return "";
+  const sp = getPartesDataHoraBR(d);
   const mes = MESES_PT[sp.month - 1] || "";
   const diaSemana = DIAS_SEMANA_PT[sp.weekdayIndex] || "";
   return `${sp.day} de ${mes}, ${diaSemana}`;
@@ -461,20 +472,22 @@ export function calcularIdadeBR(
   let birthD: number;
 
   if (typeof birthDate === "string") {
-    const match = birthDate.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const trimmed = birthDate.trim();
+    if (!trimmed) return null;
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (match) {
       birthY = Number(match[1]);
       birthM = Number(match[2]);
       birthD = Number(match[3]);
     } else {
-      const d = toValidDate(birthDate);
+      const d = toValidDate(trimmed);
       if (Number.isNaN(d.getTime())) return null;
       const p = getPartesDataHoraBR(d);
       birthY = p.year;
       birthM = p.month;
       birthD = p.day;
     }
-  } else {
+  } else if (birthDate instanceof Date) {
     if (Number.isNaN(birthDate.getTime())) return null;
     if (
       birthDate.getUTCHours() === 0 &&
@@ -491,6 +504,8 @@ export function calcularIdadeBR(
       birthM = p.month;
       birthD = p.day;
     }
+  } else {
+    return null;
   }
 
   const hoje = getPartesDataHoraBR(refDate);

@@ -341,6 +341,7 @@ export async function resolverMedicoResponsavel(
           id: true,
           medicoResponsavel: true,
           dataAtendimento: true,
+          createdAt: true,
         },
         order: { dataAtendimento: "DESC", createdAt: "DESC" },
       }),

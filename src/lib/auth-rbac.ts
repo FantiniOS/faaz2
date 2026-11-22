@@ -65,39 +65,71 @@ export const CARGOS_PAINEL_ADMIN: Cargo[] = [
 // FUNÇÕES DE VALIDAÇÃO
 // ============================================================================
 
+function normalizarCargoRbac(cargo: string | null | undefined): string {
+  return typeof cargo === "string" ? cargo.trim().toUpperCase() : "";
+}
+
 /** Valida se um cargo possui credencial para acesso a prontuários e dados clínicos */
 export function podeAcessarDadosClinicos(cargo: string | null | undefined): boolean {
-  if (!cargo) return false;
-  return CARGOS_AUTORIZADOS_PRONTUARIO.includes(cargo as Cargo);
+  const norm = normalizarCargoRbac(cargo);
+  if (!norm) return false;
+  return (
+    CARGOS_AUTORIZADOS_PRONTUARIO.includes(norm as Cargo) ||
+    norm === "CLINIC_ADMIN" ||
+    norm === "DOCTOR"
+  );
 }
 
 /** Valida se o cargo pode gerenciar equipe (CRUD de funcionários) */
 export function podeGerenciarEquipe(cargo: string | null | undefined): boolean {
-  if (!cargo) return false;
-  return CARGOS_GESTAO_EQUIPE.includes(cargo as Cargo);
+  const norm = normalizarCargoRbac(cargo);
+  if (!norm) return false;
+  return (
+    CARGOS_GESTAO_EQUIPE.includes(norm as Cargo) ||
+    norm === "CLINIC_ADMIN" ||
+    norm === "ADMIN"
+  );
 }
 
 /** Valida se o cargo pode cadastrar ou alterar pacientes */
 export function podeCadastrarPacientes(cargo: string | null | undefined): boolean {
-  if (!cargo) return false;
-  return CARGOS_CADASTRO_PACIENTES.includes(cargo as Cargo);
+  const norm = normalizarCargoRbac(cargo);
+  if (!norm) return false;
+  return (
+    CARGOS_CADASTRO_PACIENTES.includes(norm as Cargo) ||
+    norm === "CLINIC_ADMIN" ||
+    norm === "DOCTOR" ||
+    norm === "RECEPTIONIST" ||
+    norm === "ADMIN"
+  );
 }
 
-/** Valida se o cargo pode excluir/apagar pacientes (Apenas DONO_CLINICA e ADMINISTRADOR) */
+/** Valida se o cargo pode excluir/apagar pacientes (Diretoria Clínica / DONO_CLINICA e ADMINISTRADOR) */
 export function podeExcluirPacientes(cargo: string | null | undefined): boolean {
-  if (!cargo) return false;
-  return CARGOS_EXCLUSAO_PACIENTES.includes(cargo as Cargo);
+  const norm = normalizarCargoRbac(cargo);
+  if (!norm) return false;
+  return (
+    CARGOS_EXCLUSAO_PACIENTES.includes(norm as Cargo) ||
+    norm === "CLINIC_ADMIN" ||
+    norm === "ADMIN"
+  );
 }
 
 /** Valida se o cargo pode acessar o painel administrativo */
 export function podeAcessarPainelAdmin(cargo: string | null | undefined): boolean {
-  if (!cargo) return false;
-  return CARGOS_PAINEL_ADMIN.includes(cargo as Cargo);
+  const norm = normalizarCargoRbac(cargo);
+  if (!norm) return false;
+  return (
+    CARGOS_PAINEL_ADMIN.includes(norm as Cargo) ||
+    norm === "CLINIC_ADMIN" ||
+    norm === "ADMIN"
+  );
 }
 
-/** Valida se o cargo é o proprietário da clínica (poder total) */
+/** Valida se o cargo é o proprietário / Diretoria Clínica (poder total) */
 export function isDonoClinica(cargo: string | null | undefined): boolean {
-  return cargo === "DONO_CLINICA";
+  const norm = normalizarCargoRbac(cargo);
+  return norm === "DONO_CLINICA" || norm === "CLINIC_ADMIN";
 }
 
 /**

@@ -8,6 +8,11 @@ import {
   withRepositoryRetry,
 } from "@/lib/db/data-source";
 import {
+  logOracleRouteError,
+  safeClobString,
+  safeJsonParse,
+} from "@/lib/db/oracle-utils";
+import {
   BiometricMeasurementEntity,
   ConsultaPacoteEntity,
   EvolucaoClinicaEntity,
@@ -20,6 +25,7 @@ import {
   UserEntity,
   type BiometricMeasurement,
   type EvolucaoClinica,
+  type GoalCheckin,
   type Measurement,
   type Patient,
   type ProntuarioPaciente,
@@ -40,6 +46,48 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
+function safeBirthDateIso(input?: Date | string | null): string | null {
+  if (!input) return null;
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+    const parsedIso = toIsoUtc(trimmed);
+    return parsedIso ? getDataDiaBR(parsedIso) : null;
+  }
+  if (input instanceof Date) {
+    if (Number.isNaN(input.getTime())) return null;
+    if (
+      input.getUTCHours() === 0 &&
+      input.getUTCMinutes() === 0 &&
+      input.getUTCSeconds() === 0 &&
+      input.getUTCMilliseconds() === 0
+    ) {
+      return input.toISOString().slice(0, 10);
+    }
+    return getDataDiaBR(input);
+  }
+  return null;
+}
+
+function safeOptionalClob(value: unknown): string | null {
+  const text = safeClobString(value);
+  return text.length > 0 ? text : null;
+}
+
+function safeOptionalJsonOrText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") {
+    const parsed = safeJsonParse<unknown>(value, null);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => safeClobString(item)).filter(Boolean).join(", ");
+    }
+    return value;
+  }
+  return safeClobString(value);
+}
+
 /**
  * GET /api/pacientes/[id]/prontuario
  * Busca o prontuário clínico e os dados essenciais do paciente.
@@ -47,8 +95,10 @@ interface RouteParams {
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   const reqStart = performance.now();
+  let pacienteIdLog = "";
   try {
     const { id } = await params;
+    pacienteIdLog = id;
     const sessao = await getSessao();
 
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
@@ -137,6 +187,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                   dataRegistro: true,
                   valor: true,
                   momento: true,
+                  createdAt: true,
                 },
                 order: { dataRegistro: "DESC", createdAt: "DESC" },
                 take: 30,
@@ -155,6 +206,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                   measuredAt: true,
                   waistCircumferenceCm: true,
                   bodyFatPercentage: true,
+                  createdAt: true,
                 },
                 order: { measuredAt: "DESC", createdAt: "DESC" },
                 take: 30,
@@ -182,6 +234,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                   leftThigh: true,
                   notes: true,
                   createdBy: true,
+                  createdAt: true,
                 },
                 order: { measuredAt: "DESC", createdAt: "DESC" },
                 take: 50,
@@ -222,32 +275,42 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       ),
     );
 
-    // Fallback legado de glicemia (GOAL_CHECKINS) e nomes dos profissionais (máx. 2 em paralelo)
+    // Fallback legado de glicemia (GOAL_CHECKINS) e nomes dos profissionais (máx. 2 em paralelo).
+    // Usa QueryBuilder explícito sem projeção da relação para evitar o bug do TypeORM Oracle
+    // com relations + take + order (`ORA-00904: "distinctAlias"."GoalCheckin_CREATED_AT"`).
     const [goalCheckins, clinicianUsers] = await Promise.all([
       registrosGlicemia.length === 0
         ? withRepositoryRetry(
             GoalCheckinEntity,
             (repo) =>
-              repo.find({
-                where: {
-                  patientId: id,
-                  patientGoal: {
-                    category: "CAPILLARY_GLUCOSE",
-                  },
-                },
-                select: {
-                  id: true,
-                  referenceDate: true,
-                  recordedValue: true,
-                  patientGoal: { id: true, category: true },
-                },
-                relations: { patientGoal: true },
-                order: { referenceDate: "DESC", createdAt: "DESC" },
-                take: 30,
-              }),
+              repo
+                .createQueryBuilder("gc")
+                .innerJoin("gc.patientGoal", "pg", "pg.category = :category", {
+                  category: "CAPILLARY_GLUCOSE",
+                })
+                .select([
+                  "gc.id",
+                  "gc.referenceDate",
+                  "gc.recordedValue",
+                  "gc.createdAt",
+                ])
+                .where("gc.patientId = :patientId", { patientId: id })
+                .andWhere("gc.deletedAt IS NULL")
+                .andWhere("pg.deletedAt IS NULL")
+                .orderBy("gc.referenceDate", "DESC")
+                .addOrderBy("gc.createdAt", "DESC")
+                .limit(30)
+                .getMany(),
             { label: "prontuario:goalCheckins" },
-          )
-        : Promise.resolve([]),
+          ).catch((err: unknown): GoalCheckin[] => {
+            logOracleRouteError(
+              "GET /api/pacientes/[id]/prontuario#goalCheckins",
+              err,
+              { pacienteId: id },
+            );
+            return [];
+          })
+        : Promise.resolve<GoalCheckin[]>([]),
       clinicianIds.length > 0
         ? withRepositoryRetry(
             UserEntity,
@@ -368,7 +431,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     const biometriaHistorico = biometricMeasurements.map((b) => ({
       id: b.id,
-      measuredAt: new Date(b.measuredAt).toISOString(),
+      measuredAt: toIsoUtc(b.measuredAt),
       waistCircumferenceCm:
         b.waistCircumferenceCm != null ? Number(b.waistCircumferenceCm) : null,
       bodyFatPercentage:
@@ -378,7 +441,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const measurementsHistorico = measurements.map((m) => ({
       id: m.id,
       patientId: m.patientId,
-      measuredAt: toIsoUtc(m.measuredAt) ?? new Date(m.measuredAt).toISOString(),
+      measuredAt: toIsoUtc(m.measuredAt),
       bodyFatPercentage:
         m.bodyFatPercentage != null ? Number(m.bodyFatPercentage) : null,
       waist: m.waist != null ? Number(m.waist) : null,
@@ -388,7 +451,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       leftArm: m.leftArm != null ? Number(m.leftArm) : null,
       rightThigh: m.rightThigh != null ? Number(m.rightThigh) : null,
       leftThigh: m.leftThigh != null ? Number(m.leftThigh) : null,
-      notes: m.notes ?? null,
+      notes: safeOptionalClob(m.notes),
       createdBy: m.createdBy ?? null,
       createdByName:
         m.createdBy && m.createdBy !== "PATIENT_APP_SELF_REPORT"
@@ -400,29 +463,27 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       registrosGlicemia.length > 0
         ? registrosGlicemia.map((g) => ({
             id: g.id,
-            referenceDate: new Date(g.dataRegistro).toISOString(),
+            referenceDate: toIsoUtc(g.dataRegistro),
             recordedValue: Number(g.valor),
             momento: g.momento,
             notes: `Medição: ${momentoLabel(g.momento)}`,
           }))
         : goalCheckins.map((g) => ({
             id: g.id,
-            referenceDate: new Date(g.referenceDate).toISOString(),
+            referenceDate: toIsoUtc(g.referenceDate),
             recordedValue:
               g.recordedValue != null ? Number(g.recordedValue) : null,
             momento: "JEJUM",
             notes: null,
           }));
 
-    const birthDateIso = paciente.birthDate
-      ? String(paciente.birthDate).split("T")[0]
-      : null;
+    const birthDateIso = safeBirthDateIso(paciente.birthDate);
 
     // Fonte única de verdade para o Objetivo do Tratamento (prioriza PATIENTS.TREATMENT_OBJECTIVE)
     const objetivoUnificado = resolverObjetivoAtivo(
       paciente.treatmentObjective,
       paciente.clinicalFocus,
-      prontuario?.objetivo,
+      safeOptionalClob(prontuario?.objetivo),
     );
 
     const medicoResponsavel = await resolverMedicoResponsavel(paciente.id, {
@@ -448,7 +509,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           heightCm: paciente.heightCm != null ? Number(paciente.heightCm) : null,
           clinicalFocus: objetivoUnificado || null,
           treatmentObjective: objetivoUnificado || null,
-          avatarUrl: paciente.avatarUrl || paciente.photoUrl || null,
+          avatarUrl:
+            safeOptionalClob(paciente.avatarUrl) ||
+            safeOptionalClob(paciente.photoUrl) ||
+            null,
           medicoResponsavelId: paciente.primaryDoctorId || null,
           medicoResponsavel,
           glicemiaRecente,
@@ -461,18 +525,20 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           alturaCm,
           imc,
           objetivo: objetivoUnificado,
-          comorbidades: prontuario?.comorbidades || "",
-          alergias: prontuario?.alergias || "",
-          medicacoes: prontuario?.medicacoes || "",
-          evolucao: prontuario?.evolucao || "",
+          comorbidades: safeOptionalJsonOrText(prontuario?.comorbidades),
+          alergias: safeOptionalJsonOrText(prontuario?.alergias),
+          medicacoes: safeOptionalJsonOrText(prontuario?.medicacoes),
+          evolucao: safeOptionalJsonOrText(prontuario?.evolucao),
           ultimaAtualizacao: toIsoUtc(prontuario?.updatedAt) || null,
         },
         historico: evolucoesClinicas.map((ev) => ({
           ...ev,
-          dataAtendimento:
-            toIsoUtc(ev.dataAtendimento) ?? new Date(ev.dataAtendimento).toISOString(),
-          createdAt: toIsoUtc(ev.createdAt) ?? new Date(ev.createdAt).toISOString(),
-          updatedAt: toIsoUtc(ev.updatedAt) ?? new Date(ev.updatedAt).toISOString(),
+          queixaPrincipal: safeOptionalClob(ev.queixaPrincipal),
+          condutaEvolucao: safeClobString(ev.condutaEvolucao),
+          medicoResponsavel: safeClobString(ev.medicoResponsavel),
+          dataAtendimento: toIsoUtc(ev.dataAtendimento),
+          createdAt: toIsoUtc(ev.createdAt),
+          updatedAt: toIsoUtc(ev.updatedAt),
         })),
         biometriaHistorico,
         measurementsHistorico,
@@ -489,10 +555,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       },
     );
   } catch (error: unknown) {
-    console.error("[PRONTUARIO/GET] Erro:", error);
-    const details = error instanceof Error ? error.message : String(error);
+    logOracleRouteError("GET /api/pacientes/[id]/prontuario", error, {
+      pacienteId: pacienteIdLog || undefined,
+    });
     return NextResponse.json(
-      { error: "Erro ao buscar prontuário do paciente.", details },
+      { error: "Erro ao buscar prontuário do paciente." },
       { status: 500 },
     );
   }
@@ -504,8 +571,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
  * Acesso restrito: DONO_CLINICA, MEDICO.
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
+  let pacienteIdLog = "";
   try {
     const { id } = await params;
+    pacienteIdLog = id;
     const sessao = await getSessao();
 
     if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
@@ -731,10 +800,11 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       consultaPacoteRegistrada,
     });
   } catch (error: unknown) {
-    console.error("[PRONTUARIO/PUT] Erro:", error);
-    const details = error instanceof Error ? error.message : String(error);
+    logOracleRouteError("PUT /api/pacientes/[id]/prontuario", error, {
+      pacienteId: pacienteIdLog || undefined,
+    });
     return NextResponse.json(
-      { error: "Erro ao salvar prontuário.", details },
+      { error: "Erro ao salvar prontuário." },
       { status: 500 },
     );
   }
