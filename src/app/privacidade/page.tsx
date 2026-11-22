@@ -20,9 +20,17 @@ import {
 export const dynamic = "force-static";
 
 export const metadata: Metadata = {
-  title: "Termos de Uso e Política de Privacidade | Clínica FAAZ",
+  title: "Termos de Uso e Política de Privacidade — Clínica FAAZ",
   description:
-    "Termos de Uso, Política de Privacidade (LGPD) e normas de guarda de prontuário (CFM) do ecossistema EnDoc 2.0 — Clínica FAAZ.",
+    "Termos de Uso, Política de Privacidade (LGPD) e normas de guarda de prontuário (CFM) do ecossistema FRdoc 2.0 — Clínica FAAZ.",
+  openGraph: {
+    title: "Termos de Uso e Política de Privacidade — Clínica FAAZ | FRdoc 2.0",
+    description:
+      "Termos de Uso, Política de Privacidade (LGPD) e normas de guarda de prontuário (CFM) do ecossistema FRdoc 2.0 — Clínica FAAZ.",
+    siteName: "FRdoc 2.0",
+    locale: "pt_BR",
+    type: "article",
+  },
 };
 
 export default function PrivacidadePage() {
@@ -87,7 +95,7 @@ export default function PrivacidadePage() {
           </h1>
           <p className="text-sm text-slate-600 font-medium leading-relaxed max-w-2xl">
             Documento de transparência sobre o tratamento de dados pessoais e
-            dados sensíveis de saúde no aplicativo e ecossistema clínico EnDoc
+            dados sensíveis de saúde no aplicativo e ecossistema clínico FRdoc
             2.0 da Clínica FAAZ.
           </p>
         </section>
@@ -201,7 +209,7 @@ export default function PrivacidadePage() {
               <span>{WHATSAPP_CLINICA_EXIBICAO}</span>
             </a>
             <span className="font-mono text-[11px] text-slate-400">
-              EnDoc 2.0 · v{VERSAO_ATUAL_TERMOS}
+              FRdoc 2.0 · v{VERSAO_ATUAL_TERMOS}
             </span>
           </div>
         </footer>

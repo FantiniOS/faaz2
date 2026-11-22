@@ -1,6 +1,6 @@
 /**
  * Conteúdo legal unificado — Termos de Uso e Política de Privacidade (LGPD / CFM)
- * Versão 1.0 — Paridade integral entre Web (/privacidade) e App Mobile (EnDoc 2.0).
+ * Versão 1.0 — Paridade integral entre Web (/privacidade) e App Mobile (FRdoc 2.0).
  * Zero dependências de banco de dados e zero nomes de profissionais hardcoded.
  */
 
@@ -23,7 +23,7 @@ export const AVISO_EMERGENCIA_TERMOS = {
   resumoCurto:
     "Este aplicativo é para acompanhamento clínico entre consultas e NÃO substitui atendimento de urgência ou emergência (em caso de mal-estar agudo, procure pronto-socorro ou ligue 192).",
   textoCompleto:
-    "O aplicativo da Clínica FAAZ (EnDoc 2.0) destina-se exclusivamente ao acompanhamento clínico e nutricional entre consultas agendadas. Ele NÃO realiza monitoramento médico em tempo real, NÃO aciona socorro automático e NÃO substitui avaliação presencial. Diante de qualquer urgência ou emergência médica — como hipoglicemia grave, hiperglicemia sintomática, dor no peito, falta de ar ou mal-estar agudo — procure imediatamente o pronto-socorro mais próximo ou acione o SAMU pelo telefone 192.",
+    "O aplicativo da Clínica FAAZ (FRdoc 2.0) destina-se exclusivamente ao acompanhamento clínico e nutricional entre consultas agendadas. Ele NÃO realiza monitoramento médico em tempo real, NÃO aciona socorro automático e NÃO substitui avaliação presencial. Diante de qualquer urgência ou emergência médica — como hipoglicemia grave, hiperglicemia sintomática, dor no peito, falta de ar ou mal-estar agudo — procure imediatamente o pronto-socorro mais próximo ou acione o SAMU pelo telefone 192.",
 } as const;
 
 export const SECOES_TERMOS_PRIVACIDADE: readonly SecaoTermosPrivacidade[] = [
@@ -32,7 +32,7 @@ export const SECOES_TERMOS_PRIVACIDADE: readonly SecaoTermosPrivacidade[] = [
     id: "controlador-finalidade",
     titulo: "Identificação do Controlador e Finalidade do Aplicativo",
     paragrafos: [
-      "A Clínica FAAZ — Medicina & Saúde Integrativa atua como Controladora dos dados pessoais tratados no ecossistema EnDoc 2.0, em conformidade com a Lei Geral de Proteção de Dados Pessoais (LGPD — Lei nº 13.709/2018) e com as normas do Conselho Federal de Medicina (CFM).",
+      "A Clínica FAAZ — Medicina & Saúde Integrativa atua como Controladora dos dados pessoais tratados no ecossistema FRdoc 2.0, em conformidade com a Lei Geral de Proteção de Dados Pessoais (LGPD — Lei nº 13.709/2018) e com as normas do Conselho Federal de Medicina (CFM).",
       "Este aplicativo foi desenvolvido exclusivamente para pacientes atendidos pela Clínica FAAZ com a finalidade de apoiar o acompanhamento clínico, metabólico e nutricional entre consultas presenciais ou online, permitindo visualizar prescrições, acompanhar agendamentos e registrar hábitos e parâmetros de saúde compartilhados com sua equipe assistencial.",
     ],
   },
@@ -42,7 +42,7 @@ export const SECOES_TERMOS_PRIVACIDADE: readonly SecaoTermosPrivacidade[] = [
     titulo: "Aviso Crítico — Não é Canal de Urgência ou Emergência",
     destaque: "emergencia",
     paragrafos: [
-      "O aplicativo EnDoc 2.0 não realiza plantão nem monitoramento em tempo real dos registros enviados. Informações inseridas pelo paciente são analisadas pela equipe médica durante o acompanhamento programado e nas consultas clínicas.",
+      "O aplicativo FRdoc 2.0 não realiza plantão nem monitoramento em tempo real dos registros enviados. Informações inseridas pelo paciente são analisadas pela equipe médica durante o acompanhamento programado e nas consultas clínicas.",
       "Em situações de urgência ou emergência médica — incluindo hipoglicemia grave, hiperglicemia persistente ou sintomática, tontura intensa, desmaio, reações adversas agudas ou qualquer mal-estar súbito — não aguarde resposta pelo aplicativo: procure imediatamente um serviço de pronto-socorro ou ligue para o SAMU (192).",
     ],
   },

@@ -13,8 +13,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Clínica FAAZ - Gestão Clínica",
-  description: "Ecossistema de gestão clínica e agendamentos.",
+  title: {
+    default: "Clínica FAAZ | FRdoc 2.0 — Gestão Clínica",
+    template: "%s | FRdoc 2.0",
+  },
+  description:
+    "Plataforma clínica FRdoc 2.0 da Clínica FAAZ — gestão clínica, prontuário integrado e agendamentos.",
+  applicationName: "FRdoc 2.0",
+  openGraph: {
+    title: "Clínica FAAZ | FRdoc 2.0 — Gestão Clínica",
+    description:
+      "Plataforma clínica FRdoc 2.0 da Clínica FAAZ — gestão clínica, prontuário integrado e agendamentos.",
+    siteName: "FRdoc 2.0",
+    locale: "pt_BR",
+    type: "website",
+  },
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },

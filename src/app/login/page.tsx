@@ -127,7 +127,7 @@ export default function LoginPage() {
       {/* COLUNA ESQUERDA (~58%) — SHOWCASE CLÍNICO HIGH-TECH CLINICAL LIGHT */}
       {/* ================================================================== */}
       <section
-        aria-label="Plataforma Clínica EnDoc 2.0"
+        aria-label="Plataforma Clínica FRdoc 2.0"
         className="relative hidden lg:flex lg:w-[58%] flex-col justify-between px-10 xl:px-16 py-7 xl:py-9 overflow-hidden border-r border-slate-200/80"
         style={{
           background:
@@ -208,7 +208,7 @@ export default function LoginPage() {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
             </span>
             <span className="text-[10px] font-extrabold tracking-[0.14em] uppercase text-emerald-800">
-              ENDOC 2.0 • CLINICAL INTELLIGENCE
+              FRDOC 2.0 • CLINICAL INTELLIGENCE
             </span>
           </div>
         </header>
@@ -498,7 +498,7 @@ export default function LoginPage() {
               </div>
 
               <h2 className="text-xl sm:text-2xl font-extrabold tracking-[-0.025em] text-slate-900">
-                Bem-vindo ao EnDoc
+                Bem-vindo ao FRdoc
               </h2>
               <p className="text-xs sm:text-[13px] text-slate-500 font-medium mt-0.5">
                 Autentique-se com suas credenciais da equipe
@@ -646,7 +646,7 @@ export default function LoginPage() {
                   </Link>
                 </div>
                 <span className="font-mono px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/70 text-slate-500">
-                  EnDoc 2.0
+                  FRdoc 2.0
                 </span>
               </div>
             </div>

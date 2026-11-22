@@ -244,7 +244,7 @@ export function PatientLoginScreen() {
               MEDICINA &amp; SAÚDE INTEGRATIVA
             </Text>
 
-            {/* Pílula tecnológica viva (espelho do ENDOC 2.0 na Web) */}
+            {/* Pílula tecnológica viva (espelho do FRDOC 2.0 na Web) */}
             <View style={styles.portalPill}>
               <View style={styles.liveDotWrap}>
                 <Animated.View
@@ -259,7 +259,7 @@ export function PatientLoginScreen() {
                 <View style={styles.liveDotCore} />
               </View>
               <Text style={styles.portalPillText}>
-                PORTAL DO PACIENTE • ENDOC 2.0
+                PORTAL DO PACIENTE • FRDOC 2.0
               </Text>
             </View>
           </View>

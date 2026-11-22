@@ -172,7 +172,7 @@ export function WidgetCard({
 
       {/* RODAPÉ DO CARD COM AÇÃO DE DETALHES OU MODAL DE AUDITORIA */}
       <div className="pt-2.5 border-t border-slate-50 flex items-center justify-between text-[11px] text-slate-400">
-        <span className="font-medium">Módulo EnDoc</span>
+        <span className="font-medium">Módulo FRdoc</span>
         {onOpenDetails &&
         (widget.id === "alertas-glicemicos" ||
           widget.id === "escala-bristol" ||
