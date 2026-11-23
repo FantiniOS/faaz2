@@ -44,6 +44,10 @@ import {
   subtrairDiasDataBR,
   TIMEZONE_BR,
 } from "@/lib/date-br";
+import {
+  getPacoteVisualStatus,
+  type PacoteAtivoResumoListaDTO,
+} from "@/lib/pacotes-faaz";
 
 export type TipoAgendamento = "PRIMEIRA_CONSULTA" | "RETORNO" | "EXAME";
 export type EspecialidadeAgendamento = "ENDOCRINOLOGIA" | "CIRURGIA_PLASTICA";
@@ -98,6 +102,7 @@ interface PacienteOption {
   recordCode?: string;
   convenio?: string;
   planoFaaz?: boolean;
+  pacoteAtivo?: PacoteAtivoResumoListaDTO | null;
   telefoneWhatsapp?: string;
 }
 
@@ -567,6 +572,14 @@ export default function AgendaPage() {
     return `${first.dayNumber} ${first.monthShort} – ${last.dayNumber} ${last.monthShort} de ${ano}`;
   }, [selectedDate, viewMode, visibleColumns]);
 
+  const pacoteAtivoPorPacienteId = useMemo(() => {
+    const mapa = new Map<string, PacoteAtivoResumoListaDTO | null>();
+    for (const p of pacientes) {
+      mapa.set(p.id, p.pacoteAtivo ?? null);
+    }
+    return mapa;
+  }, [pacientes]);
+
   // Efeito 1: Carrega a lista de pacientes e médicos apenas 1 vez na montagem (dependência [])
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -614,6 +627,7 @@ export default function AgendaPage() {
                 recordCode: p.recordCode || "",
                 convenio: p.convenio || "Particular",
                 planoFaaz: Boolean(p.planoFaaz),
+                pacoteAtivo: p.pacoteAtivo ?? null,
                 telefoneWhatsapp: p.telefoneWhatsapp || "",
               }))
             );
@@ -1743,6 +1757,16 @@ export default function AgendaPage() {
                     const isPlanoFaaz = Boolean(
                       item.pacientePlanoFaaz || item.paciente?.planoFaaz
                     );
+                    const pacAtivoItem =
+                      pacoteAtivoPorPacienteId.get(item.pacienteId) ?? null;
+                    const visualPacoteItem = pacAtivoItem
+                      ? getPacoteVisualStatus({
+                          realizadas: pacAtivoItem.consultasRealizadas,
+                          total: pacAtivoItem.qtdTotalConsultas,
+                          validade: pacAtivoItem.dataValidade,
+                          status: pacAtivoItem.status,
+                        })
+                      : null;
                     const espItem: EspecialidadeAgendamento =
                       item.especialidade === "CIRURGIA_PLASTICA"
                         ? "CIRURGIA_PLASTICA"
@@ -1884,11 +1908,19 @@ export default function AgendaPage() {
                                 <span className="text-[11px] font-extrabold truncate whitespace-nowrap min-w-0">
                                   {item.pacienteNome}
                                 </span>
-                                {isPlanoFaaz && (
+                                {pacAtivoItem && visualPacoteItem ? (
+                                  <span
+                                    title={`${pacAtivoItem.nomePlano} — ${visualPacoteItem.tooltip}`}
+                                    className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded border text-[8px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap leading-none font-mono tabular-nums ${visualPacoteItem.pillClass}`}
+                                  >
+                                    FAAZ {pacAtivoItem.consultasRealizadas}/
+                                    {pacAtivoItem.qtdTotalConsultas}
+                                  </span>
+                                ) : isPlanoFaaz ? (
                                   <span className="inline-flex items-center px-1 py-0.2 rounded bg-amber-50/95 border border-amber-300 text-amber-600 text-[8px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap leading-none">
                                     FAAZ ✨
                                   </span>
-                                )}
+                                ) : null}
                               </div>
 
                               <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-white/85 border border-black/5 text-[9px] font-extrabold text-slate-700 shrink-0 whitespace-nowrap leading-none">
@@ -1921,11 +1953,19 @@ export default function AgendaPage() {
                                 {item.pacienteNome}
                               </span>
 
-                              {isPlanoFaaz && (
+                              {pacAtivoItem && visualPacoteItem ? (
+                                <span
+                                  title={`${pacAtivoItem.nomePlano} — ${visualPacoteItem.tooltip}`}
+                                  className={`hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs font-mono tabular-nums ${visualPacoteItem.pillClass}`}
+                                >
+                                  FAAZ {pacAtivoItem.consultasRealizadas}/
+                                  {pacAtivoItem.qtdTotalConsultas}
+                                </span>
+                              ) : isPlanoFaaz ? (
                                 <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50/95 border border-amber-300 text-amber-600 text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs">
                                   FAAZ ✨
                                 </span>
-                              )}
+                              ) : null}
 
                               {item.tipo === "PRIMEIRA_CONSULTA" ? (
                                 <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded bg-teal-700 text-white text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs">
@@ -2007,12 +2047,39 @@ export default function AgendaPage() {
                     <h3 className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
                       {selectedCard.pacienteNome}
                     </h3>
-                    {(selectedCard.pacientePlanoFaaz ||
-                      selectedCard.paciente?.planoFaaz) && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black uppercase tracking-wider shrink-0">
-                        FAAZ ✨
-                      </span>
-                    )}
+                    {(() => {
+                      const pacSel =
+                        pacoteAtivoPorPacienteId.get(selectedCard.pacienteId) ??
+                        null;
+                      if (pacSel) {
+                        const visSel = getPacoteVisualStatus({
+                          realizadas: pacSel.consultasRealizadas,
+                          total: pacSel.qtdTotalConsultas,
+                          validade: pacSel.dataValidade,
+                          status: pacSel.status,
+                        });
+                        return (
+                          <span
+                            title={`${pacSel.nomePlano} — ${visSel.tooltip}`}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wider shrink-0 font-mono tabular-nums ${visSel.pillClass}`}
+                          >
+                            {pacSel.nomePlano} · {pacSel.consultasRealizadas}/
+                            {pacSel.qtdTotalConsultas}
+                          </span>
+                        );
+                      }
+                      if (
+                        selectedCard.pacientePlanoFaaz ||
+                        selectedCard.paciente?.planoFaaz
+                      ) {
+                        return (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black uppercase tracking-wider shrink-0">
+                            FAAZ ✨
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
               </div>

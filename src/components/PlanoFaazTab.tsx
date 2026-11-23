@@ -33,6 +33,7 @@ import {
 import { invalidateClientCache } from "@/lib/client-swr-cache";
 import {
   formatIsoDateBr,
+  getPacoteVisualStatus,
   labelStatusConsulta,
   labelStatusPacote,
   labelTipoConsulta,
@@ -557,6 +558,14 @@ export function PlanoFaazTab({
   const pacoteAtivo = data?.pacoteAtivo ?? null;
   const ultimoConcluido = data?.ultimoPacoteConcluido ?? null;
   const historicoPacotes = data?.historicoPacotes ?? [];
+  const visualAtivo = pacoteAtivo
+    ? getPacoteVisualStatus({
+        realizadas: pacoteAtivo.consultasRealizadas,
+        total: pacoteAtivo.qtdTotalConsultas,
+        validade: pacoteAtivo.dataValidade,
+        status: pacoteAtivo.status,
+      })
+    : null;
 
   const renderTipoIcon = (tipo: TipoConsultaPacote) => {
     if (tipo === "ONLINE") return <Video className="w-3 h-3 text-sky-600" />;
@@ -591,50 +600,60 @@ export function PlanoFaazTab({
   };
 
   const renderPacoteStatusBadge = (p: PacoteResumoDTO) => {
-    if (p.status === "ATIVO") {
-      if (p.vencido || p.consultasRestantes === 0) {
-        return (
-          <span className="cl-badge-rose px-2.5 py-0.5 text-[11px]">
-            <AlertTriangle className="w-3 h-3" />
-            <span>{p.vencido ? "Vencido · Renovar" : "Esgotado"}</span>
-          </span>
-        );
-      }
-      if (p.alertaRenovacao) {
-        return (
-          <span className="cl-badge-amber px-2.5 py-0.5 text-[11px]">
-            <AlertTriangle className="w-3 h-3" />
-            <span>Renovar em breve</span>
-          </span>
-        );
-      }
-      return (
-        <span className="cl-badge-emerald px-2.5 py-0.5 text-[11px]">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          <span>Ciclo Ativo</span>
-        </span>
-      );
-    }
-    if (p.status === "CONCLUIDO") {
-      return (
-        <span className="cl-badge-rose px-2.5 py-0.5 text-[11px]">
-          <CheckCircle2 className="w-3 h-3" />
-          <span>Concluído</span>
-        </span>
-      );
-    }
+    const visual = getPacoteVisualStatus({
+      realizadas: p.consultasRealizadas,
+      total: p.qtdTotalConsultas,
+      validade: p.dataValidade,
+      status: p.status,
+    });
+
     if (p.status === "RENOVADO") {
       return (
-        <span className="cl-badge-teal px-2.5 py-0.5 text-[11px]">
+        <span
+          title={visual.tooltip}
+          className="cl-badge-teal px-2.5 py-0.5 text-[11px]"
+        >
           <RefreshCw className="w-3 h-3" />
           <span>Renovado</span>
         </span>
       );
     }
+
+    if (p.status === "CANCELADO") {
+      return (
+        <span
+          title={visual.tooltip}
+          className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] ${visual.pillClass}`}
+        >
+          <Ban className="w-3 h-3" />
+          <span>Cancelado</span>
+        </span>
+      );
+    }
+
+    if (p.status === "CONCLUIDO") {
+      return (
+        <span
+          title={visual.tooltip}
+          className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] ${visual.pillClass}`}
+        >
+          <CheckCircle2 className="w-3 h-3" />
+          <span>Concluído</span>
+        </span>
+      );
+    }
+
     return (
-      <span className="cl-badge-slate px-2.5 py-0.5 text-[11px]">
-        <Ban className="w-3 h-3" />
-        <span>Cancelado</span>
+      <span
+        title={visual.tooltip}
+        className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] ${visual.pillClass}`}
+      >
+        {visual.tone === "red" || visual.tone === "amber" ? (
+          <AlertTriangle className="w-3 h-3" />
+        ) : (
+          <span className={`w-1.5 h-1.5 rounded-full ${visual.dotClass}`} />
+        )}
+        <span>{visual.shortLabel}</span>
       </span>
     );
   };
@@ -768,22 +787,22 @@ export function PlanoFaazTab({
                         ? formatIsoDateBr(pacoteAtivo.dataValidade)
                         : "Sem vencimento"}
                     </strong>
-                    {pacoteAtivo.diasParaVencer !== null && (
+                    {visualAtivo && visualAtivo.diasParaVencer !== null && (
                       <span
                         className={`text-[11px] font-bold ${
-                          pacoteAtivo.vencido
-                            ? "text-rose-600"
-                            : pacoteAtivo.diasParaVencer <= 15
+                          visualAtivo.vencido
+                            ? "text-red-600"
+                            : visualAtivo.diasParaVencer <= 30
                               ? "text-amber-700"
                               : "text-slate-400"
                         }`}
                       >
                         (
-                        {pacoteAtivo.vencido
-                          ? `expirado há ${Math.abs(pacoteAtivo.diasParaVencer)}d`
-                          : pacoteAtivo.diasParaVencer === 0
+                        {visualAtivo.vencido
+                          ? `expirado há ${Math.abs(visualAtivo.diasParaVencer)}d`
+                          : visualAtivo.diasParaVencer === 0
                             ? "vence hoje"
-                            : `${pacoteAtivo.diasParaVencer}d restantes`}
+                            : `${visualAtivo.diasParaVencer}d restantes`}
                         )
                       </span>
                     )}
@@ -805,9 +824,11 @@ export function PlanoFaazTab({
                   type="button"
                   onClick={() => abrirModalRenovarComBase(pacoteAtivo)}
                   className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition-all inline-flex items-center gap-1.5 cursor-pointer ${
-                    pacoteAtivo.alertaRenovacao || pacoteAtivo.vencido
-                      ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 shadow-2xs"
-                      : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-300"
+                    visualAtivo?.tone === "red"
+                      ? "bg-red-50 hover:bg-red-100 text-red-700 border-red-200 shadow-2xs"
+                      : visualAtivo?.tone === "amber"
+                        ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 shadow-2xs"
+                        : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-300"
                   }`}
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
@@ -847,12 +868,10 @@ export function PlanoFaazTab({
 
                 <div className="flex items-center gap-2">
                   <span
+                    title={visualAtivo?.tooltip}
                     className={`text-xs font-extrabold font-mono tabular-nums px-2.5 py-1 rounded-full border ${
-                      pacoteAtivo.consultasRestantes === 0 || pacoteAtivo.vencido
-                        ? "bg-rose-50 text-rose-700 border-rose-200"
-                        : pacoteAtivo.alertaRenovacao
-                          ? "bg-amber-50 text-amber-800 border-amber-200"
-                          : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      visualAtivo?.pillClass ??
+                      "bg-emerald-50 text-emerald-700 border-emerald-200"
                     }`}
                   >
                     {pacoteAtivo.consultasRestantes}{" "}
@@ -869,27 +888,19 @@ export function PlanoFaazTab({
               <div className="w-full h-3 rounded-full bg-slate-200/80 overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${
-                    pacoteAtivo.vencido || pacoteAtivo.consultasRestantes === 0
-                      ? "bg-rose-500"
-                      : pacoteAtivo.alertaRenovacao
-                        ? "bg-amber-500"
-                        : "bg-emerald-500"
+                    visualAtivo?.progressBarClass ?? "bg-emerald-500"
                   }`}
                   style={{ width: `${pacoteAtivo.percentualUso}%` }}
                 />
               </div>
 
-              {pacoteAtivo.motivoAlerta && (
+              {visualAtivo?.motivoAlerta && (
                 <div
-                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-semibold border ${
-                    pacoteAtivo.vencido || pacoteAtivo.consultasRestantes === 0
-                      ? "bg-rose-50/90 text-rose-800 border-rose-200"
-                      : "bg-amber-50/90 text-amber-900 border-amber-200"
-                  }`}
+                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-semibold border ${visualAtivo.alertBoxClass}`}
                 >
                   <span className="flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{pacoteAtivo.motivoAlerta}</span>
+                    <span>{visualAtivo.motivoAlerta}</span>
                   </span>
                   <button
                     type="button"

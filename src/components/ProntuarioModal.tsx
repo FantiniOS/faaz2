@@ -55,7 +55,10 @@ import {
   type ProtocoloGlicemicoDTO,
 } from "@/lib/mapa-glicemico";
 import type { MeasurementDTO } from "@/actions/measurement-actions";
-import type { PacotesPacienteResponse } from "@/lib/pacotes-faaz";
+import {
+  getPacoteVisualStatus,
+  type PacotesPacienteResponse,
+} from "@/lib/pacotes-faaz";
 import {
   calcularIdadeBR,
   criarDataBR,
@@ -1951,6 +1954,22 @@ export function ProntuarioModal({
 
   const pacoteAtivo = pacotesData?.pacoteAtivo ?? null;
   const ultimoPacoteConcluido = pacotesData?.ultimoPacoteConcluido ?? null;
+  const pacoteAtivoVisual = pacoteAtivo
+    ? getPacoteVisualStatus({
+        realizadas: pacoteAtivo.consultasRealizadas,
+        total: pacoteAtivo.qtdTotalConsultas,
+        validade: pacoteAtivo.dataValidade,
+        status: pacoteAtivo.status,
+      })
+    : null;
+  const ultimoConcluidoVisual = ultimoPacoteConcluido
+    ? getPacoteVisualStatus({
+        realizadas: ultimoPacoteConcluido.consultasRealizadas,
+        total: ultimoPacoteConcluido.qtdTotalConsultas,
+        validade: ultimoPacoteConcluido.dataValidade,
+        status: ultimoPacoteConcluido.status,
+      })
+    : null;
   const isMembroPlanoFaaz = Boolean(
     pacotesData?.membroPlanoFaaz ||
       pacienteApiData?.planoFaaz ||
@@ -2223,19 +2242,13 @@ export function ProntuarioModal({
                     {pacienteConvenio}
                   </span>
 
-                  {/* BADGE CLICÁVEL DE SALDO DO PLANO FAAZ */}
-                  {pacoteAtivo ? (
+                  {/* BADGE CLICÁVEL DE SALDO DO PLANO FAAZ (SEMÁFORO VISUAL) */}
+                  {pacoteAtivo && pacoteAtivoVisual ? (
                     <button
                       type="button"
                       onClick={() => setActiveTab("plano_faaz")}
-                      title={`Abrir controle do pacote: ${pacoteAtivo.nomePlano}`}
-                      className={`px-2.5 py-0.5 text-[11px] font-mono tabular-nums cursor-pointer transition-all hover:shadow-xs shrink-0 ${
-                        pacoteAtivo.vencido || pacoteAtivo.consultasRestantes === 0
-                          ? "cl-badge-rose"
-                          : pacoteAtivo.alertaRenovacao
-                            ? "cl-badge-amber"
-                            : "cl-badge-emerald"
-                      }`}
+                      title={`${pacoteAtivo.nomePlano} — ${pacoteAtivoVisual.tooltip}`}
+                      className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] font-mono tabular-nums cursor-pointer transition-all hover:shadow-xs shrink-0 ${pacoteAtivoVisual.interactivePillClass}`}
                     >
                       <Award className="w-3 h-3 shrink-0" />
                       <span className="font-sans">
@@ -2244,21 +2257,19 @@ export function ProntuarioModal({
                           {pacoteAtivo.consultasRealizadas}/
                           {pacoteAtivo.qtdTotalConsultas}
                         </strong>{" "}
-                        {pacoteAtivo.vencido
-                          ? "· Vencido"
-                          : pacoteAtivo.consultasRestantes === 0
-                            ? "· Concluído"
-                            : pacoteAtivo.alertaRenovacao
-                              ? "· Renovar"
-                              : "consultas"}
+                        {pacoteAtivoVisual.tone === "red"
+                          ? `· ${pacoteAtivoVisual.shortLabel}`
+                          : pacoteAtivoVisual.tone === "amber"
+                            ? `· ${pacoteAtivoVisual.shortLabel}`
+                            : "consultas"}
                       </span>
                     </button>
-                  ) : ultimoPacoteConcluido ? (
+                  ) : ultimoPacoteConcluido && ultimoConcluidoVisual ? (
                     <button
                       type="button"
                       onClick={() => setActiveTab("plano_faaz")}
-                      title={`Pacote concluído: ${ultimoPacoteConcluido.nomePlano}. Clique para renovar.`}
-                      className="cl-badge-rose px-2.5 py-0.5 text-[11px] cursor-pointer transition-all hover:shadow-xs shrink-0"
+                      title={`${ultimoPacoteConcluido.nomePlano} — ${ultimoConcluidoVisual.tooltip}`}
+                      className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] cursor-pointer transition-all hover:shadow-xs shrink-0 ${ultimoConcluidoVisual.interactivePillClass}`}
                     >
                       <Award className="w-3 h-3 shrink-0" />
                       <span>
@@ -2772,26 +2783,24 @@ export function ProntuarioModal({
                 }`}
               />
               <span>Plano FAAZ</span>
-              {pacoteAtivo ? (
+              {pacoteAtivo && pacoteAtivoVisual ? (
                 <span
-                  className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold tabular-nums border ${
-                    pacoteAtivo.vencido || pacoteAtivo.consultasRestantes === 0
-                      ? "bg-rose-50 text-rose-700 border-rose-200"
-                      : pacoteAtivo.alertaRenovacao
-                        ? "bg-amber-50 text-amber-800 border-amber-200"
-                        : "bg-emerald-50 text-emerald-700 border-emerald-200/80"
-                  }`}
+                  title={pacoteAtivoVisual.tooltip}
+                  className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold tabular-nums border ${pacoteAtivoVisual.pillClass}`}
                 >
                   {pacoteAtivo.consultasRealizadas}/
                   {pacoteAtivo.qtdTotalConsultas}
                 </span>
-              ) : ultimoPacoteConcluido ? (
-                <span className="px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold tabular-nums bg-rose-50 text-rose-700 border border-rose-200">
+              ) : ultimoPacoteConcluido && ultimoConcluidoVisual ? (
+                <span
+                  title={ultimoConcluidoVisual.tooltip}
+                  className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold tabular-nums border ${ultimoConcluidoVisual.pillClass}`}
+                >
                   {ultimoPacoteConcluido.consultasRealizadas}/
                   {ultimoPacoteConcluido.qtdTotalConsultas}
                 </span>
               ) : (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
               )}
             </button>
           </div>
@@ -3226,28 +3235,68 @@ export function ProntuarioModal({
                       />
                     </div>
 
-                    {/* CHECKBOX DE BAIXA AUTOMÁTICA NO PACOTE ATIVO (PLANO FAAZ) */}
-                    {pacoteAtivoComSaldo && pacoteAtivo && (
-                      <label className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200/80 hover:border-emerald-300 transition-colors cursor-pointer select-none">
+                    {/* CHECKBOX DE BAIXA AUTOMÁTICA NO PACOTE ATIVO (PLANO FAAZ — SEMÁFORO VISUAL) */}
+                    {pacoteAtivoComSaldo && pacoteAtivo && pacoteAtivoVisual && (
+                      <label
+                        title={pacoteAtivoVisual.tooltip}
+                        className={`flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl border transition-colors cursor-pointer select-none ${
+                          pacoteAtivoVisual.tone === "red"
+                            ? "bg-red-50/70 border-red-200 hover:border-red-300"
+                            : pacoteAtivoVisual.tone === "amber"
+                              ? "bg-amber-50/80 border-amber-300 hover:border-amber-400"
+                              : "bg-emerald-50/60 border-emerald-200/80 hover:border-emerald-300"
+                        }`}
+                      >
                         <input
                           type="checkbox"
                           checked={contabilizarNoPacote}
                           onChange={(e) =>
                             setContabilizarNoPacote(e.target.checked)
                           }
-                          className="mt-0.5 w-4 h-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500/30 cursor-pointer shrink-0 accent-emerald-600"
+                          className={`mt-0.5 w-4 h-4 rounded cursor-pointer shrink-0 ${
+                            pacoteAtivoVisual.tone === "red"
+                              ? "border-red-300 text-red-600 focus:ring-red-500/30 accent-red-600"
+                              : pacoteAtivoVisual.tone === "amber"
+                                ? "border-amber-400 text-amber-600 focus:ring-amber-500/30 accent-amber-600"
+                                : "border-emerald-300 text-emerald-600 focus:ring-emerald-500/30 accent-emerald-600"
+                          }`}
                         />
                         <div className="min-w-0">
-                          <span className="text-xs font-bold text-emerald-950 block">
+                          <span
+                            className={`text-xs font-bold block ${
+                              pacoteAtivoVisual.tone === "red"
+                                ? "text-red-900"
+                                : pacoteAtivoVisual.tone === "amber"
+                                  ? "text-amber-950"
+                                  : "text-emerald-950"
+                            }`}
+                          >
                             Contabilizar como consulta{" "}
                             <span className="font-mono tabular-nums">
                               {pacoteAtivo.consultasRealizadas + 1}/
                               {pacoteAtivo.qtdTotalConsultas}
                             </span>{" "}
                             do {pacoteAtivo.nomePlano}
+                            {pacoteAtivoVisual.motivoAlerta && (
+                              <span
+                                className={`ml-2 inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-extrabold border ${pacoteAtivoVisual.pillClass}`}
+                              >
+                                {pacoteAtivoVisual.shortLabel}
+                              </span>
+                            )}
                           </span>
-                          <span className="text-[10px] font-medium text-emerald-800/75 block mt-0.5">
-                            Desmarque caso seja apenas anotação sem descontar do pacote
+                          <span
+                            className={`text-[10px] font-medium block mt-0.5 ${
+                              pacoteAtivoVisual.tone === "red"
+                                ? "text-red-700"
+                                : pacoteAtivoVisual.tone === "amber"
+                                  ? "text-amber-800"
+                                  : "text-emerald-800/75"
+                            }`}
+                          >
+                            {pacoteAtivoVisual.motivoAlerta
+                              ? `${pacoteAtivoVisual.motivoAlerta} • Desmarque caso seja apenas anotação sem descontar do pacote`
+                              : "Desmarque caso seja apenas anotação sem descontar do pacote"}
                           </span>
                         </div>
                       </label>

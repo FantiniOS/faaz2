@@ -27,9 +27,10 @@ import { mockUserSession } from "@/mocks/dashboard";
 import { ProntuarioModal } from "@/components/ProntuarioModal";
 import { PacotePacienteModal } from "@/components/PacotePacienteModal";
 import { podeGerenciarPacotes } from "@/lib/auth-rbac";
-import type {
-  PacoteAtivoResumoListaDTO,
-  PacotesPacienteResponse,
+import {
+  getPacoteVisualStatus,
+  type PacoteAtivoResumoListaDTO,
+  type PacotesPacienteResponse,
 } from "@/lib/pacotes-faaz";
 import {
   getClientCache,
@@ -868,76 +869,83 @@ export default function PacientesPage() {
                         </span>
                       </td>
 
-                      {/* Selo clicável do Programa / Pacote ativo ou Avulso */}
+                      {/* Selo clicável do Programa / Pacote ativo ou Avulso (semáforo visual) */}
                       <td className="py-2 px-3 whitespace-nowrap">
-                        {p.pacoteAtivo ? (
-                          <button
-                            type="button"
-                            disabled={!canManagePacotes}
-                            onClick={() => {
-                              if (!canManagePacotes) return;
-                              setSelectedPatientForPacote(p);
-                              setIsPacoteModalOpen(true);
-                            }}
-                            title={
-                              canManagePacotes
-                                ? "Clique para configurar o programa/pacote"
-                                : p.pacoteAtivo.nomePlano
-                            }
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
-                              p.pacoteAtivo.vencido || p.pacoteAtivo.consultasRestantes === 0
-                                ? `bg-rose-50 text-rose-700 border-rose-200 ${
-                                    canManagePacotes
-                                      ? "cursor-pointer hover:bg-rose-100 hover:border-rose-300 hover:shadow-xs active:scale-[0.98]"
-                                      : "cursor-default"
-                                  }`
-                                : p.pacoteAtivo.alertaRenovacao
-                                  ? `bg-amber-50 text-amber-800 border-amber-200 ${
-                                      canManagePacotes
-                                        ? "cursor-pointer hover:bg-amber-100 hover:border-amber-300 hover:shadow-xs active:scale-[0.98]"
-                                        : "cursor-default"
-                                    }`
-                                  : `bg-emerald-50 text-emerald-700 border-emerald-200 ${
-                                      canManagePacotes
-                                        ? "cursor-pointer hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-xs active:scale-[0.98]"
-                                        : "cursor-default"
-                                    }`
-                            }`}
-                          >
-                            <Award className="w-3 h-3 shrink-0" />
-                            <span className="max-w-[130px] truncate">
-                              {p.pacoteAtivo.nomePlano}
-                            </span>
-                            <span className="font-mono font-black tabular-nums opacity-90">
-                              {p.pacoteAtivo.consultasRealizadas}/{p.pacoteAtivo.qtdTotalConsultas}
-                            </span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={!canManagePacotes}
-                            onClick={() => {
-                              if (!canManagePacotes) return;
-                              setSelectedPatientForPacote(p);
-                              setIsPacoteModalOpen(true);
-                            }}
-                            title={
-                              canManagePacotes
-                                ? "Clique para configurar o programa/pacote"
-                                : "Atendimento avulso"
-                            }
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 transition-all ${
-                              canManagePacotes
-                                ? "cursor-pointer hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 hover:shadow-xs active:scale-[0.98]"
-                                : "cursor-default"
-                            }`}
-                          >
-                            {canManagePacotes && (
-                              <Plus className="w-2.5 h-2.5 opacity-75 shrink-0" />
-                            )}
-                            <span>Avulso</span>
-                          </button>
-                        )}
+                        {(() => {
+                          const visualPacote = getPacoteVisualStatus(
+                            p.pacoteAtivo
+                              ? {
+                                  realizadas: p.pacoteAtivo.consultasRealizadas,
+                                  total: p.pacoteAtivo.qtdTotalConsultas,
+                                  validade: p.pacoteAtivo.dataValidade,
+                                  status: p.pacoteAtivo.status,
+                                }
+                              : null
+                          );
+
+                          if (p.pacoteAtivo) {
+                            return (
+                              <button
+                                type="button"
+                                disabled={!canManagePacotes}
+                                onClick={() => {
+                                  if (!canManagePacotes) return;
+                                  setSelectedPatientForPacote(p);
+                                  setIsPacoteModalOpen(true);
+                                }}
+                                title={
+                                  canManagePacotes
+                                    ? `${visualPacote.tooltip} • Clique para configurar o programa/pacote`
+                                    : visualPacote.tooltip
+                                }
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                                  visualPacote.pillClass
+                                } ${
+                                  canManagePacotes
+                                    ? `cursor-pointer ${visualPacote.pillHoverClass} hover:shadow-xs active:scale-[0.98]`
+                                    : "cursor-default"
+                                }`}
+                              >
+                                <Award className="w-3 h-3 shrink-0" />
+                                <span className="max-w-[130px] truncate">
+                                  {p.pacoteAtivo.nomePlano}
+                                </span>
+                                <span className="font-mono font-black tabular-nums opacity-90">
+                                  {p.pacoteAtivo.consultasRealizadas}/{p.pacoteAtivo.qtdTotalConsultas}
+                                </span>
+                              </button>
+                            );
+                          }
+
+                          return (
+                            <button
+                              type="button"
+                              disabled={!canManagePacotes}
+                              onClick={() => {
+                                if (!canManagePacotes) return;
+                                setSelectedPatientForPacote(p);
+                                setIsPacoteModalOpen(true);
+                              }}
+                              title={
+                                canManagePacotes
+                                  ? visualPacote.tooltip
+                                  : "Atendimento avulso"
+                              }
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-all ${
+                                visualPacote.pillClass
+                              } ${
+                                canManagePacotes
+                                  ? `cursor-pointer ${visualPacote.pillHoverClass} hover:shadow-xs active:scale-[0.98]`
+                                  : "cursor-default"
+                              }`}
+                            >
+                              {canManagePacotes && (
+                                <Plus className="w-2.5 h-2.5 opacity-75 shrink-0" />
+                              )}
+                              <span>{visualPacote.shortLabel}</span>
+                            </button>
+                          );
+                        })()}
                       </td>
 
                       {/* Status */}
