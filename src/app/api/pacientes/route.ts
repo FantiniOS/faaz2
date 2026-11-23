@@ -133,7 +133,6 @@ export async function GET() {
             PacoteAcompanhamentoEntity,
             (repo) =>
               repo.find({
-                where: { status: "ATIVO" },
                 select: {
                   id: true,
                   pacienteId: true,
@@ -146,7 +145,7 @@ export async function GET() {
                 },
                 order: { createdAt: "DESC" },
               }),
-            { label: "pacientes:pacotesAtivos" },
+            { label: "pacientes:pacotesResumo" },
           );
         },
       ],
@@ -155,10 +154,27 @@ export async function GET() {
 
     const { pacientes, medicos, pacotesAtivos } = listData;
 
-    // Mantém apenas o pacote ATIVO mais recente por paciente
+    // Prioriza por paciente: 1) pacote ATIVO mais recente; 2) último pacote CONCLUIDO/esgotado;
+    // 3) último pacote não-RENOVADO (ex.: CANCELADO/INATIVO), preservando histórico para alerta de renovação.
     const pacoteMaisRecentePorPaciente = new Map<string, PacoteAcompanhamento>();
     for (const pac of pacotesAtivos) {
-      if (!pacoteMaisRecentePorPaciente.has(pac.pacienteId)) {
+      if (pac.status === "ATIVO" && !pacoteMaisRecentePorPaciente.has(pac.pacienteId)) {
+        pacoteMaisRecentePorPaciente.set(pac.pacienteId, pac);
+      }
+    }
+    for (const pac of pacotesAtivos) {
+      if (
+        pac.status === "CONCLUIDO" &&
+        !pacoteMaisRecentePorPaciente.has(pac.pacienteId)
+      ) {
+        pacoteMaisRecentePorPaciente.set(pac.pacienteId, pac);
+      }
+    }
+    for (const pac of pacotesAtivos) {
+      if (
+        pac.status !== "RENOVADO" &&
+        !pacoteMaisRecentePorPaciente.has(pac.pacienteId)
+      ) {
         pacoteMaisRecentePorPaciente.set(pac.pacienteId, pac);
       }
     }
@@ -226,9 +242,10 @@ export async function GET() {
           : null;
         const vencido = diasParaVencer !== null && diasParaVencer < 0;
         const alertaRenovacao =
-          pacAtivo.status === "ATIVO" &&
-          (consultasRestantes <= 1 ||
-            (diasParaVencer !== null && diasParaVencer <= 15));
+          vencido ||
+          consultasRestantes <= 1 ||
+          (qtdTotal >= 8 && consultasRestantes <= 2) ||
+          (diasParaVencer !== null && diasParaVencer <= 30);
 
         pacoteAtivoResumo = {
           id: pacAtivo.id,

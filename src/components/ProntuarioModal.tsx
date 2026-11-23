@@ -2278,7 +2278,7 @@ export function ProntuarioModal({
                           {ultimoPacoteConcluido.consultasRealizadas}/
                           {ultimoPacoteConcluido.qtdTotalConsultas}
                         </strong>{" "}
-                        · Concluído
+                        · {ultimoConcluidoVisual.shortLabel} · Renovar
                       </span>
                     </button>
                   ) : isMembroPlanoFaaz ? (

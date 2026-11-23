@@ -1913,8 +1913,9 @@ export default function AgendaPage() {
                                     title={`${pacAtivoItem.nomePlano} — ${visualPacoteItem.tooltip}`}
                                     className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded border text-[8px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap leading-none font-mono tabular-nums ${visualPacoteItem.pillClass}`}
                                   >
-                                    FAAZ {pacAtivoItem.consultasRealizadas}/
-                                    {pacAtivoItem.qtdTotalConsultas}
+                                    {visualPacoteItem.tone === "neutral"
+                                      ? visualPacoteItem.shortLabel
+                                      : `FAAZ ${pacAtivoItem.consultasRealizadas}/${pacAtivoItem.qtdTotalConsultas}`}
                                   </span>
                                 ) : isPlanoFaaz ? (
                                   <span className="inline-flex items-center px-1 py-0.2 rounded bg-amber-50/95 border border-amber-300 text-amber-600 text-[8px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap leading-none">
@@ -1958,8 +1959,9 @@ export default function AgendaPage() {
                                   title={`${pacAtivoItem.nomePlano} — ${visualPacoteItem.tooltip}`}
                                   className={`hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs font-mono tabular-nums ${visualPacoteItem.pillClass}`}
                                 >
-                                  FAAZ {pacAtivoItem.consultasRealizadas}/
-                                  {pacAtivoItem.qtdTotalConsultas}
+                                  {visualPacoteItem.tone === "neutral"
+                                    ? visualPacoteItem.shortLabel
+                                    : `FAAZ ${pacAtivoItem.consultasRealizadas}/${pacAtivoItem.qtdTotalConsultas}`}
                                 </span>
                               ) : isPlanoFaaz ? (
                                 <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50/95 border border-amber-300 text-amber-600 text-[9px] font-black uppercase tracking-wider shrink-0 whitespace-nowrap shadow-2xs">
@@ -2063,8 +2065,9 @@ export default function AgendaPage() {
                             title={`${pacSel.nomePlano} — ${visSel.tooltip}`}
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wider shrink-0 font-mono tabular-nums ${visSel.pillClass}`}
                           >
-                            {pacSel.nomePlano} · {pacSel.consultasRealizadas}/
-                            {pacSel.qtdTotalConsultas}
+                            {visSel.tone === "neutral"
+                              ? visSel.shortLabel
+                              : `${pacSel.nomePlano} · ${pacSel.consultasRealizadas}/${pacSel.qtdTotalConsultas}`}
                           </span>
                         );
                       }

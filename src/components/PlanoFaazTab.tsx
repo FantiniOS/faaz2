@@ -556,8 +556,17 @@ export function PlanoFaazTab({
   }
 
   const pacoteAtivo = data?.pacoteAtivo ?? null;
-  const ultimoConcluido = data?.ultimoPacoteConcluido ?? null;
   const historicoPacotes = data?.historicoPacotes ?? [];
+  const ultimoConcluido =
+    data?.ultimoPacoteConcluido ??
+    (!pacoteAtivo
+      ? historicoPacotes.find(
+          (h) =>
+            h.status !== "RENOVADO" &&
+            h.qtdTotalConsultas > 0 &&
+            h.consultasRealizadas >= h.qtdTotalConsultas
+        ) ?? null
+      : null);
   const visualAtivo = pacoteAtivo
     ? getPacoteVisualStatus({
         realizadas: pacoteAtivo.consultasRealizadas,
@@ -619,26 +628,26 @@ export function PlanoFaazTab({
       );
     }
 
-    if (p.status === "CANCELADO") {
+    if (visual.tone === "red") {
+      return (
+        <span
+          title={visual.tooltip}
+          className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] ${visual.pillClass}`}
+        >
+          <AlertTriangle className="w-3 h-3" />
+          <span>{visual.shortLabel}</span>
+        </span>
+      );
+    }
+
+    if (visual.tone === "neutral") {
       return (
         <span
           title={visual.tooltip}
           className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] ${visual.pillClass}`}
         >
           <Ban className="w-3 h-3" />
-          <span>Cancelado</span>
-        </span>
-      );
-    }
-
-    if (p.status === "CONCLUIDO") {
-      return (
-        <span
-          title={visual.tooltip}
-          className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] ${visual.pillClass}`}
-        >
-          <CheckCircle2 className="w-3 h-3" />
-          <span>Concluído</span>
+          <span>{visual.shortLabel}</span>
         </span>
       );
     }
@@ -648,7 +657,7 @@ export function PlanoFaazTab({
         title={visual.tooltip}
         className={`inline-flex items-center gap-1 rounded-full border font-bold px-2.5 py-0.5 text-[11px] ${visual.pillClass}`}
       >
-        {visual.tone === "red" || visual.tone === "amber" ? (
+        {visual.tone === "amber" ? (
           <AlertTriangle className="w-3 h-3" />
         ) : (
           <span className={`w-1.5 h-1.5 rounded-full ${visual.dotClass}`} />
@@ -1076,36 +1085,129 @@ export function PlanoFaazTab({
         </div>
       ) : (
         /* ================================================================== */
-        /* ESTADO B: SEM PACOTE ATIVO — PRESETS RÁPIDOS DE 1 CLIQUE           */
+        /* ESTADO B: PACOTE ESGOTADO OU SEM PACOTE ATIVO — RENOVAÇÃO/PRESETS  */
         /* ================================================================== */
         <div className="space-y-4">
-          {ultimoConcluido && (
-            <div className="rounded-2xl bg-amber-50/80 border border-amber-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                  <RefreshCw className="w-4 h-4" />
+          {ultimoConcluido && (() => {
+            const visualConcluido = getPacoteVisualStatus({
+              realizadas: ultimoConcluido.consultasRealizadas,
+              total: ultimoConcluido.qtdTotalConsultas,
+              validade: ultimoConcluido.dataValidade,
+              status: ultimoConcluido.status,
+            });
+
+            return (
+              <div className="cl-card border-red-200 p-5 sm:p-6 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+                        {ultimoConcluido.nomePlano}
+                      </h3>
+                      {renderPacoteStatusBadge(ultimoConcluido)}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-red-500" />
+                        Início:{" "}
+                        <strong className="text-slate-800 font-mono tabular-nums">
+                          {formatIsoDateBr(ultimoConcluido.dataInicio)}
+                        </strong>
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        Validade:{" "}
+                        <strong className="text-slate-800 font-mono tabular-nums">
+                          {ultimoConcluido.dataValidade
+                            ? formatIsoDateBr(ultimoConcluido.dataValidade)
+                            : "Sem vencimento"}
+                        </strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => abrirModalEditarPacote(ultimoConcluido)}
+                      className="cl-btn-secondary px-3 py-1.5 text-xs"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Editar Pacote</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => abrirModalRenovarComBase(ultimoConcluido)}
+                      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-extrabold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-xs transition-all cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Renovar Mesmo Plano</span>
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-xs font-extrabold text-amber-950">
-                    Ciclo anterior concluído: {ultimoConcluido.nomePlano} (
-                    {ultimoConcluido.consultasRealizadas}/
-                    {ultimoConcluido.qtdTotalConsultas} consultas)
-                  </h3>
-                  <p className="text-[11px] text-amber-800/90 mt-0.5">
-                    Todas as consultas contratadas foram realizadas. Inicie uma renovação rápida para continuar o acompanhamento.
-                  </p>
+
+                {/* BARRA DE PROGRESSO VERMELHA (ESGOTADO) */}
+                <div className="bg-red-50/40 border border-red-200/80 rounded-2xl p-4 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="text-2xl sm:text-3xl font-black font-mono tabular-nums text-red-700">
+                        {ultimoConcluido.consultasRealizadas}
+                        <span className="text-red-400 font-bold text-lg">
+                          /{ultimoConcluido.qtdTotalConsultas}
+                        </span>
+                      </span>
+                      <span className="text-xs font-bold text-slate-700">
+                        {ultimoConcluido.consultasRealizadas} de{" "}
+                        {ultimoConcluido.qtdTotalConsultas} realizadas • Saldo encerrado
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span
+                        title={visualConcluido.tooltip}
+                        className={`text-xs font-extrabold font-mono tabular-nums px-2.5 py-1 rounded-full border ${visualConcluido.pillClass}`}
+                      >
+                        {ultimoConcluido.consultasRestantes}{" "}
+                        {ultimoConcluido.consultasRestantes === 1
+                          ? "restante"
+                          : "restantes"}
+                      </span>
+                      <span className="text-xs font-bold font-mono tabular-nums text-red-600">
+                        {ultimoConcluido.percentualUso}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="w-full h-3 rounded-full bg-red-100 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${visualConcluido.progressBarClass}`}
+                      style={{ width: `${Math.max(ultimoConcluido.percentualUso, 100)}%` }}
+                    />
+                  </div>
+
+                  <div
+                    className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-semibold border ${visualConcluido.alertBoxClass}`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {visualConcluido.motivoAlerta ||
+                          "Pacote esgotado — clique para renovar"}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => abrirModalRenovarComBase(ultimoConcluido)}
+                      className="text-[11px] font-extrabold underline cursor-pointer shrink-0"
+                    >
+                      Iniciar renovação
+                    </button>
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => abrirModalRenovarComBase(ultimoConcluido)}
-                className="cl-btn-primary px-4 py-2 text-xs shrink-0"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Renovar Mesmo Plano</span>
-              </button>
-            </div>
-          )}
+            );
+          })()}
 
           <div className="cl-card p-6 sm:p-7 space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -1114,7 +1216,9 @@ export function PlanoFaazTab({
               </div>
               <div className="space-y-1">
                 <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                  Nenhum pacote ativo para {pacienteNome}
+                  {ultimoConcluido
+                    ? "Ou escolha outro plano para renovação"
+                    : `Nenhum pacote ativo para ${pacienteNome}`}
                 </h3>
                 <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
                   {isModoAdmin ? (

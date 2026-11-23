@@ -287,24 +287,29 @@ export default function PacientesPage() {
     podeGerenciarPacotes(currentUserRole);
 
   // Sincroniza imediatamente o selo do pacote na linha do paciente após alteração no Modal de Pacotes
+  // Preserva pacote esgotado (ultimoPacoteConcluido) ou inativo recente para manter alerta vermelho/cinza clicável
   function handlePacotesPacienteUpdated(
     pacienteId: string,
     next: PacotesPacienteResponse
   ) {
-    const ativo = next.pacoteAtivo;
-    const resumoLista: PacoteAtivoResumoListaDTO | null = ativo
+    const pacoteExibicao =
+      next.pacoteAtivo ??
+      next.ultimoPacoteConcluido ??
+      next.historicoPacotes.find((item) => item.status !== "RENOVADO") ??
+      null;
+    const resumoLista: PacoteAtivoResumoListaDTO | null = pacoteExibicao
       ? {
-          id: ativo.id,
-          nomePlano: ativo.nomePlano,
-          qtdTotalConsultas: ativo.qtdTotalConsultas,
-          consultasRealizadas: ativo.consultasRealizadas,
-          consultasRestantes: ativo.consultasRestantes,
-          dataInicio: ativo.dataInicio,
-          dataValidade: ativo.dataValidade,
-          status: ativo.status,
-          diasParaVencer: ativo.diasParaVencer,
-          vencido: ativo.vencido,
-          alertaRenovacao: ativo.alertaRenovacao,
+          id: pacoteExibicao.id,
+          nomePlano: pacoteExibicao.nomePlano,
+          qtdTotalConsultas: pacoteExibicao.qtdTotalConsultas,
+          consultasRealizadas: pacoteExibicao.consultasRealizadas,
+          consultasRestantes: pacoteExibicao.consultasRestantes,
+          dataInicio: pacoteExibicao.dataInicio,
+          dataValidade: pacoteExibicao.dataValidade,
+          status: pacoteExibicao.status,
+          diasParaVencer: pacoteExibicao.diasParaVencer,
+          vencido: pacoteExibicao.vencido,
+          alertaRenovacao: pacoteExibicao.alertaRenovacao,
         }
       : null;
 
@@ -869,7 +874,7 @@ export default function PacientesPage() {
                         </span>
                       </td>
 
-                      {/* Selo clicável do Programa / Pacote ativo ou Avulso (semáforo visual) */}
+                      {/* Selo clicável do Programa / Pacote (semáforo visual — nunca desabilitado quando esgotado/vencido) */}
                       <td className="py-2 px-3 whitespace-nowrap">
                         {(() => {
                           const visualPacote = getPacoteVisualStatus(
@@ -884,35 +889,38 @@ export default function PacientesPage() {
                           );
 
                           if (p.pacoteAtivo) {
+                            const isInativoManual =
+                              visualPacote.tone === "neutral" &&
+                              visualPacote.shortLabel === "Inativo";
+
                             return (
                               <button
                                 type="button"
-                                disabled={!canManagePacotes}
                                 onClick={() => {
-                                  if (!canManagePacotes) return;
                                   setSelectedPatientForPacote(p);
                                   setIsPacoteModalOpen(true);
                                 }}
                                 title={
-                                  canManagePacotes
-                                    ? `${visualPacote.tooltip} • Clique para configurar o programa/pacote`
-                                    : visualPacote.tooltip
+                                  visualPacote.tone === "red" || isInativoManual
+                                    ? visualPacote.tooltip
+                                    : `${visualPacote.tooltip} • Clique para configurar o programa/pacote`
                                 }
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
-                                  visualPacote.pillClass
-                                } ${
-                                  canManagePacotes
-                                    ? `cursor-pointer ${visualPacote.pillHoverClass} hover:shadow-xs active:scale-[0.98]`
-                                    : "cursor-default"
-                                }`}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer hover:shadow-xs active:scale-[0.98] ${visualPacote.interactivePillClass}`}
                               >
                                 <Award className="w-3 h-3 shrink-0" />
-                                <span className="max-w-[130px] truncate">
-                                  {p.pacoteAtivo.nomePlano}
-                                </span>
-                                <span className="font-mono font-black tabular-nums opacity-90">
-                                  {p.pacoteAtivo.consultasRealizadas}/{p.pacoteAtivo.qtdTotalConsultas}
-                                </span>
+                                {isInativoManual ? (
+                                  <span>Inativo</span>
+                                ) : (
+                                  <>
+                                    <span className="max-w-[130px] truncate">
+                                      {p.pacoteAtivo.nomePlano}
+                                    </span>
+                                    <span className="font-mono font-black tabular-nums opacity-90">
+                                      {p.pacoteAtivo.consultasRealizadas}/
+                                      {p.pacoteAtivo.qtdTotalConsultas}
+                                    </span>
+                                  </>
+                                )}
                               </button>
                             );
                           }
@@ -920,28 +928,14 @@ export default function PacientesPage() {
                           return (
                             <button
                               type="button"
-                              disabled={!canManagePacotes}
                               onClick={() => {
-                                if (!canManagePacotes) return;
                                 setSelectedPatientForPacote(p);
                                 setIsPacoteModalOpen(true);
                               }}
-                              title={
-                                canManagePacotes
-                                  ? visualPacote.tooltip
-                                  : "Atendimento avulso"
-                              }
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-all ${
-                                visualPacote.pillClass
-                              } ${
-                                canManagePacotes
-                                  ? `cursor-pointer ${visualPacote.pillHoverClass} hover:shadow-xs active:scale-[0.98]`
-                                  : "cursor-default"
-                              }`}
+                              title={visualPacote.tooltip}
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-all cursor-pointer hover:shadow-xs active:scale-[0.98] ${visualPacote.interactivePillClass}`}
                             >
-                              {canManagePacotes && (
-                                <Plus className="w-2.5 h-2.5 opacity-75 shrink-0" />
-                              )}
+                              <Plus className="w-2.5 h-2.5 opacity-75 shrink-0" />
                               <span>{visualPacote.shortLabel}</span>
                             </button>
                           );
@@ -1584,7 +1578,7 @@ export default function PacientesPage() {
       )}
 
       {/* MODAL ADMINISTRATIVO: PROGRAMA & PACOTE DE CONSULTAS (Secretária, Médico, Admin e Dono — sem prontuário) */}
-      {canManagePacotes && (
+      {(canManagePacotes || currentUserCargo === null) && (
         <PacotePacienteModal
           isOpen={isPacoteModalOpen}
           onClose={() => {

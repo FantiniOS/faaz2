@@ -170,11 +170,13 @@ export interface PacoteVisualStatusResult {
  * Helper único de semáforo visual para pílulas, badges e barras de progresso
  * de Programas / Pacotes de Consultas (Plano FAAZ).
  *
- * Regras (fuso America/Sao_Paulo):
- * - Cinza neutro: sem pacote ativo (`null`) ou pacote cancelado/renovado/inativo
- * - Vermelho: esgotado (`restantes <= 0` ou `CONCLUIDO`) ou vencido (`validade < hoje`)
- * - Âmbar: última consulta (`restantes === 1`), ou pacote grande acabando (`total >= 8 && restantes <= 2`), ou validade em até 30 dias
- * - Verde: dentro da validade com saldo saudável
+ * Ordem estrita de prioridade (fuso America/Sao_Paulo):
+ * 1. Sem registro de pacote (`null`/`undefined`) → Cinza neutro (`Avulso` / `+ Configurar`)
+ * 2. Esgotado (`total > 0 && realizadas >= total` ou status CONCLUIDO/ESGOTADO/ENCERRADO) → VERMELHO (independente de status)
+ * 3. Vencido (`validade < hoje`) → VERMELHO (independente de status)
+ * 4. Inativo manualmente (`INATIVO`/`CANCELADO` com saldo restante dentro do prazo) → Cinza (`Inativo`, ainda clicável)
+ * 5. Acabando (`restantes === 1`, ou `total >= 8 && restantes <= 2`, ou validade <= 30 dias) → ÂMBAR
+ * 6. Demais casos ativos dentro da validade com saldo confortável → VERDE
  */
 export function getPacoteVisualStatus(
   input: PacoteVisualStatusInput | null | undefined,
@@ -182,6 +184,7 @@ export function getPacoteVisualStatus(
   const neutralBase = (
     shortLabel: string,
     tooltip: string,
+    hoverClass = "hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300",
   ): PacoteVisualStatusResult => ({
     tone: "neutral",
     restantes: 0,
@@ -190,9 +193,8 @@ export function getPacoteVisualStatus(
     esgotado: false,
     alertaAtencao: false,
     pillClass: "bg-slate-100 text-slate-600 border-slate-200",
-    pillHoverClass: "hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300",
-    interactivePillClass:
-      "bg-slate-100 text-slate-600 border-slate-200 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300",
+    pillHoverClass: hoverClass,
+    interactivePillClass: `bg-slate-100 text-slate-600 border-slate-200 ${hoverClass}`,
     progressBarClass: "bg-slate-300",
     dotClass: "bg-slate-400",
     alertBoxClass: "bg-slate-50 text-slate-700 border-slate-200",
@@ -201,6 +203,7 @@ export function getPacoteVisualStatus(
     motivoAlerta: null,
   });
 
+  // 1. Sem nenhum registro de pacote
   if (!input) {
     return neutralBase(
       "Avulso",
@@ -213,23 +216,9 @@ export function getPacoteVisualStatus(
       ? input.status.trim().toUpperCase()
       : "ATIVO";
 
-  if (statusUpper === "CANCELADO") {
-    return neutralBase("Cancelado", "Pacote cancelado — clique para configurar");
-  }
-  if (statusUpper === "RENOVADO") {
-    return neutralBase("Renovado", "Ciclo renovado");
-  }
-
   const total = Math.max(0, Number(input.total) || 0);
   const realizadas = Math.max(0, Number(input.realizadas) || 0);
   const restantes = Math.max(0, total - realizadas);
-
-  if (statusUpper !== "ATIVO" && statusUpper !== "CONCLUIDO" && restantes <= 0) {
-    return neutralBase(
-      "Avulso",
-      "Sem pacote ativo — clique para configurar o programa/pacote",
-    );
-  }
 
   const hoje = input.hojeIso || getDataDiaBR();
   const validadeLimpa =
@@ -238,35 +227,35 @@ export function getPacoteVisualStatus(
       : null;
   const diasParaVencer = validadeLimpa ? diffDiasIso(hoje, validadeLimpa) : null;
   const vencido = diasParaVencer !== null && diasParaVencer < 0;
-  const esgotado =
-    total <= 0 || restantes <= 0 || statusUpper === "CONCLUIDO";
 
-  // 1. VERMELHO — Esgotado ou Vencido
-  if (esgotado || vencido) {
-    let shortLabel = "Esgotado";
-    let tooltip = "Pacote esgotado — renovar";
-    let motivoAlerta = "Pacote esgotado — renovar";
+  // Ciclo arquivado por já ter sido substituído por renovação (usado apenas no histórico)
+  if (statusUpper === "RENOVADO") {
+    return neutralBase("Renovado", "Ciclo já renovado anteriormente");
+  }
 
-    if (esgotado && vencido) {
-      shortLabel = "Esgotado · Vencido";
-      tooltip = "Pacote esgotado e vencido — renovar";
-      motivoAlerta = "Pacote esgotado e vencido — renovar";
-    } else if (vencido) {
-      const diasAtraso = Math.abs(diasParaVencer ?? 0);
-      shortLabel = "Vencido";
-      tooltip =
-        diasAtraso === 1
-          ? "Pacote vencido há 1 dia — renovar"
-          : `Pacote vencido há ${diasAtraso} dias — renovar`;
-      motivoAlerta = tooltip;
-    }
+  const esgotadoPorSaldo = total > 0 && realizadas >= total;
+  const esgotadoPorStatus =
+    statusUpper === "CONCLUIDO" ||
+    statusUpper === "ESGOTADO" ||
+    statusUpper === "ENCERRADO";
+  const esgotado = esgotadoPorSaldo || esgotadoPorStatus;
+
+  // 2. ESGOTADO (prioridade máxima — vermelho independente de o status estar ATIVO, ESGOTADO, CONCLUIDO, ENCERRADO ou INATIVO)
+  if (esgotado) {
+    const shortLabel = vencido ? "Esgotado · Vencido" : "Esgotado";
+    const tooltip = vencido
+      ? "Pacote esgotado e vencido — clique para renovar"
+      : "Pacote esgotado — clique para renovar";
+    const motivoAlerta = vencido
+      ? "Pacote esgotado e vencido — clique para renovar"
+      : "Pacote esgotado — clique para renovar";
 
     return {
       tone: "red",
       restantes,
       diasParaVencer,
       vencido,
-      esgotado,
+      esgotado: true,
       alertaAtencao: true,
       pillClass: "bg-red-50 text-red-700 border-red-200",
       pillHoverClass: "hover:bg-red-100 hover:border-red-300",
@@ -281,7 +270,48 @@ export function getPacoteVisualStatus(
     };
   }
 
-  // 2. ÂMBAR — Última consulta, pacote grande acabando (total >= 8 && restantes <= 2), ou vence em até 30 dias
+  // 3. VENCIDO (validade < hoje em America/Sao_Paulo)
+  if (vencido) {
+    const diasAtraso = Math.abs(diasParaVencer ?? 0);
+    const motivoAlerta =
+      diasAtraso === 1
+        ? "Pacote vencido há 1 dia — clique para renovar"
+        : `Pacote vencido há ${diasAtraso} dias — clique para renovar`;
+
+    return {
+      tone: "red",
+      restantes,
+      diasParaVencer,
+      vencido: true,
+      esgotado: false,
+      alertaAtencao: true,
+      pillClass: "bg-red-50 text-red-700 border-red-200",
+      pillHoverClass: "hover:bg-red-100 hover:border-red-300",
+      interactivePillClass:
+        "bg-red-50 text-red-700 border-red-200 hover:bg-red-100 hover:border-red-300",
+      progressBarClass: "bg-red-500",
+      dotClass: "bg-red-500",
+      alertBoxClass: "bg-red-50/90 text-red-800 border-red-200",
+      shortLabel: "Vencido",
+      tooltip: "Pacote vencido — clique para renovar",
+      motivoAlerta,
+    };
+  }
+
+  // 4. INATIVO MANUALMENTE (apenas quando status é INATIVO/CANCELADO e ainda havia saldo dentro do prazo)
+  if (statusUpper === "INATIVO" || statusUpper === "CANCELADO") {
+    return {
+      ...neutralBase(
+        "Inativo",
+        "Pacote inativo — clique para reativar ou renovar",
+        "hover:bg-slate-200/80 hover:border-slate-300",
+      ),
+      restantes,
+      diasParaVencer,
+    };
+  }
+
+  // 5. ACABANDO — ÂMBAR (restantes === 1, ou total >= 8 && restantes <= 2, ou validade <= 30 dias)
   const ultimaConsulta = restantes === 1;
   const pacoteGrandeAcabando = total >= 8 && restantes <= 2;
   const validadeProxima = diasParaVencer !== null && diasParaVencer <= 30;
@@ -338,7 +368,7 @@ export function getPacoteVisualStatus(
     };
   }
 
-  // 3. VERDE — Saldo saudável dentro da validade
+  // 6. DEMAIS CASOS ATIVOS — VERDE (saldo saudável dentro da validade)
   const validadeTexto = validadeLimpa
     ? ` • Validade ${formatIsoDateBr(validadeLimpa)}`
     : "";
