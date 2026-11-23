@@ -11,6 +11,14 @@ import {
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeGerenciarEquipe } from "@/lib/auth-rbac";
+import {
+  comporEspecialidadeArmazenada,
+  normalizarCrmArmazenado,
+} from "@/lib/especialidades-clinica";
+import {
+  garantirEspelhoMedicoAgenda,
+  mapUserToMedicoResponsavel,
+} from "@/lib/medico-responsavel";
 
 /**
  * GET /api/equipe — Lista os membros da equipe da clínica
@@ -82,7 +90,17 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { nome, username, email, cargo, senha, especialidade, crm } = body;
+    const {
+      nome,
+      username,
+      email,
+      cargo,
+      senha,
+      especialidade,
+      especialidadeCodigo,
+      subespecialidade,
+      crm,
+    } = body;
 
     if (!nome || !username || !cargo || !senha) {
       return NextResponse.json(
@@ -114,6 +132,26 @@ export async function POST(request: Request) {
     if (!cargosValidos.includes(cargo)) {
       return NextResponse.json(
         { error: `Cargo inválido. Valores válidos: ${cargosValidos.join(", ")}` },
+        { status: 400 },
+      );
+    }
+
+    const isCargoClinico = cargo === "DONO_CLINICA" || cargo === "MEDICO";
+    const especialidadeFinal = isCargoClinico
+      ? comporEspecialidadeArmazenada(
+          especialidadeCodigo,
+          subespecialidade,
+          especialidade,
+        )
+      : null;
+    const crmNormalizado = isCargoClinico ? normalizarCrmArmazenado(crm) : null;
+
+    if (isCargoClinico && !especialidadeFinal) {
+      return NextResponse.json(
+        {
+          error:
+            "Selecione a Especialidade de Atendimento para perfis clínicos (Médico ou Diretoria Clínica).",
+        },
         { status: 400 },
       );
     }
@@ -156,7 +194,7 @@ export async function POST(request: Request) {
       ADMINISTRADOR: "ADMIN",
     };
 
-    const podeAcessarProntuario = cargo === "DONO_CLINICA" || cargo === "MEDICO";
+    const podeAcessarProntuario = isCargoClinico;
 
     const salvo = await userRepo.save(
       userRepo.create({
@@ -170,14 +208,23 @@ export async function POST(request: Request) {
         podeAcessarProntuario,
         isClinical: podeAcessarProntuario,
         mfaEnabled: false,
-        specialty: especialidade || null,
-        councilType: crm ? "CRM" : null,
-        councilNumber: crm || null,
+        specialty: especialidadeFinal,
+        councilType: crmNormalizado ? "CRM" : null,
+        councilNumber: crmNormalizado,
         accountStatus: "ACTIVE",
         mustChangePassword: true,
         createdBy: sessao.userId,
       }),
     );
+
+    if (isCargoClinico) {
+      const medicoDto = mapUserToMedicoResponsavel(salvo);
+      if (medicoDto) {
+        await garantirEspelhoMedicoAgenda(medicoDto).catch((err) => {
+          console.warn("[EQUIPE/POST] Aviso ao sincronizar espelho MEDICOS:", err);
+        });
+      }
+    }
 
     const novoMembro = {
       id: salvo.id,
@@ -186,6 +233,9 @@ export async function POST(request: Request) {
       email: salvo.email,
       cargo: salvo.cargo,
       role: salvo.role,
+      specialty: salvo.specialty,
+      councilType: salvo.councilType,
+      councilNumber: salvo.councilNumber,
       accountStatus: salvo.accountStatus,
       createdAt: salvo.createdAt,
     };
@@ -212,43 +262,102 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { id, nome, cargo, status, especialidade } = body;
+    const {
+      id,
+      nome,
+      cargo,
+      status,
+      especialidade,
+      especialidadeCodigo,
+      subespecialidade,
+      crm,
+    } = body;
 
     if (!id) {
       return NextResponse.json({ error: "ID do membro é obrigatório." }, { status: 400 });
     }
 
+    const userRepo = await getRepository(UserEntity);
+    const existente = await userRepo.findOne({
+      where: { id, deletedAt: IsNull() },
+    });
+    if (!existente) {
+      return NextResponse.json({ error: "Membro não encontrado." }, { status: 404 });
+    }
+
+    const cargoFinal = (cargo || existente.cargo) as DbCargo;
+    const isCargoClinico =
+      cargoFinal === "DONO_CLINICA" || cargoFinal === "MEDICO";
+
     const updateData: {
       fullName?: string;
       cargo?: DbCargo;
       podeAcessarProntuario?: boolean;
+      isClinical?: boolean;
       accountStatus?: AccountStatus;
       specialty?: string | null;
+      councilType?: string | null;
+      councilNumber?: string | null;
       updatedBy: string;
     } = {
       updatedBy: sessao.userId,
     };
     if (nome) updateData.fullName = nome.trim();
     if (cargo) {
-      updateData.cargo = cargo as DbCargo;
-      updateData.podeAcessarProntuario = cargo === "DONO_CLINICA" || cargo === "MEDICO";
+      updateData.cargo = cargoFinal;
+      updateData.podeAcessarProntuario = isCargoClinico;
+      updateData.isClinical = isCargoClinico;
     }
     if (status) updateData.accountStatus = status as AccountStatus;
-    if (especialidade !== undefined) updateData.specialty = especialidade;
 
-    const userRepo = await getRepository(UserEntity);
+    if (!isCargoClinico) {
+      updateData.specialty = null;
+      updateData.councilType = null;
+      updateData.councilNumber = null;
+    } else {
+      if (
+        especialidadeCodigo !== undefined ||
+        subespecialidade !== undefined ||
+        especialidade !== undefined
+      ) {
+        updateData.specialty = comporEspecialidadeArmazenada(
+          especialidadeCodigo,
+          subespecialidade,
+          especialidade,
+        );
+      }
+      if (crm !== undefined) {
+        const crmNorm = normalizarCrmArmazenado(crm);
+        updateData.councilType = crmNorm ? "CRM" : null;
+        updateData.councilNumber = crmNorm;
+      }
+    }
+
     await userRepo.update({ id }, updateData);
 
     const atualizado = await userRepo.findOne({
       where: { id },
       select: {
         id: true,
+        title: true,
         fullName: true,
         email: true,
         cargo: true,
+        specialty: true,
+        councilType: true,
+        councilNumber: true,
         accountStatus: true,
       },
     });
+
+    if (atualizado && isCargoClinico && atualizado.accountStatus === "ACTIVE") {
+      const medicoDto = mapUserToMedicoResponsavel(atualizado);
+      if (medicoDto) {
+        await garantirEspelhoMedicoAgenda(medicoDto).catch((err) => {
+          console.warn("[EQUIPE/PATCH] Aviso ao sincronizar espelho MEDICOS:", err);
+        });
+      }
+    }
 
     return NextResponse.json({ sucesso: true, membro: atualizado });
   } catch (error: unknown) {

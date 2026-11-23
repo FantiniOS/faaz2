@@ -48,6 +48,11 @@ import {
   getPacoteVisualStatus,
   type PacoteAtivoResumoListaDTO,
 } from "@/lib/pacotes-faaz";
+import {
+  getEspecialidadeConfig,
+  parseEspecialidadeUsuario,
+  type EspecialidadeSelecaoCodigo,
+} from "@/lib/especialidades-clinica";
 
 export type TipoAgendamento = "PRIMEIRA_CONSULTA" | "RETORNO" | "EXAME";
 export type EspecialidadeAgendamento = "ENDOCRINOLOGIA" | "CIRURGIA_PLASTICA";
@@ -61,7 +66,21 @@ export interface MedicoOption {
   id: string;
   nome: string;
   especialidade?: string | null;
+  especialidadeCodigo?: EspecialidadeSelecaoCodigo | null;
+  crm?: string | null;
   corHex: string;
+}
+
+function filtrarMedicosPorEspecialidade(
+  lista: MedicoOption[],
+  especialidade: EspecialidadeAgendamento,
+): MedicoOption[] {
+  return lista.filter((m) => {
+    const codigo =
+      m.especialidadeCodigo ??
+      parseEspecialidadeUsuario(m.especialidade).codigo;
+    return codigo === especialidade;
+  });
 }
 
 export interface AgendamentoItem {
@@ -580,6 +599,22 @@ export default function AgendaPage() {
     return mapa;
   }, [pacientes]);
 
+  // Médicos ativos filtrados rigorosamente pela especialidade selecionada no modal
+  const medicosDaEspecialidadeForm = useMemo(
+    () => filtrarMedicosPorEspecialidade(medicos, especialidadeForm),
+    [medicos, especialidadeForm],
+  );
+
+  // Sempre garante um médico válido pertencente à especialidade selecionada (ou vazio se não houver)
+  const medicoIdSelecionado = useMemo(() => {
+    if (medicosDaEspecialidadeForm.some((m) => m.id === medicoIdForm)) {
+      return medicoIdForm;
+    }
+    return medicosDaEspecialidadeForm[0]?.id ?? "";
+  }, [medicosDaEspecialidadeForm, medicoIdForm]);
+
+  const medicoValidoSelecionado = Boolean(medicoIdSelecionado);
+
   // Efeito 1: Carrega a lista de pacientes e médicos apenas 1 vez na montagem (dependência [])
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -638,18 +673,29 @@ export default function AgendaPage() {
           const jsonMed = await resMedicos.json();
           if (isMounted && Array.isArray(jsonMed.medicos)) {
             const listaMedicos: MedicoOption[] = jsonMed.medicos.map(
-              (m: MedicoOption) => ({
-                id: m.id,
-                nome: m.nome,
-                especialidade: m.especialidade || "Medicina Geral",
-                corHex: m.corHex || "#059669",
-              })
+              (m: MedicoOption) => {
+                const parsed = parseEspecialidadeUsuario(m.especialidade);
+                return {
+                  id: m.id,
+                  nome: m.nome,
+                  especialidade: m.especialidade || null,
+                  especialidadeCodigo: m.especialidadeCodigo ?? parsed.codigo,
+                  crm: m.crm ?? null,
+                  corHex: m.corHex || parsed.corHex || "#059669",
+                };
+              }
             );
             setMedicos(listaMedicos);
-            // Regra de Zero Atrito: pré-seleciona o médico principal automaticamente
-            if (listaMedicos.length > 0) {
-              setMedicoIdForm((prev) => prev || listaMedicos[0].id);
-            }
+            // Pré-seleciona automaticamente apenas se existir médico ativo na especialidade padrão
+            const medicosEndo = filtrarMedicosPorEspecialidade(
+              listaMedicos,
+              "ENDOCRINOLOGIA",
+            );
+            setMedicoIdForm((prev) =>
+              prev && listaMedicos.some((m) => m.id === prev)
+                ? prev
+                : medicosEndo[0]?.id ?? "",
+            );
           }
         }
       } catch (err) {
@@ -892,12 +938,17 @@ export default function AgendaPage() {
     setSelectedCard(null);
     setEditingAgendamento(null);
     setFormError(null);
-    setEspecialidadeForm(
+    const espReagendar: EspecialidadeAgendamento =
       item.especialidade === "CIRURGIA_PLASTICA"
         ? "CIRURGIA_PLASTICA"
-        : "ENDOCRINOLOGIA"
-    );
-    setMedicoIdForm(item.medicoId || medicos[0]?.id || "");
+        : "ENDOCRINOLOGIA";
+    setEspecialidadeForm(espReagendar);
+    const medicosCompat = filtrarMedicosPorEspecialidade(medicos, espReagendar);
+    const medicoInicial =
+      item.medicoId && medicosCompat.some((m) => m.id === item.medicoId)
+        ? item.medicoId
+        : medicosCompat[0]?.id ?? "";
+    setMedicoIdForm(medicoInicial);
     setPacienteIdForm(item.pacienteId);
     setPacienteBusca(item.pacienteNome);
     setComboboxOpen(false);
@@ -921,10 +972,15 @@ export default function AgendaPage() {
         ? filtroEspecialidade
         : "ENDOCRINOLOGIA";
     setEspecialidadeForm(defaultEspecialidade);
+    const medicosCompat = filtrarMedicosPorEspecialidade(
+      medicos,
+      defaultEspecialidade,
+    );
     const defaultMedicoId =
-      filtroMedicoId !== "TODOS"
+      filtroMedicoId !== "TODOS" &&
+      medicosCompat.some((m) => m.id === filtroMedicoId)
         ? filtroMedicoId
-        : medicos[0]?.id || medicoIdForm || "";
+        : medicosCompat[0]?.id ?? "";
     setMedicoIdForm(defaultMedicoId);
     setPacienteIdForm("");
     setPacienteBusca("");
@@ -948,12 +1004,17 @@ export default function AgendaPage() {
     setSelectedCard(null);
     setEditingAgendamento(item);
     setFormError(null);
-    setEspecialidadeForm(
+    const espEdit: EspecialidadeAgendamento =
       item.especialidade === "CIRURGIA_PLASTICA"
         ? "CIRURGIA_PLASTICA"
-        : "ENDOCRINOLOGIA"
-    );
-    setMedicoIdForm(item.medicoId || medicos[0]?.id || "");
+        : "ENDOCRINOLOGIA";
+    setEspecialidadeForm(espEdit);
+    const medicosCompat = filtrarMedicosPorEspecialidade(medicos, espEdit);
+    const medicoEditInicial =
+      item.medicoId && medicosCompat.some((m) => m.id === item.medicoId)
+        ? item.medicoId
+        : medicosCompat[0]?.id ?? "";
+    setMedicoIdForm(medicoEditInicial);
     setPacienteIdForm(item.pacienteId);
     setPacienteBusca(item.pacienteNome);
     setComboboxOpen(false);
@@ -1042,6 +1103,13 @@ export default function AgendaPage() {
       return;
     }
 
+    if (!medicoIdSelecionado) {
+      setFormError(
+        "Nenhum profissional ativo cadastrado nesta especialidade. Cadastre um médico em Configurações & Gestão da Equipe."
+      );
+      return;
+    }
+
     if (!dataForm || !horarioForm) {
       setFormError("Preencha a data e o horário.");
       return;
@@ -1054,7 +1122,7 @@ export default function AgendaPage() {
         : "/api/agendamentos";
       const method = editingAgendamento ? "PATCH" : "POST";
 
-      const resolvedMedicoId = medicoIdForm || medicos[0]?.id || undefined;
+      const resolvedMedicoId = medicoIdSelecionado;
 
       const payload = isQuickCreateMode
         ? {
@@ -2131,7 +2199,7 @@ export default function AgendaPage() {
                     }}
                   />
                   <span>
-                    {selectedCard.medicoNome || "Dr. Carlos Fantini"}
+                    {selectedCard.medicoNome || "Equipe Clínica FAAZ"}
                   </span>
                 </span>
               </div>
@@ -2323,12 +2391,12 @@ export default function AgendaPage() {
                     aria-checked={especialidadeForm === "ENDOCRINOLOGIA"}
                     onClick={() => {
                       setEspecialidadeForm("ENDOCRINOLOGIA");
-                      const docEndocrino = medicos.find((m) =>
-                        (m.especialidade || "")
-                          .toLowerCase()
-                          .includes("endocrin")
+                      setFormError(null);
+                      const docsEndocrino = filtrarMedicosPorEspecialidade(
+                        medicos,
+                        "ENDOCRINOLOGIA",
                       );
-                      if (docEndocrino) setMedicoIdForm(docEndocrino.id);
+                      setMedicoIdForm(docsEndocrino[0]?.id ?? "");
                     }}
                     className={`py-2.5 px-3 rounded-xl border text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                       especialidadeForm === "ENDOCRINOLOGIA"
@@ -2346,12 +2414,12 @@ export default function AgendaPage() {
                     aria-checked={especialidadeForm === "CIRURGIA_PLASTICA"}
                     onClick={() => {
                       setEspecialidadeForm("CIRURGIA_PLASTICA");
-                      const docPlastica = medicos.find((m) =>
-                        (m.especialidade || "")
-                          .toLowerCase()
-                          .includes("cirurgia")
+                      setFormError(null);
+                      const docsPlastica = filtrarMedicosPorEspecialidade(
+                        medicos,
+                        "CIRURGIA_PLASTICA",
                       );
-                      if (docPlastica) setMedicoIdForm(docPlastica.id);
+                      setMedicoIdForm(docsPlastica[0]?.id ?? "");
                     }}
                     className={`py-2.5 px-3 rounded-xl border text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                       especialidadeForm === "CIRURGIA_PLASTICA"
@@ -2365,38 +2433,57 @@ export default function AgendaPage() {
                 </div>
               </div>
 
-              {/* Seleção de Médico (Regra de Zero Atrito: pré-selecionado automaticamente) */}
+              {/* Seleção de Médico (Filtrado exclusivamente pelos profissionais ativos da especialidade escolhida) */}
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold text-slate-700">
                   Médico / Profissional *
                 </label>
-                <div className="relative flex items-center">
-                  <span
-                    className="w-2.5 h-2.5 rounded-full absolute left-3.5 pointer-events-none"
-                    style={{
-                      backgroundColor:
-                        medicos.find((m) => m.id === medicoIdForm)?.corHex ||
-                        "#059669",
-                    }}
-                  />
-                  <select
-                    value={medicoIdForm}
-                    onChange={(e) => setMedicoIdForm(e.target.value)}
-                    required
-                    className="w-full pl-8 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
-                  >
-                    {medicos.length === 0 ? (
-                      <option value="">Dr. Carlos Fantini</option>
-                    ) : (
-                      medicos.map((m) => (
+                {medicosDaEspecialidadeForm.length === 0 ? (
+                  <div className="rounded-xl bg-amber-50/80 border border-amber-300 px-3.5 py-2.5 space-y-1">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        Nenhum profissional ativo cadastrado nesta especialidade
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-800/90 leading-relaxed">
+                      Cadastre um médico com a especialidade{" "}
+                      <strong>
+                        {getEspecialidadeConfig(especialidadeForm)?.label ||
+                          especialidadeForm}
+                      </strong>{" "}
+                      em <strong>Configurações &amp; Gestão da Equipe</strong> para
+                      habilitar agendamentos.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="relative flex items-center">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full absolute left-3.5 pointer-events-none"
+                      style={{
+                        backgroundColor:
+                          medicosDaEspecialidadeForm.find(
+                            (m) => m.id === medicoIdSelecionado
+                          )?.corHex ||
+                          getEspecialidadeConfig(especialidadeForm)?.corHex ||
+                          "#059669",
+                      }}
+                    />
+                    <select
+                      value={medicoIdSelecionado}
+                      onChange={(e) => setMedicoIdForm(e.target.value)}
+                      required
+                      className="w-full pl-8 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
+                    >
+                      {medicosDaEspecialidadeForm.map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.nome}
                           {m.especialidade ? ` — ${m.especialidade}` : ""}
                         </option>
-                      ))
-                    )}
-                  </select>
-                </div>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* 1. Combobox de Busca Inteligente de Pacientes + Cadastro Expresso */}
@@ -2728,8 +2815,8 @@ export default function AgendaPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSaving}
-                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 transition-all shadow-xs cursor-pointer"
+                  disabled={isSaving || !medicoValidoSelecionado}
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-xs cursor-pointer"
                 >
                   {isSaving ? (
                     <>

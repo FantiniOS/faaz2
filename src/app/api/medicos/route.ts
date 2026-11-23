@@ -1,51 +1,49 @@
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
-import { getRepository, withRepositoryRetry } from "@/lib/db/data-source";
-import { MedicoEntity } from "@/lib/db/entities";
+import { getSessao } from "@/lib/auth-session";
+import { listarMedicosClinica } from "@/lib/medico-responsavel";
+import { ESPECIALIDADES_AGENDA_VALIDAS } from "@/lib/especialidades-clinica";
 
-const DEFAULT_MEDICOS = [
-  {
-    id: "00000000-0000-4000-8000-000000000001",
-    nome: "Dr. Carlos Fantini",
-    especialidade: "Endocrinologia & Nutrologia",
-    corHex: "#059669",
-  },
-  {
-    id: "00000000-0000-4000-8000-000000000002",
-    nome: "Dr. Rodrigo Mendes",
-    especialidade: "Cirurgia Plástica",
-    corHex: "#2563eb",
-  },
-];
-
-export async function GET() {
+/**
+ * GET /api/medicos
+ * Retorna EXCLUSIVAMENTE os profissionais clínicos ativos (MEDICO e DONO_CLINICA)
+ * cadastrados em Configurações & Gestão da Equipe (USERS).
+ *
+ * Aceita filtro opcional `?especialidade=ENDOCRINOLOGIA|CIRURGIA_PLASTICA`.
+ * Nunca usa seed/mock de médicos fictícios nem lê registros órfãos da tabela legada MEDICOS.
+ */
+export async function GET(request: NextRequest) {
   try {
-    let medicos = await withRepositoryRetry(
-      MedicoEntity,
-      (repo) =>
-        repo.find({
-          order: { createdAt: "ASC" },
-        }),
-      { label: "medicos:list" },
-    );
+    const sessao = await getSessao(request);
+    const { searchParams } = new URL(request.url);
+    const especialidadeParam = searchParams
+      .get("especialidade")
+      ?.trim()
+      .toUpperCase();
 
-    // Auto-seed caso o banco esteja vazio para garantir zero atrito
-    if (medicos.length === 0) {
-      const medicoRepo = await getRepository(MedicoEntity);
-      for (const m of DEFAULT_MEDICOS) {
-        const existing = await medicoRepo.findOne({ where: { id: m.id } });
-        if (existing) {
-          existing.nome = m.nome;
-          existing.especialidade = m.especialidade;
-          existing.corHex = m.corHex;
-          await medicoRepo.save(existing);
-        } else {
-          await medicoRepo.save(medicoRepo.create(m));
-        }
-      }
-      medicos = await medicoRepo.find({
-        order: { createdAt: "ASC" },
-      });
-    }
+    const todosAtivos = await listarMedicosClinica(sessao?.organizationId);
+
+    const medicosFiltrados =
+      especialidadeParam &&
+      (ESPECIALIDADES_AGENDA_VALIDAS as readonly string[]).includes(
+        especialidadeParam,
+      )
+        ? todosAtivos.filter(
+            (m) => m.especialidadeCodigo === especialidadeParam,
+          )
+        : todosAtivos;
+
+    const medicos = medicosFiltrados.map((m) => ({
+      id: m.id,
+      nome: m.nome,
+      especialidade: m.especialidade,
+      especialidadeCodigo: m.especialidadeCodigo ?? null,
+      especialidadePrincipal: m.especialidadePrincipal ?? null,
+      subespecialidade: m.subespecialidade ?? null,
+      crm: m.crm,
+      corHex: m.corHex || "#059669",
+    }));
 
     return NextResponse.json(
       {
@@ -55,49 +53,30 @@ export async function GET() {
       {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
+          Pragma: "no-cache",
         },
       },
     );
   } catch (error) {
     console.error("[GET /api/medicos] Erro:", error);
     return NextResponse.json(
-      { success: false, error: "Erro ao listar médicos." },
+      { success: false, error: "Erro ao listar médicos ativos da equipe." },
       { status: 500 },
     );
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const nome = body?.nome ? String(body.nome).trim() : "";
-    const especialidade = body?.especialidade
-      ? String(body.especialidade).trim()
-      : "Endocrinologia & Nutrologia";
-    const corHex = body?.corHex ? String(body.corHex).trim() : "#059669";
-
-    if (!nome) {
-      return NextResponse.json(
-        { success: false, error: "Informe o nome do médico." },
-        { status: 400 },
-      );
-    }
-
-    const medicoRepo = await getRepository(MedicoEntity);
-    const medico = await medicoRepo.save(
-      medicoRepo.create({
-        nome,
-        especialidade,
-        corHex,
-      }),
-    );
-
-    return NextResponse.json({ success: true, medico }, { status: 201 });
-  } catch (error) {
-    console.error("[POST /api/medicos] Erro:", error);
-    return NextResponse.json(
-      { success: false, error: "Erro ao cadastrar médico." },
-      { status: 500 },
-    );
-  }
+/**
+ * POST /api/medicos
+ * Desativado para evitar cadastros órfãos fora de Configurações & Gestão da Equipe.
+ */
+export async function POST() {
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        "Cadastre profissionais médicos exclusivamente em Configurações & Gestão da Equipe (/api/equipe).",
+    },
+    { status: 400 },
+  );
 }

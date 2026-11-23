@@ -11,6 +11,14 @@ import {
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeGerenciarEquipe } from "@/lib/auth-rbac";
+import {
+  comporEspecialidadeArmazenada,
+  normalizarCrmArmazenado,
+} from "@/lib/especialidades-clinica";
+import {
+  garantirEspelhoMedicoAgenda,
+  mapUserToMedicoResponsavel,
+} from "@/lib/medico-responsavel";
 
 const roleMap: Record<DbCargo, UserRole> = {
   DONO_CLINICA: "CLINIC_ADMIN",
@@ -68,6 +76,8 @@ export async function PUT(
       cargo,
       senha,
       especialidade,
+      especialidadeCodigo,
+      subespecialidade,
       specialty,
       crm,
       councilNumber,
@@ -158,18 +168,46 @@ export async function PUT(
       passwordHashUpdate = await bcrypt.hash(senha.trim(), 12);
     }
 
-    const targetSpecialty =
-      especialidade !== undefined
-        ? especialidade
-        : specialty !== undefined
-          ? specialty
-          : userExistente.specialty;
-    const targetCrm =
+    const isCargoClinico =
+      targetCargo === "DONO_CLINICA" || targetCargo === "MEDICO";
+
+    const temInfoEspecialidade =
+      especialidadeCodigo !== undefined ||
+      subespecialidade !== undefined ||
+      especialidade !== undefined ||
+      specialty !== undefined;
+
+    const targetSpecialty = !isCargoClinico
+      ? null
+      : temInfoEspecialidade
+        ? comporEspecialidadeArmazenada(
+            especialidadeCodigo,
+            subespecialidade,
+            especialidade !== undefined ? especialidade : specialty,
+          )
+        : userExistente.specialty;
+
+    if (isCargoClinico && temInfoEspecialidade && !targetSpecialty) {
+      return NextResponse.json(
+        {
+          error:
+            "Selecione a Especialidade de Atendimento para perfis clínicos (Médico ou Diretoria Clínica).",
+        },
+        { status: 400 },
+      );
+    }
+
+    const rawCrmInput =
       crm !== undefined
         ? crm
         : councilNumber !== undefined
           ? councilNumber
           : userExistente.councilNumber;
+    const targetCrm = isCargoClinico
+      ? normalizarCrmArmazenado(rawCrmInput)
+      : null;
+    const targetAccountStatus =
+      (accountStatus as AccountStatus) || userExistente.accountStatus;
 
     await userRepo.update(
       { id },
@@ -184,8 +222,7 @@ export async function PUT(
         specialty: targetSpecialty || null,
         councilType: targetCrm ? "CRM" : null,
         councilNumber: targetCrm || null,
-        accountStatus:
-          (accountStatus as AccountStatus) || userExistente.accountStatus,
+        accountStatus: targetAccountStatus,
         ...(passwordHashUpdate ? { passwordHash: passwordHashUpdate } : {}),
         updatedBy: sessao.userId,
       },
@@ -195,6 +232,7 @@ export async function PUT(
       where: { id },
       select: {
         id: true,
+        title: true,
         fullName: true,
         username: true,
         email: true,
@@ -209,6 +247,15 @@ export async function PUT(
         updatedAt: true,
       },
     });
+
+    if (usuarioAtualizado && isCargoClinico && targetAccountStatus === "ACTIVE") {
+      const medicoDto = mapUserToMedicoResponsavel(usuarioAtualizado);
+      if (medicoDto) {
+        await garantirEspelhoMedicoAgenda(medicoDto).catch((err) => {
+          console.warn("[USUARIOS/PUT] Aviso ao sincronizar espelho MEDICOS:", err);
+        });
+      }
+    }
 
     return NextResponse.json({
       sucesso: true,

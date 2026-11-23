@@ -1,18 +1,27 @@
-import { IsNull } from "typeorm";
-import { withRepositoryRetry } from "@/lib/db/data-source";
+import { IsNull, type EntityManager } from "typeorm";
+import { getRepository, withRepositoryRetry } from "@/lib/db/data-source";
 import {
   AgendamentoEntity,
   EvolucaoClinicaEntity,
   MedicoEntity,
   PatientEntity,
   UserEntity,
+  type Medico,
   type User,
 } from "@/lib/db/entities";
+import {
+  parseEspecialidadeUsuario,
+  type EspecialidadeSelecaoCodigo,
+} from "@/lib/especialidades-clinica";
 
 export interface MedicoResponsavelDTO {
   id: string;
   nome: string;
   especialidade: string | null;
+  especialidadeCodigo?: EspecialidadeSelecaoCodigo | null;
+  especialidadePrincipal?: string | null;
+  subespecialidade?: string | null;
+  corHex?: string;
   crm: string | null;
 }
 
@@ -71,14 +80,15 @@ export function normalizarNomeMedicoComparacao(nome?: string | null): string {
     .trim();
 }
 
-function isUsuarioMedicoClinico(u: Pick<User, "cargo" | "role" | "isClinical">): boolean {
+export function isUsuarioMedicoClinico(
+  u: Pick<User, "cargo" | "role" | "isClinical">,
+): boolean {
   if (u.role === "PATIENT") return false;
   if (u.cargo === "SECRETARIA" || u.role === "RECEPTIONIST") return false;
   if (u.cargo === "ADMINISTRADOR" || u.role === "ADMIN") return false;
   return (
     CARGOS_MEDICOS.has(String(u.cargo || "").toUpperCase()) ||
-    ROLES_MEDICOS.has(String(u.role || "").toUpperCase()) ||
-    Boolean(u.isClinical)
+    ROLES_MEDICOS.has(String(u.role || "").toUpperCase())
   );
 }
 
@@ -91,12 +101,132 @@ export function mapUserToMedicoResponsavel(
   if (!user) return null;
   const nome = formatarNomeMedico(user.title, user.fullName);
   if (!nome) return null;
+  const parsedEsp = parseEspecialidadeUsuario(user.specialty);
   return {
     id: user.id,
     nome,
-    especialidade: user.specialty?.trim() || null,
+    especialidade: parsedEsp.exibicao,
+    especialidadeCodigo: parsedEsp.codigo,
+    especialidadePrincipal: parsedEsp.labelPrincipal,
+    subespecialidade: parsedEsp.subespecialidade || null,
+    corHex: parsedEsp.corHex,
     crm: formatarCrmMedico(user.councilType, user.councilNumber),
   };
+}
+
+/**
+ * Busca e valida um profissional clínico ativo (MEDICO ou DONO_CLINICA) em USERS.
+ */
+export async function buscarUsuarioMedicoAtivo(
+  userId: string | null | undefined,
+  organizationId?: string | null,
+  manager?: EntityManager,
+): Promise<MedicoResponsavelDTO | null> {
+  const cleanId = typeof userId === "string" ? userId.trim() : "";
+  if (!cleanId) return null;
+
+  const findUser = async () => {
+    if (manager) {
+      return manager.getRepository(UserEntity).findOne({
+        where: {
+          id: cleanId,
+          ...(organizationId ? { organizationId } : {}),
+          deletedAt: IsNull(),
+          accountStatus: "ACTIVE",
+        },
+        select: {
+          id: true,
+          title: true,
+          fullName: true,
+          specialty: true,
+          councilType: true,
+          councilNumber: true,
+          cargo: true,
+          role: true,
+          isClinical: true,
+          accountStatus: true,
+          organizationId: true,
+        },
+      });
+    }
+    return withRepositoryRetry(
+      UserEntity,
+      (repo) =>
+        repo.findOne({
+          where: {
+            id: cleanId,
+            ...(organizationId ? { organizationId } : {}),
+            deletedAt: IsNull(),
+            accountStatus: "ACTIVE",
+          },
+          select: {
+            id: true,
+            title: true,
+            fullName: true,
+            specialty: true,
+            councilType: true,
+            councilNumber: true,
+            cargo: true,
+            role: true,
+            isClinical: true,
+            accountStatus: true,
+            organizationId: true,
+          },
+        }),
+      { label: "medico-responsavel:buscar-ativo" },
+    );
+  };
+
+  const user = await findUser();
+  if (!user || !isUsuarioMedicoClinico(user)) return null;
+  return mapUserToMedicoResponsavel(user);
+}
+
+/**
+ * Garante que exista um registro espelho na tabela MEDICOS com o MESMO ID do usuário
+ * da Gestão da Equipe (USERS.ID), satisfazendo FK_AGEND_MEDICO no Oracle sem duplicar
+ * cadastros nem quebrar agendamentos históricos.
+ */
+export async function garantirEspelhoMedicoAgenda(
+  medico: Pick<
+    MedicoResponsavelDTO,
+    "id" | "nome" | "especialidade" | "corHex"
+  >,
+  manager?: EntityManager,
+): Promise<Medico> {
+  const medicoRepo = manager
+    ? manager.getRepository(MedicoEntity)
+    : await getRepository(MedicoEntity);
+
+  const corFinal = medico.corHex || "#059669";
+  const nomeFinal = medico.nome.trim().slice(0, 160);
+  const espFinal = medico.especialidade
+    ? medico.especialidade.trim().slice(0, 120)
+    : null;
+
+  const existente = await medicoRepo.findOne({ where: { id: medico.id } });
+  if (existente) {
+    if (
+      existente.nome !== nomeFinal ||
+      existente.especialidade !== espFinal ||
+      existente.corHex !== corFinal
+    ) {
+      existente.nome = nomeFinal;
+      existente.especialidade = espFinal;
+      existente.corHex = corFinal;
+      return medicoRepo.save(existente);
+    }
+    return existente;
+  }
+
+  return medicoRepo.save(
+    medicoRepo.create({
+      id: medico.id,
+      nome: nomeFinal,
+      especialidade: espFinal,
+      corHex: corFinal,
+    }),
+  );
 }
 
 /**

@@ -16,6 +16,16 @@ import {
   getDataDiaBR,
   getInicioFimDiaBR,
 } from "@/lib/date-br";
+import { getSessao } from "@/lib/auth-session";
+import {
+  buscarUsuarioMedicoAtivo,
+  garantirEspelhoMedicoAgenda,
+  normalizarNomeMedicoComparacao,
+} from "@/lib/medico-responsavel";
+import {
+  ESPECIALIDADES_AGENDA_VALIDAS,
+  getEspecialidadeConfig,
+} from "@/lib/especialidades-clinica";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
 const STATUS_VALIDOS = [
@@ -24,10 +34,7 @@ const STATUS_VALIDOS = [
   "CANCELADO",
   "FINALIZADO",
 ] as const;
-const ESPECIALIDADES_VALIDAS = [
-  "ENDOCRINOLOGIA",
-  "CIRURGIA_PLASTICA",
-] as const;
+const ESPECIALIDADES_VALIDAS = ESPECIALIDADES_AGENDA_VALIDAS;
 
 function formatEspecialidadeLegivel(especialidade?: string | null): string {
   switch (especialidade) {
@@ -101,6 +108,30 @@ export async function GET(request: NextRequest) {
       fimPeriodo = faixaHoje.fimUtc;
     }
 
+    let filtroMedicoIds: string[] | null = null;
+    if (medicoIdParam && medicoIdParam !== "TODOS") {
+      const ids = new Set<string>([medicoIdParam]);
+      const sessao = await getSessao(request);
+      const userMedico = await buscarUsuarioMedicoAtivo(
+        medicoIdParam,
+        sessao?.organizationId,
+      );
+      if (userMedico?.nome) {
+        const nomeAlvo = normalizarNomeMedicoComparacao(userMedico.nome);
+        const legados = await withRepositoryRetry(
+          MedicoEntity,
+          (repo) => repo.find({ select: { id: true, nome: true } }),
+          { label: "agendamentos:medicos-legados" },
+        );
+        for (const m of legados) {
+          if (normalizarNomeMedicoComparacao(m.nome) === nomeAlvo) {
+            ids.add(m.id);
+          }
+        }
+      }
+      filtroMedicoIds = Array.from(ids);
+    }
+
     const dbStart = performance.now();
     const registros = await withRepositoryRetry(
       AgendamentoEntity,
@@ -108,8 +139,13 @@ export async function GET(request: NextRequest) {
         repo.find({
           where: {
             dataHora: Between(inicioPeriodo, fimPeriodo),
-            ...(medicoIdParam && medicoIdParam !== "TODOS"
-              ? { medicoId: medicoIdParam }
+            ...(filtroMedicoIds
+              ? {
+                  medicoId:
+                    filtroMedicoIds.length === 1
+                      ? filtroMedicoIds[0]
+                      : In(filtroMedicoIds),
+                }
               : {}),
             ...(especialidadeParam &&
             especialidadeParam !== "TODAS" &&
@@ -310,11 +346,60 @@ export async function POST(request: NextRequest) {
       240,
     );
 
+    const targetMedicoIdRaw = medicoId ? String(medicoId).trim() : "";
+    if (!targetMedicoIdRaw) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Selecione um profissional ativo cadastrado em Configurações & Gestão da Equipe.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const sessao = await getSessao(request);
+    const medicoAtivo = await buscarUsuarioMedicoAtivo(
+      targetMedicoIdRaw,
+      sessao?.organizationId,
+    );
+
+    if (!medicoAtivo) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Profissional selecionado não encontrado ou inativo em Configurações & Gestão da Equipe.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      medicoAtivo.especialidadeCodigo &&
+      (ESPECIALIDADES_VALIDAS as readonly string[]).includes(
+        medicoAtivo.especialidadeCodigo,
+      ) &&
+      medicoAtivo.especialidadeCodigo !== especialidadeFinal
+    ) {
+      const cfgEsp = getEspecialidadeConfig(especialidadeFinal);
+      return NextResponse.json(
+        {
+          success: false,
+          error: `O profissional ${medicoAtivo.nome} não atende na especialidade ${cfgEsp?.label || especialidadeFinal}. Selecione um médico compatível.`,
+        },
+        { status: 400 },
+      );
+    }
+
     const resultado = await withTransaction(async (manager) => {
       const orgRepo = manager.getRepository(OrganizationEntity);
       const patientRepo = manager.getRepository(PatientEntity);
-      const medicoRepo = manager.getRepository(MedicoEntity);
       const agendamentoRepo = manager.getRepository(AgendamentoEntity);
+
+      // Garante espelho 1:1 na tabela MEDICOS com o mesmo USERS.ID para satisfazer FK_AGEND_MEDICO
+      await garantirEspelhoMedicoAgenda(medicoAtivo, manager);
+      const targetMedicoId = medicoAtivo.id;
 
       let targetPacienteId = pacienteId ? String(pacienteId) : "";
       let pacienteRecemCriado: {
@@ -379,27 +464,6 @@ export async function POST(request: NextRequest) {
           convenio: criadoPaciente.convenio || "Particular",
           telefoneWhatsapp: criadoPaciente.phoneWhatsapp || "",
         };
-      }
-
-      let targetMedicoId = medicoId ? String(medicoId).trim() : "";
-      if (!targetMedicoId) {
-        const medicos = await medicoRepo.find({
-          order: { createdAt: "ASC" },
-          take: 1,
-        });
-        if (medicos[0]) {
-          targetMedicoId = medicos[0].id;
-        } else {
-          const defaultMedico = await medicoRepo.save(
-            medicoRepo.create({
-              id: "00000000-0000-4000-8000-000000000001",
-              nome: "Dr. Carlos Fantini",
-              especialidade: "Endocrinologia & Nutrologia",
-              corHex: "#059669",
-            }),
-          );
-          targetMedicoId = defaultMedico.id;
-        }
       }
 
       // Validação de conflito: CANCELADO e FALTOU nunca bloqueiam novo agendamento no mesmo horário

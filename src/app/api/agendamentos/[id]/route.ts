@@ -3,6 +3,12 @@ import { Between, In, Not } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import { AgendamentoEntity } from "@/lib/db/entities";
 import { criarDataBR, formatarHoraBR, getDataDiaBR, getInicioFimDiaBR } from "@/lib/date-br";
+import { getSessao } from "@/lib/auth-session";
+import {
+  buscarUsuarioMedicoAtivo,
+  garantirEspelhoMedicoAgenda,
+} from "@/lib/medico-responsavel";
+import { ESPECIALIDADES_AGENDA_VALIDAS } from "@/lib/especialidades-clinica";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
 const STATUS_VALIDOS = [
@@ -11,10 +17,7 @@ const STATUS_VALIDOS = [
   "CANCELADO",
   "FINALIZADO",
 ] as const;
-const ESPECIALIDADES_VALIDAS = [
-  "ENDOCRINOLOGIA",
-  "CIRURGIA_PLASTICA",
-] as const;
+const ESPECIALIDADES_VALIDAS = ESPECIALIDADES_AGENDA_VALIDAS;
 
 export async function PATCH(
   request: NextRequest,
@@ -53,7 +56,28 @@ export async function PATCH(
     }
 
     if (body.medicoId) {
-      dataUpdate.medicoId = String(body.medicoId);
+      const novoMedicoId = String(body.medicoId).trim();
+      if (novoMedicoId !== existente.medicoId) {
+        const sessao = await getSessao(request);
+        const medicoAtivo = await buscarUsuarioMedicoAtivo(
+          novoMedicoId,
+          sessao?.organizationId,
+        );
+        if (!medicoAtivo) {
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                "Profissional selecionado não encontrado ou inativo em Configurações & Gestão da Equipe.",
+            },
+            { status: 400 },
+          );
+        }
+        await garantirEspelhoMedicoAgenda(medicoAtivo);
+        dataUpdate.medicoId = medicoAtivo.id;
+      } else {
+        dataUpdate.medicoId = novoMedicoId;
+      }
     }
 
     if (body.especialidade) {

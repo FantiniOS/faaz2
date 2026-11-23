@@ -24,6 +24,14 @@ import {
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
 import { formatarDataBR } from "@/lib/date-br";
+import { invalidateClientCache } from "@/lib/client-swr-cache";
+import {
+  comporEspecialidadeArmazenada,
+  ESPECIALIDADES_CLINICA,
+  getEspecialidadeConfig,
+  parseEspecialidadeUsuario,
+  type EspecialidadeSelecaoCodigo,
+} from "@/lib/especialidades-clinica";
 
 interface MembroEquipe {
   id: string;
@@ -74,8 +82,14 @@ export default function EquipePage() {
   const [formEmail, setFormEmail] = useState("");
   const [formCargo, setFormCargo] = useState("MEDICO");
   const [formSenha, setFormSenha] = useState("");
-  const [formEspecialidade, setFormEspecialidade] = useState("");
+  const [formEspecialidadeCodigo, setFormEspecialidadeCodigo] = useState<
+    EspecialidadeSelecaoCodigo | ""
+  >("");
+  const [formSubespecialidade, setFormSubespecialidade] = useState("");
   const [formCRM, setFormCRM] = useState("");
+
+  const isCargoClinico = (cargo: string) =>
+    cargo === "MEDICO" || cargo === "DONO_CLINICA";
 
   const carregarEquipe = useCallback(async () => {
     try {
@@ -129,29 +143,53 @@ export default function EquipePage() {
     setFormEmail("");
     setFormCargo("MEDICO");
     setFormSenha("");
-    setFormEspecialidade("");
+    setFormEspecialidadeCodigo("");
+    setFormSubespecialidade("");
     setFormCRM("");
     setMensagem(null);
     setModalAberto(true);
   }
 
   function handleAbrirEditarModal(membro: MembroEquipe) {
+    const espParsed = parseEspecialidadeUsuario(membro.specialty);
+    const clinico = isCargoClinico(membro.cargo);
     setMembroEmEdicao(membro);
     setFormNome(membro.fullName);
     setFormUsername(membro.username || "");
     setFormEmail(membro.email || "");
     setFormCargo(membro.cargo);
     setFormSenha("");
-    setFormEspecialidade(membro.specialty || "");
-    setFormCRM(membro.councilNumber || "");
+    setFormEspecialidadeCodigo(clinico ? espParsed.codigo || "" : "");
+    setFormSubespecialidade(clinico ? espParsed.subespecialidade || "" : "");
+    setFormCRM(clinico ? membro.councilNumber || "" : "");
     setMensagem(null);
     setModalAberto(true);
   }
 
   async function handleSalvarMembro(e: React.FormEvent) {
     e.preventDefault();
-    setSalvando(true);
     setMensagem(null);
+
+    const clinico = isCargoClinico(formCargo);
+    if (clinico) {
+      if (!formEspecialidadeCodigo) {
+        setMensagem({
+          tipo: "erro",
+          texto:
+            "Selecione a Especialidade de Atendimento para perfis clínicos (Médico ou Diretoria Clínica).",
+        });
+        return;
+      }
+      if (formEspecialidadeCodigo === "OUTRA" && !formSubespecialidade.trim()) {
+        setMensagem({
+          tipo: "erro",
+          texto: "Informe o nome da especialidade no campo de Subespecialidade / Título.",
+        });
+        return;
+      }
+    }
+
+    setSalvando(true);
 
     const isEdicao = Boolean(membroEmEdicao);
     const endpoint = isEdicao
@@ -159,13 +197,22 @@ export default function EquipePage() {
       : "/api/equipe";
     const method = isEdicao ? "PUT" : "POST";
 
-    const payload: Record<string, string | undefined> = {
+    const especialidadeComposta = clinico
+      ? comporEspecialidadeArmazenada(
+          formEspecialidadeCodigo,
+          formSubespecialidade,
+        )
+      : null;
+
+    const payload: Record<string, string | null | undefined> = {
       nome: formNome.trim(),
       username: formUsername.trim().toLowerCase(),
       email: formEmail.trim() ? formEmail.trim().toLowerCase() : undefined,
       cargo: formCargo,
-      especialidade: formEspecialidade.trim() || undefined,
-      crm: formCRM.trim() || undefined,
+      especialidadeCodigo: clinico ? formEspecialidadeCodigo || null : null,
+      subespecialidade: clinico ? formSubespecialidade.trim() || null : null,
+      especialidade: clinico ? especialidadeComposta : null,
+      crm: clinico ? formCRM.trim() || null : null,
     };
 
     if (formSenha.trim()) {
@@ -182,6 +229,7 @@ export default function EquipePage() {
       const data = await res.json();
 
       if (res.ok && data.sucesso) {
+        invalidateClientCache("medicos:");
         setMensagem({
           tipo: "sucesso",
           texto: isEdicao
@@ -212,6 +260,7 @@ export default function EquipePage() {
       const data = await res.json();
 
       if (res.ok && data.sucesso) {
+        invalidateClientCache("medicos:");
         setMensagem({
           tipo: "sucesso",
           texto: data.mensagem || `Acesso de ${membroParaExcluir.fullName} removido com sucesso.`,
@@ -365,12 +414,60 @@ export default function EquipePage() {
                             </span>
                           </td>
                           <td className="px-5 py-3.5 text-slate-600 text-xs">
-                            {membro.specialty || "—"}
-                            {membro.councilNumber && (
-                              <span className="ml-1.5 text-[11px] text-slate-400 font-mono">
-                                ({membro.councilType || "CRM"} {membro.councilNumber})
-                              </span>
-                            )}
+                            {(() => {
+                              const clinico = isCargoClinico(membro.cargo);
+                              if (!clinico) {
+                                return <span className="text-slate-400">—</span>;
+                              }
+                              const parsed = parseEspecialidadeUsuario(membro.specialty);
+                              const crmFormatado = membro.councilNumber
+                                ? membro.councilNumber
+                                    .toUpperCase()
+                                    .startsWith(
+                                      (membro.councilType || "CRM").toUpperCase(),
+                                    )
+                                  ? membro.councilNumber
+                                  : `${membro.councilType || "CRM"} ${membro.councilNumber}`
+                                : null;
+
+                              if (!parsed.exibicao && !crmFormatado) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAbrirEditarModal(membro)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                                    title="Clique para definir a especialidade de atendimento deste profissional"
+                                  >
+                                    Definir especialidade
+                                  </button>
+                                );
+                              }
+
+                              return (
+                                <div className="space-y-0.5">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {parsed.labelPrincipal && (
+                                      <span
+                                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${parsed.badgeClass}`}
+                                      >
+                                        {parsed.labelPrincipal}
+                                      </span>
+                                    )}
+                                    {crmFormatado && (
+                                      <span className="text-[11px] text-slate-500 font-mono font-semibold">
+                                        {crmFormatado}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {parsed.exibicao &&
+                                    parsed.exibicao !== parsed.labelPrincipal && (
+                                      <span className="block text-[11px] text-slate-500">
+                                        {parsed.exibicao}
+                                      </span>
+                                    )}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-5 py-3.5">
                             <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold ${statusCfg.cor}`}>
@@ -507,7 +604,15 @@ export default function EquipePage() {
                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Cargo / Perfil *</label>
                 <select
                   value={formCargo}
-                  onChange={(e) => setFormCargo(e.target.value)}
+                  onChange={(e) => {
+                    const novoCargo = e.target.value;
+                    setFormCargo(novoCargo);
+                    if (!isCargoClinico(novoCargo)) {
+                      setFormEspecialidadeCodigo("");
+                      setFormSubespecialidade("");
+                      setFormCRM("");
+                    }
+                  }}
                   className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 >
                   <option value="MEDICO">Médico (Atendimento Clínico)</option>
@@ -517,28 +622,79 @@ export default function EquipePage() {
                 </select>
               </div>
 
-              {/* Campos condicionais para médicos */}
-              {(formCargo === "MEDICO" || formCargo === "DONO_CLINICA") && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Especialidade</label>
-                    <input
-                      type="text"
-                      value={formEspecialidade}
-                      onChange={(e) => setFormEspecialidade(e.target.value)}
-                      placeholder="Ex: Endocrinologia"
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                    />
+              {/* Campos clínicos condicionais — apenas Médico e Diretoria Clínica */}
+              {isCargoClinico(formCargo) && (
+                <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-4 space-y-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Stethoscope className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Atendimento Clínico & Agenda</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-medium">
+                      Sincronizado com Novo Agendamento
+                    </span>
                   </div>
+
+                  {/* 1. Especialidade de Atendimento (obrigatória) */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">CRM</label>
-                    <input
-                      type="text"
-                      value={formCRM}
-                      onChange={(e) => setFormCRM(e.target.value)}
-                      placeholder="12345/SP"
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                    />
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Especialidade de Atendimento *
+                    </label>
+                    <select
+                      value={formEspecialidadeCodigo}
+                      onChange={(e) =>
+                        setFormEspecialidadeCodigo(
+                          e.target.value as EspecialidadeSelecaoCodigo | "",
+                        )
+                      }
+                      required
+                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
+                    >
+                      <option value="">Selecione a especialidade...</option>
+                      {ESPECIALIDADES_CLINICA.map((esp) => (
+                        <option key={esp.codigo} value={esp.codigo}>
+                          {esp.label}
+                        </option>
+                      ))}
+                      <option value="OUTRA">Outra especialidade</option>
+                    </select>
+                  </div>
+
+                  {/* 2. Subespecialidade / Título de Exibição + 3. CRM */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        {formEspecialidadeCodigo === "OUTRA"
+                          ? "Nome da Especialidade *"
+                          : "Subespecialidade / Título"}
+                      </label>
+                      <input
+                        type="text"
+                        value={formSubespecialidade}
+                        onChange={(e) => setFormSubespecialidade(e.target.value)}
+                        required={formEspecialidadeCodigo === "OUTRA"}
+                        maxLength={80}
+                        placeholder={
+                          getEspecialidadeConfig(formEspecialidadeCodigo)
+                            ?.placeholderSubespecialidade ||
+                          "Ex: Endocrinologia & Metabologia"
+                        }
+                        className="no-uppercase w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        CRM (Opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={formCRM}
+                        onChange={(e) => setFormCRM(e.target.value)}
+                        maxLength={40}
+                        placeholder="Ex: CRM 54321/MG"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      />
+                    </div>
                   </div>
                 </div>
               )}
