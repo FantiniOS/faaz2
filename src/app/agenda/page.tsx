@@ -388,6 +388,7 @@ export default function AgendaPage() {
     useState<AgendamentoItem | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [isConflictError, setIsConflictError] = useState<boolean>(false);
 
   // Campos do Modal de Agendamento Flexível
   const [especialidadeIdForm, setEspecialidadeIdForm] = useState<string>("");
@@ -643,6 +644,54 @@ export default function AgendaPage() {
   }, [medicosDaEspecialidadeForm, medicoIdForm]);
 
   const medicoValidoSelecionado = Boolean(medicoIdSelecionado);
+
+  // Detecta em tempo real se já existe consulta ativa no mesmo horário para o MESMO profissional
+  // (agendamentos de profissionais diferentes no mesmo horário são livres e não geram conflito)
+  const conflitoMesmoMedicoNoModal = useMemo(() => {
+    if (!isModalOpen || !medicoIdSelecionado || !dataForm || !horarioForm) {
+      return null;
+    }
+    const medicoSel = medicos.find((m) => m.id === medicoIdSelecionado);
+    const normNome = (n?: string | null) =>
+      (n || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/^(dra?\.?|prof\.?(a)?)\s+/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const nomeSelNorm = normNome(medicoSel?.nome);
+
+    const inicioNovo = parseTimeToMinutes(horarioForm);
+    const fimNovo = inicioNovo + Math.max(Number(duracaoForm) || 30, 10);
+
+    return (
+      agendamentos.find((ag) => {
+        if (editingAgendamento && ag.id === editingAgendamento.id) return false;
+        const st = String(ag.status || "").toUpperCase();
+        if (st === "CANCELADO" || st === "FALTOU") return false;
+        if (getAgendamentoDataBR(ag) !== dataForm) return false;
+
+        const mesmoMedico =
+          ag.medicoId === medicoIdSelecionado ||
+          (Boolean(nomeSelNorm) && normNome(ag.medicoNome) === nomeSelNorm);
+        if (!mesmoMedico) return false;
+
+        const inicioAg = parseTimeToMinutes(getAgendamentoHorarioBR(ag));
+        const fimAg = inicioAg + Math.max(Number(ag.duracaoMinutos) || 30, 15);
+        return inicioAg < fimNovo && fimAg > inicioNovo;
+      }) ?? null
+    );
+  }, [
+    isModalOpen,
+    medicoIdSelecionado,
+    medicos,
+    dataForm,
+    horarioForm,
+    duracaoForm,
+    agendamentos,
+    editingAgendamento,
+  ]);
 
   // Efeito 1: Carrega pacientes, médicos ativos, especialidades ativas e perfil apenas 1 vez na montagem
   useEffect(() => {
@@ -1009,6 +1058,15 @@ export default function AgendaPage() {
     ) {
       return filtroEspecialidadeId;
     }
+    if (filtroMedicoId !== "TODOS") {
+      const medicoFiltrado = medicos.find((m) => m.id === filtroMedicoId);
+      if (
+        medicoFiltrado?.especialidadeId &&
+        especialidades.some((e) => e.id === medicoFiltrado.especialidadeId)
+      ) {
+        return medicoFiltrado.especialidadeId;
+      }
+    }
     return especialidades[0]?.id ?? "";
   }
 
@@ -1018,6 +1076,7 @@ export default function AgendaPage() {
     setSelectedCard(null);
     setEditingAgendamento(null);
     setFormError(null);
+    setIsConflictError(false);
     const espIdReagendar = resolverEspecialidadeIdInicial(item);
     setEspecialidadeIdForm(espIdReagendar);
     const medicosCompat = filtrarMedicosPorEspecialidadeId(
@@ -1043,10 +1102,11 @@ export default function AgendaPage() {
     setIsModalOpen(true);
   }
 
-  // INTERAÇÃO ZERO ATRITO: Clicar na grade pré-preenche Data, Horário exato, Especialidade e Médico
+  // INTERAÇÃO ZERO ATRITO: Clicar na grade/régua pré-preenche Data, Horário exato, Especialidade e Médico
   function handleSlotClick(dateIso: string, horarioSlot: string) {
     setEditingAgendamento(null);
     setFormError(null);
+    setIsConflictError(false);
     const defaultEspecialidadeId = resolverEspecialidadeIdInicial(null);
     setEspecialidadeIdForm(defaultEspecialidadeId);
     const medicosCompat = filtrarMedicosPorEspecialidadeId(
@@ -1081,6 +1141,7 @@ export default function AgendaPage() {
     setSelectedCard(null);
     setEditingAgendamento(item);
     setFormError(null);
+    setIsConflictError(false);
     const espIdEdit = resolverEspecialidadeIdInicial(item);
     setEspecialidadeIdForm(espIdEdit);
     const medicosCompat = filtrarMedicosPorEspecialidadeId(medicos, espIdEdit);
@@ -1235,9 +1296,11 @@ export default function AgendaPage() {
 
       const json = await res.json();
       if (!res.ok || !json.success) {
+        setIsConflictError(res.status === 409);
         setFormError(json.error || "Erro ao salvar agendamento.");
         return;
       }
+      setIsConflictError(false);
 
       if (json.novoPacienteCriado) {
         setPacientes((prev) => [...prev, json.novoPacienteCriado]);
@@ -1787,7 +1850,7 @@ export default function AgendaPage() {
           </div>
         )}
 
-        {/* COLUNA ESQUERDA: RÓTULOS DINÂMICOS DAS HORAS (EXPANDE AUTOMATICAMENTE FORA DE 08:00–19:00) */}
+        {/* COLUNA ESQUERDA: RÓTULOS DINÂMICOS DAS HORAS (CLICÁVEIS NA VISÃO DIA PARA AGENDAMENTO RÁPIDO) */}
         <div
           className="w-20 shrink-0 border-r border-slate-100 grid h-full select-none divide-y divide-slate-100 bg-slate-50/30"
           style={{
@@ -1796,23 +1859,58 @@ export default function AgendaPage() {
         >
           {gridRange.hourBlocks.map((hour) => {
             const hh = String(hour).padStart(2, "0");
+            const horaCheia = `${hh}:00`;
+            const meiaHora = `${hh}:30`;
+
+            if (viewMode === "dia") {
+              return (
+                <div
+                  key={hour}
+                  className="grid grid-rows-2 min-h-0 h-full"
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleSlotClick(selectedDate, horaCheia)}
+                    title={`Agendar às ${horaCheia}`}
+                    className="group/ruler w-full px-2 pt-0.5 flex items-start justify-end gap-1 cursor-pointer hover:bg-emerald-50/90 transition-colors focus:outline-none focus:bg-emerald-50"
+                  >
+                    <Plus className="w-2.5 h-2.5 text-emerald-600 opacity-0 group-hover/ruler:opacity-100 transition-opacity mt-0.5 shrink-0 stroke-[2.6]" />
+                    <span className="text-xs font-extrabold text-slate-600 group-hover/ruler:text-emerald-700 font-mono tabular-nums tracking-tight leading-none">
+                      {horaCheia}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSlotClick(selectedDate, meiaHora)}
+                    title={`Agendar às ${meiaHora}`}
+                    className="group/ruler w-full px-2 pt-0.5 flex items-start justify-end gap-1 cursor-pointer hover:bg-emerald-50/90 transition-colors border-t border-dashed border-slate-100/80 focus:outline-none focus:bg-emerald-50"
+                  >
+                    <Plus className="w-2.5 h-2.5 text-emerald-600 opacity-0 group-hover/ruler:opacity-100 transition-opacity mt-0.5 shrink-0 stroke-[2.6]" />
+                    <span className="text-[10px] font-semibold text-slate-400 group-hover/ruler:text-emerald-700 font-mono tabular-nums leading-none">
+                      {meiaHora}
+                    </span>
+                  </button>
+                </div>
+              );
+            }
+
             return (
               <div
                 key={hour}
                 className="px-2.5 pt-1 flex flex-col justify-between items-end min-h-0"
               >
                 <span className="text-xs font-extrabold text-slate-600 font-mono tabular-nums tracking-tight leading-none">
-                  {hh}:00
+                  {horaCheia}
                 </span>
                 <span className="text-[9px] font-semibold text-slate-300 font-mono tabular-nums leading-none pb-1">
-                  {hh}:30
+                  {meiaHora}
                 </span>
               </div>
             );
           })}
         </div>
 
-        {/* COLUNAS DOS DIAS COM LINHAS DE FUNDO + CARDS ABSOLUTOS PROPORCIONAIS */}
+        {/* COLUNAS DOS DIAS COM LINHAS DE FUNDO + RESPIRO CLICÁVEL À DIREITA + CARDS PROPORCIONAIS */}
         <div
           className="flex-1 grid h-full min-h-0 overflow-hidden"
           style={{
@@ -1827,7 +1925,7 @@ export default function AgendaPage() {
                 key={col.isoDate}
                 className="relative h-full min-h-0 border-r border-slate-100 last:border-r-0 overflow-hidden"
               >
-                {/* CAMADA 1: LINHAS VISUAIS DE FUNDO (GUIAS CLICÁVEIS EM SUB-BLOCOS DE 15 MIN) */}
+                {/* CAMADA 1: LINHAS VISUAIS DE FUNDO (GUIAS CLICÁVEIS EM SUB-BLOCOS DE 15 MIN + FAIXA LIVRE À DIREITA) */}
                 <div
                   className="grid h-full w-full divide-y divide-slate-100"
                   style={{
@@ -1853,17 +1951,39 @@ export default function AgendaPage() {
                               onClick={() =>
                                 handleSlotClick(col.isoDate, timeLabel)
                               }
-                              className={`group/slot relative flex items-center justify-between px-2.5 cursor-pointer hover:bg-emerald-50/50 transition-colors ${
+                              className={`group/slot relative flex items-center justify-between pl-2.5 pr-0 cursor-pointer hover:bg-emerald-50/50 transition-colors ${
                                 quarter === "15"
                                   ? "border-b border-dashed border-slate-100/80"
                                   : ""
                               }`}
-                              title={`Clique para agendar às ${timeLabel}`}
+                              title={`Novo agendamento às ${timeLabel}`}
                             >
-                              <span className="opacity-0 group-hover/slot:opacity-100 transition-opacity inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 pointer-events-none">
-                                <Plus className="w-3 h-3 stroke-[2.5]" />
+                              <span className="opacity-0 group-hover/slot:opacity-100 transition-opacity inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 pointer-events-none truncate">
+                                <Plus className="w-3 h-3 stroke-[2.5] shrink-0" />
                                 <span>Agendar às {timeLabel}</span>
                               </span>
+
+                              {/* Respiro clicável fixo à direita (sempre acessível mesmo quando há consulta no horário) */}
+                              {viewMode === "dia" ? (
+                                <span
+                                  className="w-14 h-full shrink-0 flex items-center justify-center border-l border-dashed border-slate-100 group-hover/slot:border-emerald-200 group-hover/slot:bg-emerald-50/90 transition-colors"
+                                  title={`Novo agendamento às ${timeLabel}`}
+                                >
+                                  <span className="opacity-0 group-hover/slot:opacity-100 transition-opacity inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-600 text-white text-[9px] font-extrabold font-mono tabular-nums shadow-2xs leading-none whitespace-nowrap">
+                                    <Plus className="w-2.5 h-2.5 stroke-[2.8] shrink-0" />
+                                    <span>{timeLabel}</span>
+                                  </span>
+                                </span>
+                              ) : (
+                                <span
+                                  className="w-4 h-full shrink-0 flex items-center justify-center group-hover/slot:bg-emerald-50/90 transition-colors"
+                                  title={`Novo agendamento às ${timeLabel}`}
+                                >
+                                  <span className="opacity-0 group-hover/slot:opacity-100 transition-opacity inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-emerald-600 text-white shadow-2xs">
+                                    <Plus className="w-2.5 h-2.5 stroke-[3]" />
+                                  </span>
+                                </span>
+                              )}
                             </div>
                           );
                         })}
@@ -1872,7 +1992,12 @@ export default function AgendaPage() {
                   })}
                 </div>
 
-                {/* CAMADA 2: CARDS EM COLUNAS DIVIDIDAS LADO A LADO (ZERO OVERFLOW HORIZONTAL) */}
+                {/* CAMADA 2: CARDS EM COLUNAS DIVIDIDAS LADO A LADO COM RESPIRO CLICÁVEL RESERVADO À DIREITA */}
+                <div
+                  className={`absolute inset-y-0 left-0 pointer-events-none ${
+                    viewMode === "dia" ? "right-14" : "right-4"
+                  }`}
+                >
                 {positionedItems.map(
                   ({
                     item,
@@ -1935,7 +2060,7 @@ export default function AgendaPage() {
                             top: `${topPercent}%`,
                             height: `${heightPercent}%`,
                           }}
-                          className="absolute z-10 hover:z-20 box-border rounded-xl border border-dashed border-rose-300 bg-rose-50/75 hover:bg-rose-50 px-2 py-0.5 cursor-pointer transition-all overflow-hidden flex items-center justify-between gap-1.5 text-rose-900"
+                          className="pointer-events-auto absolute z-10 hover:z-20 box-border rounded-xl border border-dashed border-rose-300 bg-rose-50/75 hover:bg-rose-50 px-2 py-0.5 cursor-pointer transition-all overflow-hidden flex items-center justify-between gap-1.5 text-rose-900"
                         >
                           <div className="min-w-0 flex items-center gap-1.5 flex-1 overflow-hidden">
                             <span className="text-[10px] font-black font-mono tabular-nums shrink-0 text-rose-700">
@@ -1990,7 +2115,7 @@ export default function AgendaPage() {
                           top: `${topPercent}%`,
                           height: `${heightPercent}%`,
                         }}
-                        className={`absolute z-10 hover:z-20 box-border rounded-xl border px-2 py-0.5 cursor-pointer transition-all overflow-hidden ${
+                        className={`pointer-events-auto absolute z-10 hover:z-20 box-border rounded-xl border px-2 py-0.5 cursor-pointer transition-all overflow-hidden ${
                           canStackVertically
                             ? "flex flex-col justify-center gap-0.5"
                             : "flex flex-row items-center justify-between gap-1.5"
@@ -2146,6 +2271,7 @@ export default function AgendaPage() {
                     );
                   }
                 )}
+                </div>
               </div>
             );
           })}
@@ -2401,7 +2527,7 @@ export default function AgendaPage() {
       {/* ======================================================== */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
             <div className="cl-modal-header px-6 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
@@ -2431,9 +2557,24 @@ export default function AgendaPage() {
 
             <form onSubmit={handleSaveAgendamento} className="p-6 space-y-4">
               {formError && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{formError}</span>
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-start justify-between gap-2.5">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{formError}</span>
+                  </div>
+                  {isConflictError && !encaixeForm && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEncaixeForm(true);
+                        setFormError(null);
+                        setIsConflictError(false);
+                      }}
+                      className="shrink-0 px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-extrabold transition-colors cursor-pointer"
+                    >
+                      Ativar Encaixe
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -2817,6 +2958,44 @@ export default function AgendaPage() {
                   </select>
                 </div>
 
+                {/* Aviso claro de conflito para o MESMO profissional no mesmo horário */}
+                {conflitoMesmoMedicoNoModal && !encaixeForm && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-2 animate-in fade-in duration-150">
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5">
+                          <p className="font-extrabold">
+                            Horário já ocupado para este profissional
+                          </p>
+                          <p className="text-[11px] text-amber-800 leading-relaxed">
+                            <strong>{conflitoMesmoMedicoNoModal.pacienteNome}</strong>{" "}
+                            já está agendado(a) às{" "}
+                            <strong className="font-mono">
+                              {getAgendamentoHorarioBR(conflitoMesmoMedicoNoModal)}
+                            </strong>{" "}
+                            ({conflitoMesmoMedicoNoModal.duracaoMinutos || 30} min).
+                            Você pode escolher outro profissional/especialidade
+                            acima ou ativar <strong>Encaixe</strong> abaixo para
+                            sobrepor.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEncaixeForm(true);
+                          setFormError(null);
+                          setIsConflictError(false);
+                        }}
+                        className="shrink-0 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-extrabold shadow-2xs transition-colors cursor-pointer"
+                      >
+                        Ativar Encaixe
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Checkbox / Toggle Elegante de Encaixe */}
                 <label
                   htmlFor="checkbox-encaixe"
@@ -2831,7 +3010,13 @@ export default function AgendaPage() {
                       id="checkbox-encaixe"
                       type="checkbox"
                       checked={encaixeForm}
-                      onChange={(e) => setEncaixeForm(e.target.checked)}
+                      onChange={(e) => {
+                        setEncaixeForm(e.target.checked);
+                        if (e.target.checked && isConflictError) {
+                          setFormError(null);
+                          setIsConflictError(false);
+                        }
+                      }}
                       className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-500"
                     />
                     <div>
@@ -2839,7 +3024,8 @@ export default function AgendaPage() {
                         Marcar como Encaixe
                       </span>
                       <span className="text-[11px] opacity-80 block">
-                        Permite sobreposição visual em cascata no mesmo horário
+                        Permite sobreposição lado a lado no mesmo horário para o
+                        mesmo médico
                       </span>
                     </div>
                   </div>
