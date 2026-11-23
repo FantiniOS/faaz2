@@ -9,7 +9,13 @@ import {
   MedicoEntity,
   OrganizationEntity,
   PatientEntity,
+  type Especialidade,
 } from "@/lib/db/entities";
+import {
+  ensureEspecialidadesSchemaAndSeed,
+  listarTodasEspecialidadesEntity,
+} from "@/lib/db/especialidades-bootstrap";
+import { logOracleRouteError } from "@/lib/db/oracle-utils";
 import {
   criarDataBR,
   formatarHoraBR,
@@ -23,8 +29,12 @@ import {
   normalizarNomeMedicoComparacao,
 } from "@/lib/medico-responsavel";
 import {
-  ESPECIALIDADES_AGENDA_VALIDAS,
-  getEspecialidadeConfig,
+  encontrarEspecialidadeCompativel,
+  formatarCodigoEspecialidadeLegado,
+  gerarCodigoEspecialidadeLegado,
+  getCorEspecialidadeEstilo,
+  inferirCorPorCodigoLegado,
+  normalizarCorEspecialidade,
 } from "@/lib/especialidades-clinica";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
@@ -34,16 +44,39 @@ const STATUS_VALIDOS = [
   "CANCELADO",
   "FINALIZADO",
 ] as const;
-const ESPECIALIDADES_VALIDAS = ESPECIALIDADES_AGENDA_VALIDAS;
 
-function formatEspecialidadeLegivel(especialidade?: string | null): string {
-  switch (especialidade) {
-    case "CIRURGIA_PLASTICA":
-      return "Cirurgia Plástica";
-    case "ENDOCRINOLOGIA":
-    default:
-      return "Endocrinologia";
-  }
+function resolverMetaEspecialidadeAgendamento(
+  item: { especialidadeId?: string | null; especialidade?: string | null },
+  especialidades: readonly Especialidade[],
+) {
+  const porId = item.especialidadeId
+    ? especialidades.find((e) => e.id === item.especialidadeId) ?? null
+    : null;
+  const porCodigo =
+    !porId && item.especialidade
+      ? especialidades.find(
+          (e) =>
+            gerarCodigoEspecialidadeLegado(e.nome) ===
+            item.especialidade?.toUpperCase(),
+        ) ?? encontrarEspecialidadeCompativel(item.especialidade, especialidades)
+      : null;
+
+  const esp = porId ?? porCodigo;
+  const corToken = esp
+    ? normalizarCorEspecialidade(esp.cor)
+    : inferirCorPorCodigoLegado(item.especialidade);
+  const estilo = getCorEspecialidadeEstilo(corToken);
+
+  return {
+    especialidadeId: esp?.id ?? item.especialidadeId ?? null,
+    especialidade:
+      item.especialidade?.trim().toUpperCase() ||
+      (esp ? gerarCodigoEspecialidadeLegado(esp.nome) : "ENDOCRINOLOGIA"),
+    especialidadeLegivel:
+      esp?.nome ?? formatarCodigoEspecialidadeLegado(item.especialidade),
+    especialidadeCor: corToken,
+    especialidadeCorHex: estilo.hex,
+  };
 }
 
 function formatTipoLegivel(tipo: string): string {
@@ -77,13 +110,16 @@ function formatStatusLegivel(status: string): string {
 export async function GET(request: NextRequest) {
   const reqStart = performance.now();
   try {
+    await ensureEspecialidadesSchemaAndSeed();
+
     const { searchParams } = new URL(request.url);
     const dataParam = searchParams.get("data");
     const inicioParam =
       searchParams.get("dataInicio") || searchParams.get("inicio");
     const fimParam = searchParams.get("dataFim") || searchParams.get("fim");
     const medicoIdParam = searchParams.get("medicoId");
-    const especialidadeParam = searchParams.get("especialidade");
+    const especialidadeIdParam = searchParams.get("especialidadeId")?.trim();
+    const especialidadeParam = searchParams.get("especialidade")?.trim();
 
     let inicioPeriodo: Date;
     let fimPeriodo: Date;
@@ -133,71 +169,69 @@ export async function GET(request: NextRequest) {
     }
 
     const dbStart = performance.now();
-    const registros = await withRepositoryRetry(
-      AgendamentoEntity,
-      (repo) =>
-        repo.find({
-          where: {
-            dataHora: Between(inicioPeriodo, fimPeriodo),
-            ...(filtroMedicoIds
-              ? {
-                  medicoId:
-                    filtroMedicoIds.length === 1
-                      ? filtroMedicoIds[0]
-                      : In(filtroMedicoIds),
-                }
-              : {}),
-            ...(especialidadeParam &&
-            especialidadeParam !== "TODAS" &&
-            (ESPECIALIDADES_VALIDAS as readonly string[]).includes(
-              especialidadeParam.toUpperCase(),
-            )
-              ? { especialidade: especialidadeParam.toUpperCase() }
-              : {}),
-          },
-          select: {
-            id: true,
-            pacienteId: true,
-            medicoId: true,
-            especialidade: true,
-            dataHora: true,
-            duracaoMinutos: true,
-            encaixe: true,
-            tipo: true,
-            status: true,
-            observacao: true,
-            paciente: {
-              id: true,
-              fullName: true,
-              recordCode: true,
-              cpf: true,
-              phoneWhatsapp: true,
-              convenio: true,
-              planoFaaz: true,
+    const [registros, especialidades] = await Promise.all([
+      withRepositoryRetry(
+        AgendamentoEntity,
+        (repo) =>
+          repo.find({
+            where: {
+              dataHora: Between(inicioPeriodo, fimPeriodo),
+              ...(filtroMedicoIds
+                ? {
+                    medicoId:
+                      filtroMedicoIds.length === 1
+                        ? filtroMedicoIds[0]
+                        : In(filtroMedicoIds),
+                  }
+                : {}),
             },
-            medico: {
+            select: {
               id: true,
-              nome: true,
+              pacienteId: true,
+              medicoId: true,
               especialidade: true,
-              corHex: true,
+              especialidadeId: true,
+              dataHora: true,
+              duracaoMinutos: true,
+              encaixe: true,
+              tipo: true,
+              status: true,
+              observacao: true,
+              paciente: {
+                id: true,
+                fullName: true,
+                recordCode: true,
+                cpf: true,
+                phoneWhatsapp: true,
+                convenio: true,
+                planoFaaz: true,
+              },
+              medico: {
+                id: true,
+                nome: true,
+                especialidade: true,
+                corHex: true,
+              },
             },
-          },
-          relations: {
-            paciente: true,
-            medico: true,
-          },
-          order: {
-            dataHora: "ASC",
-          },
-        }),
-      { label: "agendamentos:list" },
-    );
+            relations: {
+              paciente: true,
+              medico: true,
+            },
+            order: {
+              dataHora: "ASC",
+            },
+          }),
+        { label: "agendamentos:list" },
+      ),
+      listarTodasEspecialidadesEntity(false),
+    ]);
     const dbDurMs = Math.round(performance.now() - dbStart);
 
-    const agendamentos = registros.map((item) => {
+    const agendamentosMapeados = registros.map((item) => {
       const d = new Date(item.dataHora);
       const horario = formatarHoraBR(d);
       const dataIso = getDataDiaBR(d);
+      const metaEsp = resolverMetaEspecialidadeAgendamento(item, especialidades);
 
       return {
         id: item.id,
@@ -210,16 +244,16 @@ export async function GET(request: NextRequest) {
         pacientePlanoFaaz: Boolean(item.paciente?.planoFaaz),
         paciente: item.paciente,
         medicoId: item.medicoId,
-        medicoNome: item.medico?.nome || "Equipe Clínica FAAZ",
+        medicoNome: item.medico?.nome || "Equipe Clínica",
         medicoEspecialidade:
-          item.medico?.especialidade || "Endocrinologia & Metabologia",
-        medicoCorHex: item.medico?.corHex || "#059669",
+          item.medico?.especialidade || metaEsp.especialidadeLegivel,
+        medicoCorHex: item.medico?.corHex || metaEsp.especialidadeCorHex,
         medico: item.medico,
-        especialidade:
-          item.especialidade === "CIRURGIA_PLASTICA"
-            ? "CIRURGIA_PLASTICA"
-            : "ENDOCRINOLOGIA",
-        especialidadeLegivel: formatEspecialidadeLegivel(item.especialidade),
+        especialidadeId: metaEsp.especialidadeId,
+        especialidade: metaEsp.especialidade,
+        especialidadeLegivel: metaEsp.especialidadeLegivel,
+        especialidadeCor: metaEsp.especialidadeCor,
+        especialidadeCorHex: metaEsp.especialidadeCorHex,
         dataHora: new Date(item.dataHora).toISOString(),
         data: dataIso,
         horario,
@@ -231,6 +265,21 @@ export async function GET(request: NextRequest) {
         statusLegivel: formatStatusLegivel(item.status),
         observacao: item.observacao || "",
       };
+    });
+
+    // Filtro por especialidadeId (ou código legado ?especialidade=...), preservando agendamentos antigos
+    const agendamentos = agendamentosMapeados.filter((ag) => {
+      if (especialidadeIdParam && especialidadeIdParam !== "TODAS") {
+        return ag.especialidadeId === especialidadeIdParam;
+      }
+      if (especialidadeParam && especialidadeParam.toUpperCase() !== "TODAS") {
+        const alvoUpper = especialidadeParam.toUpperCase();
+        return (
+          ag.especialidadeId === especialidadeParam ||
+          ag.especialidade.toUpperCase() === alvoUpper
+        );
+      }
+      return true;
     });
 
     const resumo = {
@@ -250,13 +299,13 @@ export async function GET(request: NextRequest) {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
           "Server-Timing": `db;dur=${dbDurMs};desc="Oracle ADB", total;dur=${Math.round(
-            performance.now() - reqStart
+            performance.now() - reqStart,
           )}`,
         },
       },
     );
   } catch (error) {
-    console.error("[GET /api/agendamentos] Erro:", error);
+    logOracleRouteError("GET /api/agendamentos", error);
     return NextResponse.json(
       { success: false, error: "Erro ao carregar agendamentos do dia." },
       { status: 500 },
@@ -266,11 +315,14 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    await ensureEspecialidadesSchemaAndSeed();
+
     const body = await request.json();
     const {
       pacienteId,
       novoPaciente,
       medicoId,
+      especialidadeId,
       especialidade,
       dataHora,
       data,
@@ -332,19 +384,21 @@ export async function POST(request: NextRequest) {
       ? statusNormalizado
       : "AGENDADO";
 
-    const especialidadeNormalizada = String(
-      especialidade || "ENDOCRINOLOGIA",
-    ).toUpperCase();
-    const especialidadeFinal = (
-      ESPECIALIDADES_VALIDAS as readonly string[]
-    ).includes(especialidadeNormalizada)
-      ? especialidadeNormalizada
-      : "ENDOCRINOLOGIA";
-
     const duracaoValida = Math.min(
       Math.max(Number(duracaoMinutos) || 30, 10),
       240,
     );
+
+    const especialidades = await listarTodasEspecialidadesEntity(false);
+    const cleanEspId =
+      typeof especialidadeId === "string" ? especialidadeId.trim() : "";
+    let espAlvo: Especialidade | null = null;
+
+    if (cleanEspId) {
+      espAlvo = especialidades.find((e) => e.id === cleanEspId) ?? null;
+    } else if (typeof especialidade === "string" && especialidade.trim()) {
+      espAlvo = encontrarEspecialidadeCompativel(especialidade, especialidades);
+    }
 
     const targetMedicoIdRaw = medicoId ? String(medicoId).trim() : "";
     if (!targetMedicoIdRaw) {
@@ -375,22 +429,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (
-      medicoAtivo.especialidadeCodigo &&
-      (ESPECIALIDADES_VALIDAS as readonly string[]).includes(
-        medicoAtivo.especialidadeCodigo,
-      ) &&
-      medicoAtivo.especialidadeCodigo !== especialidadeFinal
-    ) {
-      const cfgEsp = getEspecialidadeConfig(especialidadeFinal);
+    // Se a especialidade não foi enviada mas o médico tem especialidadeId, assume a do médico
+    if (!espAlvo && medicoAtivo.especialidadeId) {
+      espAlvo =
+        especialidades.find((e) => e.id === medicoAtivo.especialidadeId) ?? null;
+    }
+
+    if (!espAlvo || !espAlvo.ativo) {
       return NextResponse.json(
         {
           success: false,
-          error: `O profissional ${medicoAtivo.nome} não atende na especialidade ${cfgEsp?.label || especialidadeFinal}. Selecione um médico compatível.`,
+          error:
+            "Selecione uma especialidade ativa cadastrada em Configurações → Especialidades.",
         },
         { status: 400 },
       );
     }
+
+    if (!medicoAtivo.especialidadeId || medicoAtivo.especialidadeId !== espAlvo.id) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `O profissional ${medicoAtivo.nome} não está vinculado à especialidade ${espAlvo.nome}. Selecione um médico ativo desta especialidade.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    const especialidadeCodigoLegado = gerarCodigoEspecialidadeLegado(espAlvo.nome);
 
     const resultado = await withTransaction(async (manager) => {
       const orgRepo = manager.getRepository(OrganizationEntity);
@@ -507,7 +573,8 @@ export async function POST(request: NextRequest) {
         agendamentoRepo.create({
           pacienteId: targetPacienteId,
           medicoId: targetMedicoId,
-          especialidade: especialidadeFinal,
+          especialidade: especialidadeCodigoLegado,
+          especialidadeId: espAlvo.id,
           dataHora: dataHoraDate,
           duracaoMinutos: duracaoValida,
           encaixe: Boolean(encaixe),
@@ -540,6 +607,7 @@ export async function POST(request: NextRequest) {
 
     const criado = resultado.agendamentoCriado;
     const d = new Date(criado.dataHora);
+    const metaEsp = resolverMetaEspecialidadeAgendamento(criado, especialidades);
 
     return NextResponse.json(
       {
@@ -556,16 +624,16 @@ export async function POST(request: NextRequest) {
           pacientePlanoFaaz: Boolean(criado.paciente?.planoFaaz),
           paciente: criado.paciente,
           medicoId: criado.medicoId,
-          medicoNome: criado.medico?.nome || "Equipe Clínica FAAZ",
+          medicoNome: criado.medico?.nome || "Equipe Clínica",
           medicoEspecialidade:
-            criado.medico?.especialidade || "Endocrinologia & Metabologia",
-          medicoCorHex: criado.medico?.corHex || "#059669",
+            criado.medico?.especialidade || metaEsp.especialidadeLegivel,
+          medicoCorHex: criado.medico?.corHex || metaEsp.especialidadeCorHex,
           medico: criado.medico,
-          especialidade:
-            criado.especialidade === "CIRURGIA_PLASTICA"
-              ? "CIRURGIA_PLASTICA"
-              : "ENDOCRINOLOGIA",
-          especialidadeLegivel: formatEspecialidadeLegivel(criado.especialidade),
+          especialidadeId: metaEsp.especialidadeId,
+          especialidade: metaEsp.especialidade,
+          especialidadeLegivel: metaEsp.especialidadeLegivel,
+          especialidadeCor: metaEsp.especialidadeCor,
+          especialidadeCorHex: metaEsp.especialidadeCorHex,
           dataHora: d.toISOString(),
           data: getDataDiaBR(d),
           horario: formatarHoraBR(d),
@@ -581,7 +649,7 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    console.error("[POST /api/agendamentos] Erro:", error);
+    logOracleRouteError("POST /api/agendamentos", error);
     return NextResponse.json(
       { success: false, error: "Erro ao criar novo agendamento." },
       { status: 500 },

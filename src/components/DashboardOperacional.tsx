@@ -20,6 +20,11 @@ import {
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
 import { formatarDataHumanaBR, getDataDiaBR } from "@/lib/date-br";
+import {
+  getCorEspecialidadeEstilo,
+  type CorEspecialidadeToken,
+  type EspecialidadeDTO,
+} from "@/lib/especialidades-clinica";
 
 export interface OperacionalAgendamentoItem {
   id: string;
@@ -38,8 +43,10 @@ export interface OperacionalAgendamentoItem {
   observacao?: string;
   medicoId: string;
   medicoNome: string;
-  especialidade: "ENDOCRINOLOGIA" | "CIRURGIA_PLASTICA";
+  especialidadeId?: string | null;
+  especialidade: string;
   especialidadeLegivel: string;
+  especialidadeCor?: CorEspecialidadeToken;
   encaixe: boolean;
 }
 
@@ -56,8 +63,9 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
   const [dataHojeHumana, setDataHojeHumana] = useState<string>("");
 
   const [agendamentos, setAgendamentos] = useState<OperacionalAgendamentoItem[]>([]);
+  const [especialidades, setEspecialidades] = useState<EspecialidadeDTO[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [filtroEspecialidade, setFiltroEspecialidade] = useState<"TODAS" | "ENDOCRINOLOGIA" | "CIRURGIA_PLASTICA">("TODAS");
+  const [filtroEspecialidadeId, setFiltroEspecialidadeId] = useState<string>("TODAS");
   const [filtroStatus, setFiltroStatus] = useState<"TODOS" | "CONFIRMADOS" | "PENDENTES" | "ENCAIXES">("TODOS");
 
   useEffect(() => {
@@ -77,14 +85,27 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
     if (!hojeIso) return;
     try {
       setIsLoading(true);
-      const res = await fetch(`/api/agendamentos?data=${hojeIso}`, {
-        cache: "no-store",
-        headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
-      });
-      if (!res.ok) return;
-      const json = await res.json();
-      if (json.success && Array.isArray(json.agendamentos)) {
-        setAgendamentos(json.agendamentos);
+      const [resAg, resEsp] = await Promise.all([
+        fetch(`/api/agendamentos?data=${hojeIso}`, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+        }),
+        fetch("/api/especialidades", {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+        }),
+      ]);
+      if (resAg.ok) {
+        const json = await resAg.json();
+        if (json.success && Array.isArray(json.agendamentos)) {
+          setAgendamentos(json.agendamentos);
+        }
+      }
+      if (resEsp.ok) {
+        const jsonEsp = await resEsp.json();
+        if (Array.isArray(jsonEsp.especialidades)) {
+          setEspecialidades(jsonEsp.especialidades);
+        }
       }
     } catch (err) {
       console.error("[DashboardOperacional] Erro ao buscar agendamentos do dia:", err);
@@ -111,15 +132,32 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
   const finalizados = agendamentos.filter((a) => a.status === "FINALIZADO").length;
   const cancelados = agendamentos.filter((a) => a.status === "CANCELADO").length;
 
-  const totalEndocrinologia = agendamentos.filter((a) => a.especialidade === "ENDOCRINOLOGIA").length;
-  const totalCirurgiaPlastica = agendamentos.filter((a) => a.especialidade === "CIRURGIA_PLASTICA").length;
   const totalEncaixes = agendamentos.filter((a) => Boolean(a.encaixe)).length;
+
+  // Resumo dinâmico por especialidade ativa
+  const resumoPorEspecialidade = especialidades.map((esp) => ({
+    ...esp,
+    total: agendamentos.filter(
+      (a) =>
+        a.especialidadeId === esp.id ||
+        (!a.especialidadeId &&
+          a.especialidade.toUpperCase() === esp.codigoLegado),
+    ).length,
+  }));
 
   // Filtragem da lista da fila
   const agendamentosFiltrados = agendamentos
     .filter((a) => {
-      if (filtroEspecialidade !== "TODAS" && a.especialidade !== filtroEspecialidade) {
-        return false;
+      if (filtroEspecialidadeId !== "TODAS") {
+        const espAlvo = especialidades.find((e) => e.id === filtroEspecialidadeId);
+        const matchId = a.especialidadeId === filtroEspecialidadeId;
+        const matchCodigo =
+          !a.especialidadeId &&
+          espAlvo &&
+          a.especialidade.toUpperCase() === espAlvo.codigoLegado;
+        if (!matchId && !matchCodigo) {
+          return false;
+        }
       }
       if (filtroStatus === "CONFIRMADOS" && a.status !== "CONFIRMADO") return false;
       if (filtroStatus === "PENDENTES" && a.status !== "AGENDADO") return false;
@@ -253,23 +291,34 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 <Stethoscope className="w-4 h-4" />
               </div>
             </div>
-            <div className="pt-3 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg">
-                  🌿 Endocrinologia
-                </span>
-                <span className="text-sm font-black text-slate-900 font-mono">
-                  {totalEndocrinologia}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-800 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-lg">
-                  💎 Cirurgia Plástica
-                </span>
-                <span className="text-sm font-black text-slate-900 font-mono">
-                  {totalCirurgiaPlastica}
-                </span>
-              </div>
+            <div className="pt-3 space-y-2 max-h-28 overflow-y-auto pr-0.5">
+              {resumoPorEspecialidade.length === 0 ? (
+                <p className="text-xs text-slate-400">
+                  Nenhuma especialidade ativa cadastrada.
+                </p>
+              ) : (
+                resumoPorEspecialidade.map((esp) => {
+                  const estilo = getCorEspecialidadeEstilo(esp.cor);
+                  return (
+                    <div
+                      key={esp.id}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-xs font-bold border px-2.5 py-0.5 rounded-lg truncate ${estilo.badgeClass}`}
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${estilo.dotClass}`}
+                        />
+                        <span className="truncate">{esp.nome}</span>
+                      </span>
+                      <span className="text-sm font-black text-slate-900 font-mono shrink-0">
+                        {esp.total}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -320,40 +369,41 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
 
             {/* Filtros em formato de Pílulas */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="cl-segmented gap-1">
+              <div className="cl-segmented gap-1 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => setFiltroEspecialidade("TODAS")}
+                  onClick={() => setFiltroEspecialidadeId("TODAS")}
                   className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    filtroEspecialidade === "TODAS"
+                    filtroEspecialidadeId === "TODAS"
                       ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
                   Todas
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setFiltroEspecialidade("ENDOCRINOLOGIA")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    filtroEspecialidade === "ENDOCRINOLOGIA"
-                      ? "bg-emerald-600 text-white"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  Endocrinologia
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFiltroEspecialidade("CIRURGIA_PLASTICA")}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    filtroEspecialidade === "CIRURGIA_PLASTICA"
-                      ? "bg-blue-600 text-white"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  Cirurgia Plástica
-                </button>
+                {especialidades.map((esp) => {
+                  const estilo = getCorEspecialidadeEstilo(esp.cor);
+                  const ativo = filtroEspecialidadeId === esp.id;
+                  return (
+                    <button
+                      key={esp.id}
+                      type="button"
+                      onClick={() => setFiltroEspecialidadeId(esp.id)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                        ativo
+                          ? estilo.filterSolidActiveClass
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {!ativo && (
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${estilo.dotClass}`}
+                        />
+                      )}
+                      <span>{esp.nome}</span>
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="cl-segmented gap-1">
@@ -447,7 +497,9 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                 <tbody className="divide-y divide-slate-100">
                   {agendamentosFiltrados.map((item) => {
                     const waLink = getWhatsAppLink(item.pacienteTelefone);
-                    const isEndo = item.especialidade === "ENDOCRINOLOGIA";
+                    const estiloEsp = getCorEspecialidadeEstilo(
+                      item.especialidadeCor,
+                    );
 
                     return (
                       <tr
@@ -515,13 +567,11 @@ export function DashboardOperacional({ user }: DashboardOperacionalProps) {
                         {/* ESPECIALIDADE */}
                         <td className="py-3 px-4 whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border ${
-                              isEndo
-                                ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                : "bg-blue-50 text-blue-800 border-blue-300"
-                            }`}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${estiloEsp.badgeClass}`}
                           >
-                            <span>{isEndo ? "🌿" : "💎"}</span>
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${estiloEsp.dotClass}`}
+                            />
                             <span>{item.especialidadeLegivel}</span>
                           </span>
                         </td>

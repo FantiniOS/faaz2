@@ -41,6 +41,12 @@ export const CARGOS_GESTAO_EQUIPE: Cargo[] = [
   "ADMINISTRADOR",
 ];
 
+/** Cargos que podem criar, editar e ativar/desativar especialidades da clínica */
+export const CARGOS_GESTAO_ESPECIALIDADES: Cargo[] = [
+  "DONO_CLINICA",
+  "ADMINISTRADOR",
+];
+
 /** Cargos que podem cadastrar e alterar pacientes */
 export const CARGOS_CADASTRO_PACIENTES: Cargo[] = [
   "DONO_CLINICA",
@@ -94,6 +100,19 @@ export function podeGerenciarEquipe(cargo: string | null | undefined): boolean {
   if (!norm) return false;
   return (
     CARGOS_GESTAO_EQUIPE.includes(norm as Cargo) ||
+    norm === "CLINIC_ADMIN" ||
+    norm === "ADMIN"
+  );
+}
+
+/** Valida se o cargo pode gerenciar especialidades da clínica (DONO_CLINICA e ADMINISTRADOR) */
+export function podeGerenciarEspecialidades(
+  cargo: string | null | undefined,
+): boolean {
+  const norm = normalizarCargoRbac(cargo);
+  if (!norm) return false;
+  return (
+    CARGOS_GESTAO_ESPECIALIDADES.includes(norm as Cargo) ||
     norm === "CLINIC_ADMIN" ||
     norm === "ADMIN"
   );

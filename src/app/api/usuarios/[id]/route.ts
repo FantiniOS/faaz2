@@ -6,13 +6,20 @@ import {
   UserEntity,
   type AccountStatus,
   type Cargo as DbCargo,
-  type User,
+  type Especialidade,
   type UserRole,
 } from "@/lib/db/entities";
+import {
+  ensureEspecialidadesSchemaAndSeed,
+  listarTodasEspecialidadesEntity,
+} from "@/lib/db/especialidades-bootstrap";
+import { logOracleRouteError } from "@/lib/db/oracle-utils";
 import { getSessao } from "@/lib/auth-session";
 import { podeGerenciarEquipe } from "@/lib/auth-rbac";
 import {
-  comporEspecialidadeArmazenada,
+  comporTextoSpecialtyUsuario,
+  encontrarEspecialidadeCompativel,
+  normalizarCorEspecialidade,
   normalizarCrmArmazenado,
 } from "@/lib/especialidades-clinica";
 import {
@@ -47,6 +54,8 @@ export async function PUT(
       );
     }
 
+    await ensureEspecialidadesSchemaAndSeed();
+
     const { id } = await props.params;
     if (!id) {
       return NextResponse.json(
@@ -75,8 +84,8 @@ export async function PUT(
       email,
       cargo,
       senha,
+      especialidadeId,
       especialidade,
-      especialidadeCodigo,
       subespecialidade,
       specialty,
       crm,
@@ -84,12 +93,14 @@ export async function PUT(
       accountStatus,
     } = body;
 
-    const targetFullName = (nome || fullName || userExistente.fullName).trim();
+    const targetFullName = String(
+      nome || fullName || userExistente.fullName,
+    ).trim();
 
     // Validação de Username se alterado
     let targetUsername = userExistente.username;
-    if (username && username.trim()) {
-      targetUsername = username
+    if (username && String(username).trim()) {
+      targetUsername = String(username)
         .toLowerCase()
         .trim()
         .replace(/[^a-z0-9._-]/g, "");
@@ -116,8 +127,8 @@ export async function PUT(
     // Validação de E-mail se alterado
     let targetEmail = userExistente.email;
     if (email !== undefined) {
-      if (email && email.trim()) {
-        const normalizedEmail = email.toLowerCase().trim();
+      if (email && String(email).trim()) {
+        const normalizedEmail = String(email).toLowerCase().trim();
         if (normalizedEmail !== userExistente.email) {
           const emailEmUso = await userRepo.findOne({
             where: {
@@ -164,37 +175,83 @@ export async function PUT(
     }
 
     let passwordHashUpdate: string | undefined = undefined;
-    if (senha && senha.trim().length >= 4) {
-      passwordHashUpdate = await bcrypt.hash(senha.trim(), 12);
+    if (senha && String(senha).trim().length >= 4) {
+      passwordHashUpdate = await bcrypt.hash(String(senha).trim(), 12);
     }
 
     const isCargoClinico =
       targetCargo === "DONO_CLINICA" || targetCargo === "MEDICO";
 
-    const temInfoEspecialidade =
-      especialidadeCodigo !== undefined ||
-      subespecialidade !== undefined ||
-      especialidade !== undefined ||
-      specialty !== undefined;
+    const especialidades = await listarTodasEspecialidadesEntity(false);
 
-    const targetSpecialty = !isCargoClinico
-      ? null
-      : temInfoEspecialidade
-        ? comporEspecialidadeArmazenada(
-            especialidadeCodigo,
-            subespecialidade,
-            especialidade !== undefined ? especialidade : specialty,
-          )
-        : userExistente.specialty;
+    let targetEspecialidadeId: string | null = null;
+    let targetSpecialty: string | null = null;
 
-    if (isCargoClinico && temInfoEspecialidade && !targetSpecialty) {
-      return NextResponse.json(
-        {
-          error:
-            "Selecione a Especialidade de Atendimento para perfis clínicos (Médico ou Diretoria Clínica).",
-        },
-        { status: 400 },
-      );
+    if (isCargoClinico) {
+      const temInfoEsp =
+        especialidadeId !== undefined ||
+        subespecialidade !== undefined ||
+        especialidade !== undefined ||
+        specialty !== undefined;
+
+      let espResolvida: Especialidade | null = null;
+
+      if (especialidadeId !== undefined) {
+        const cleanEspId =
+          typeof especialidadeId === "string" ? especialidadeId.trim() : "";
+        if (!cleanEspId) {
+          return NextResponse.json(
+            {
+              error:
+                "Selecione a Especialidade de Atendimento para perfis clínicos (Médico ou Diretoria Clínica).",
+            },
+            { status: 400 },
+          );
+        }
+        espResolvida = especialidades.find((e) => e.id === cleanEspId) ?? null;
+        if (!espResolvida) {
+          return NextResponse.json(
+            { error: "Especialidade selecionada não encontrada." },
+            { status: 400 },
+          );
+        }
+      } else if (userExistente.especialidadeId) {
+        espResolvida =
+          especialidades.find((e) => e.id === userExistente.especialidadeId) ??
+          null;
+      } else if (typeof especialidade === "string" && especialidade.trim()) {
+        espResolvida = encontrarEspecialidadeCompativel(
+          especialidade,
+          especialidades,
+        );
+      }
+
+      if (temInfoEsp && !espResolvida) {
+        return NextResponse.json(
+          {
+            error:
+              "Selecione a Especialidade de Atendimento para perfis clínicos (Médico ou Diretoria Clínica).",
+          },
+          { status: 400 },
+        );
+      }
+
+      targetEspecialidadeId = espResolvida?.id ?? userExistente.especialidadeId ?? null;
+
+      if (temInfoEsp) {
+        const subInput =
+          subespecialidade !== undefined
+            ? subespecialidade
+            : especialidade !== undefined
+              ? especialidade
+              : specialty;
+        targetSpecialty = comporTextoSpecialtyUsuario(
+          espResolvida?.nome,
+          subInput,
+        );
+      } else {
+        targetSpecialty = userExistente.specialty;
+      }
     }
 
     const rawCrmInput =
@@ -219,6 +276,7 @@ export async function PUT(
         role: targetRole,
         podeAcessarProntuario,
         isClinical: podeAcessarProntuario,
+        especialidadeId: targetEspecialidadeId,
         specialty: targetSpecialty || null,
         councilType: targetCrm ? "CRM" : null,
         councilNumber: targetCrm || null,
@@ -239,6 +297,7 @@ export async function PUT(
         cargo: true,
         role: true,
         specialty: true,
+        especialidadeId: true,
         councilType: true,
         councilNumber: true,
         accountStatus: true,
@@ -249,7 +308,10 @@ export async function PUT(
     });
 
     if (usuarioAtualizado && isCargoClinico && targetAccountStatus === "ACTIVE") {
-      const medicoDto = mapUserToMedicoResponsavel(usuarioAtualizado);
+      const medicoDto = mapUserToMedicoResponsavel(
+        usuarioAtualizado,
+        especialidades,
+      );
       if (medicoDto) {
         await garantirEspelhoMedicoAgenda(medicoDto).catch((err) => {
           console.warn("[USUARIOS/PUT] Aviso ao sincronizar espelho MEDICOS:", err);
@@ -257,13 +319,27 @@ export async function PUT(
       }
     }
 
+    const espAtual = usuarioAtualizado?.especialidadeId
+      ? especialidades.find((e) => e.id === usuarioAtualizado.especialidadeId) ??
+        null
+      : null;
+
     return NextResponse.json({
       sucesso: true,
       mensagem: "Membro da equipe atualizado com sucesso.",
-      usuario: usuarioAtualizado,
+      usuario: usuarioAtualizado
+        ? {
+            ...usuarioAtualizado,
+            especialidadeNome: espAtual?.nome ?? null,
+            especialidadeCor: espAtual
+              ? normalizarCorEspecialidade(espAtual.cor)
+              : null,
+            especialidadeAtiva: espAtual ? Boolean(espAtual.ativo) : null,
+          }
+        : null,
     });
   } catch (error: unknown) {
-    console.error("[USUARIOS/PUT] Erro:", error);
+    logOracleRouteError("PUT /api/usuarios/[id]", error);
     return NextResponse.json(
       { error: "Erro interno ao atualizar membro da equipe." },
       { status: 500 },
@@ -332,7 +408,7 @@ export async function DELETE(
       mensagem: `Acesso do usuário ${userExistente.fullName} (@${userExistente.username}) revogado com sucesso.`,
     });
   } catch (error: unknown) {
-    console.error("[USUARIOS/DELETE] Erro:", error);
+    logOracleRouteError("DELETE /api/usuarios/[id]", error);
     return NextResponse.json(
       { error: "Erro interno ao excluir membro da equipe." },
       { status: 500 },

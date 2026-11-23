@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { Plus, CalendarDays, Loader2, Smartphone } from "lucide-react";
 import { adicionarDiasDataBR, subtrairDiasDataBR } from "@/lib/date-br";
+import { getCorEspecialidadeEstilo } from "@/lib/especialidades-clinica";
 import type { AgendamentoItem } from "@/app/agenda/page";
 
 export type AgendaViewMode = "dia" | "semana" | "mes" | "semestre";
@@ -255,8 +256,9 @@ export function AgendaMonthView({
                   {visiblePills.map((item) => {
                     const isCancelado = item.status === "CANCELADO";
                     const isConfirmado = item.status === "CONFIRMADO";
-                    const isPlastica =
-                      item.especialidade === "CIRURGIA_PLASTICA";
+                    const estiloCor = getCorEspecialidadeEstilo(
+                      item.especialidadeCor,
+                    );
                     const viaApp =
                       isConfirmado &&
                       (item.observacao || "")
@@ -265,21 +267,13 @@ export function AgendaMonthView({
 
                     const pillStyle = isCancelado
                       ? "bg-rose-50/80 border-rose-200/80 text-rose-700 line-through opacity-70 hover:opacity-100"
-                      : isPlastica
-                        ? isConfirmado
-                          ? "bg-blue-50 border-blue-300 text-blue-900 hover:bg-blue-100"
-                          : "bg-blue-50/60 border-blue-200/80 text-blue-800 hover:bg-blue-100/80"
-                        : isConfirmado
-                          ? "bg-emerald-50 border-emerald-300 text-emerald-900 hover:bg-emerald-100"
-                          : "bg-slate-50 border-slate-200 text-slate-800 hover:bg-emerald-50/70 hover:border-emerald-200";
+                      : isConfirmado
+                        ? `${estiloCor.monthPillConfirmedClass} hover:opacity-95`
+                        : `${estiloCor.monthPillDefaultClass} hover:opacity-95`;
 
                     const dotColor = isCancelado
                       ? "bg-rose-400"
-                      : isPlastica
-                        ? "bg-blue-500"
-                        : isConfirmado
-                          ? "bg-emerald-600"
-                          : "bg-emerald-400";
+                      : estiloCor.dotClass;
 
                     return (
                       <button

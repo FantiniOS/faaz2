@@ -6,20 +6,32 @@ import {
   MedicoEntity,
   PatientEntity,
   UserEntity,
+  type Especialidade,
   type Medico,
   type User,
 } from "@/lib/db/entities";
 import {
-  parseEspecialidadeUsuario,
-  type EspecialidadeSelecaoCodigo,
+  ensureEspecialidadesSchemaAndSeed,
+  listarTodasEspecialidadesEntity,
+} from "@/lib/db/especialidades-bootstrap";
+import {
+  encontrarEspecialidadeCompativel,
+  extrairSubespecialidadeParaForm,
+  gerarCodigoEspecialidadeLegado,
+  getCorEspecialidadeEstilo,
+  inferirCorPorCodigoLegado,
+  normalizarCorEspecialidade,
+  type CorEspecialidadeToken,
 } from "@/lib/especialidades-clinica";
 
 export interface MedicoResponsavelDTO {
   id: string;
   nome: string;
   especialidade: string | null;
-  especialidadeCodigo?: EspecialidadeSelecaoCodigo | null;
-  especialidadePrincipal?: string | null;
+  especialidadeId?: string | null;
+  especialidadeNome?: string | null;
+  especialidadeCor?: CorEspecialidadeToken;
+  especialidadeCodigo?: string | null;
   subespecialidade?: string | null;
   corHex?: string;
   crm: string | null;
@@ -31,6 +43,7 @@ type UserMedicoProjection = Pick<
   | "title"
   | "fullName"
   | "specialty"
+  | "especialidadeId"
   | "councilType"
   | "councilNumber"
   | "cargo"
@@ -93,23 +106,56 @@ export function isUsuarioMedicoClinico(
 }
 
 export function mapUserToMedicoResponsavel(
-  user: Pick<
-    User,
-    "id" | "title" | "fullName" | "specialty" | "councilType" | "councilNumber"
-  > | null | undefined,
+  user:
+    | Pick<
+        User,
+        | "id"
+        | "title"
+        | "fullName"
+        | "specialty"
+        | "especialidadeId"
+        | "councilType"
+        | "councilNumber"
+      >
+    | null
+    | undefined,
+  especialidadesLista?: readonly Especialidade[],
 ): MedicoResponsavelDTO | null {
   if (!user) return null;
   const nome = formatarNomeMedico(user.title, user.fullName);
   if (!nome) return null;
-  const parsedEsp = parseEspecialidadeUsuario(user.specialty);
+
+  const lista = especialidadesLista ?? [];
+  const espPorId = user.especialidadeId
+    ? lista.find((e) => e.id === user.especialidadeId) ?? null
+    : null;
+  const espResolvida =
+    espPorId ??
+    (user.specialty ? encontrarEspecialidadeCompativel(user.specialty, lista) : null);
+
+  const rawSpecialty = (user.specialty || "").trim() || null;
+  const especialidadeNome = espResolvida?.nome ?? null;
+  const especialidadeId = user.especialidadeId ?? espResolvida?.id ?? null;
+  const especialidadeCor = espResolvida
+    ? normalizarCorEspecialidade(espResolvida.cor)
+    : inferirCorPorCodigoLegado(rawSpecialty);
+  const estilo = getCorEspecialidadeEstilo(especialidadeCor);
+  const exibicao = rawSpecialty || especialidadeNome || null;
+  const subespecialidade =
+    extrairSubespecialidadeParaForm(rawSpecialty, especialidadeNome) || null;
+
   return {
     id: user.id,
     nome,
-    especialidade: parsedEsp.exibicao,
-    especialidadeCodigo: parsedEsp.codigo,
-    especialidadePrincipal: parsedEsp.labelPrincipal,
-    subespecialidade: parsedEsp.subespecialidade || null,
-    corHex: parsedEsp.corHex,
+    especialidade: exibicao,
+    especialidadeId,
+    especialidadeNome,
+    especialidadeCor,
+    especialidadeCodigo: especialidadeNome
+      ? gerarCodigoEspecialidadeLegado(especialidadeNome)
+      : null,
+    subespecialidade,
+    corHex: estilo.hex,
     crm: formatarCrmMedico(user.councilType, user.councilNumber),
   };
 }
@@ -125,6 +171,8 @@ export async function buscarUsuarioMedicoAtivo(
   const cleanId = typeof userId === "string" ? userId.trim() : "";
   if (!cleanId) return null;
 
+  await ensureEspecialidadesSchemaAndSeed();
+
   const findUser = async () => {
     if (manager) {
       return manager.getRepository(UserEntity).findOne({
@@ -139,6 +187,7 @@ export async function buscarUsuarioMedicoAtivo(
           title: true,
           fullName: true,
           specialty: true,
+          especialidadeId: true,
           councilType: true,
           councilNumber: true,
           cargo: true,
@@ -164,6 +213,7 @@ export async function buscarUsuarioMedicoAtivo(
             title: true,
             fullName: true,
             specialty: true,
+            especialidadeId: true,
             councilType: true,
             councilNumber: true,
             cargo: true,
@@ -177,9 +227,12 @@ export async function buscarUsuarioMedicoAtivo(
     );
   };
 
-  const user = await findUser();
+  const [user, especialidades] = await Promise.all([
+    findUser(),
+    listarTodasEspecialidadesEntity(false),
+  ]);
   if (!user || !isUsuarioMedicoClinico(user)) return null;
-  return mapUserToMedicoResponsavel(user);
+  return mapUserToMedicoResponsavel(user, especialidades);
 }
 
 /**
@@ -236,36 +289,42 @@ export async function garantirEspelhoMedicoAgenda(
 export async function listarMedicosClinica(
   organizationId?: string | null,
 ): Promise<MedicoResponsavelDTO[]> {
-  const usuarios = await withRepositoryRetry(
-    UserEntity,
-    (repo) =>
-      repo.find({
-        where: {
-          ...(organizationId ? { organizationId } : {}),
-          deletedAt: IsNull(),
-          accountStatus: "ACTIVE",
-        },
-        select: {
-          id: true,
-          title: true,
-          fullName: true,
-          specialty: true,
-          councilType: true,
-          councilNumber: true,
-          cargo: true,
-          role: true,
-          isClinical: true,
-          accountStatus: true,
-          organizationId: true,
-        },
-        order: { fullName: "ASC" },
-      }),
-    { label: "medico-responsavel:listar-clinica" },
-  );
+  await ensureEspecialidadesSchemaAndSeed();
+
+  const [usuarios, especialidades] = await Promise.all([
+    withRepositoryRetry(
+      UserEntity,
+      (repo) =>
+        repo.find({
+          where: {
+            ...(organizationId ? { organizationId } : {}),
+            deletedAt: IsNull(),
+            accountStatus: "ACTIVE",
+          },
+          select: {
+            id: true,
+            title: true,
+            fullName: true,
+            specialty: true,
+            especialidadeId: true,
+            councilType: true,
+            councilNumber: true,
+            cargo: true,
+            role: true,
+            isClinical: true,
+            accountStatus: true,
+            organizationId: true,
+          },
+          order: { fullName: "ASC" },
+        }),
+      { label: "medico-responsavel:listar-clinica" },
+    ),
+    listarTodasEspecialidadesEntity(false),
+  ]);
 
   return (usuarios as UserMedicoProjection[])
     .filter((u) => isUsuarioMedicoClinico(u))
-    .map((u) => mapUserToMedicoResponsavel(u))
+    .map((u) => mapUserToMedicoResponsavel(u, especialidades))
     .filter((m): m is MedicoResponsavelDTO => m !== null);
 }
 
@@ -337,6 +396,8 @@ export async function resolverMedicoResponsavel(
     organizationId?: string | null;
   },
 ): Promise<MedicoResponsavelDTO | null> {
+  await ensureEspecialidadesSchemaAndSeed();
+
   let primaryDoctorId = opts?.primaryDoctorId;
   let organizationId = opts?.organizationId;
 
@@ -362,24 +423,28 @@ export async function resolverMedicoResponsavel(
 
   // 1. Médico explicitamente vinculado em PATIENTS.PRIMARY_DOCTOR_ID
   if (primaryDoctorId) {
-    const userDoc = await withRepositoryRetry(
-      UserEntity,
-      (repo) =>
-        repo.findOne({
-          where: { id: primaryDoctorId, deletedAt: IsNull() },
-          select: {
-            id: true,
-            title: true,
-            fullName: true,
-            specialty: true,
-            councilType: true,
-            councilNumber: true,
-          },
-        }),
-      { label: "medico-responsavel:primary-doctor" },
-    );
+    const [userDoc, especialidades] = await Promise.all([
+      withRepositoryRetry(
+        UserEntity,
+        (repo) =>
+          repo.findOne({
+            where: { id: primaryDoctorId, deletedAt: IsNull() },
+            select: {
+              id: true,
+              title: true,
+              fullName: true,
+              specialty: true,
+              especialidadeId: true,
+              councilType: true,
+              councilNumber: true,
+            },
+          }),
+        { label: "medico-responsavel:primary-doctor" },
+      ),
+      listarTodasEspecialidadesEntity(false),
+    ]);
 
-    const mapped = mapUserToMedicoResponsavel(userDoc);
+    const mapped = mapUserToMedicoResponsavel(userDoc, especialidades);
     if (mapped) return mapped;
   }
 

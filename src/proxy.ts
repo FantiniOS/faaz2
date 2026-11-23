@@ -257,6 +257,8 @@ export const config = {
     "/configuracoes/:path*",
     "/api/usuarios/:path*",
     "/api/equipe/:path*",
+    "/api/especialidades",
+    "/api/especialidades/:path*",
     "/api/pacientes/:path*",
     "/api/busca",
     "/api/auth/me",

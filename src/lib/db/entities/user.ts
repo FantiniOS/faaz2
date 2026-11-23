@@ -12,6 +12,7 @@ import {
 import type { AccountStatus, Cargo, UserRole } from "./enums";
 import type { Organization } from "./organization";
 import type { Patient } from "./patient";
+import type { Especialidade } from "./specialty";
 
 // 2. USERS (Profissionais, Administradores, Equipe e Conta Paciente)
 export interface User extends AuditFields {
@@ -28,6 +29,7 @@ export interface User extends AuditFields {
   councilType: string | null;
   councilNumber: string | null;
   specialty: string | null;
+  especialidadeId: string | null;
   roomNumber: string | null;
   isClinical: boolean;
   mfaEnabled: boolean;
@@ -37,6 +39,7 @@ export interface User extends AuditFields {
   lastLoginAt: Date | null;
 
   organization?: Organization;
+  especialidade?: Especialidade | null;
   patientAccount?: Patient | null;
   primaryDoctorPatients?: Patient[];
   primaryNutritionistPatients?: Patient[];
@@ -59,6 +62,7 @@ export const UserEntity = new EntitySchema<User>({
     councilType: varchar("COUNCIL_TYPE", 20, true),
     councilNumber: varchar("COUNCIL_NUMBER", 40, true),
     specialty: varchar("SPECIALTY", 100, true),
+    especialidadeId: uuidRef("ESPECIALIDADE_ID", true),
     roomNumber: varchar("ROOM_NUMBER", 50, true),
     isClinical: { ...bool("IS_CLINICAL"), default: false },
     mfaEnabled: { ...bool("MFA_ENABLED"), default: false },
@@ -74,6 +78,11 @@ export const UserEntity = new EntitySchema<User>({
       target: "Organization",
       inverseSide: "users",
       joinColumn: { name: "ORGANIZATION_ID" },
+    },
+    especialidade: {
+      type: "many-to-one",
+      target: "Especialidade",
+      joinColumn: { name: "ESPECIALIDADE_ID" },
     },
     patientAccount: { type: "one-to-one", target: "Patient", inverseSide: "user" },
     primaryDoctorPatients: {

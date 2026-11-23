@@ -36,6 +36,7 @@ import {
   PacoteAcompanhamentoEntity,
 } from "./packages";
 import { PatientEntity } from "./patient";
+import { EspecialidadeEntity } from "./specialty";
 import { UserEntity } from "./user";
 
 export * from "./enums";
@@ -82,6 +83,7 @@ export type {
   TipoConsultaPacote,
 } from "./packages";
 export type { Patient } from "./patient";
+export type { Especialidade } from "./specialty";
 export type { User } from "./user";
 
 export {
@@ -95,6 +97,7 @@ export {
   ConsultaPacoteEntity,
   DietSubstitutionEntity,
   DocumentTemplateEntity,
+  EspecialidadeEntity,
   EvolucaoClinicaEntity,
   FoodEntity,
   GoalCheckinEntity,
@@ -123,6 +126,7 @@ export {
  */
 export const entities = [
   OrganizationEntity,
+  EspecialidadeEntity,
   UserEntity,
   PatientEntity,
   ProntuarioPacienteEntity,

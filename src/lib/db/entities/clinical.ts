@@ -355,6 +355,7 @@ export interface Agendamento {
   pacienteId: string;
   medicoId: string;
   especialidade: string;
+  especialidadeId: string | null;
   dataHora: Date;
   duracaoMinutos: number;
   encaixe: boolean;
@@ -379,6 +380,7 @@ export const AgendamentoEntity = new EntitySchema<Agendamento>({
       default: "00000000-0000-4000-8000-000000000001",
     },
     especialidade: { ...varchar("ESPECIALIDADE", 40), default: "ENDOCRINOLOGIA" },
+    especialidadeId: uuidRef("ESPECIALIDADE_ID", true),
     dataHora: timestampTz("DATA_HORA"),
     duracaoMinutos: { ...integer("DURACAO_MINUTOS"), default: 30 },
     encaixe: { ...bool("ENCAIXE"), default: false },

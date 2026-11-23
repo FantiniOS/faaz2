@@ -2,13 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { Between, In, Not } from "typeorm";
 import { getRepository } from "@/lib/db/data-source";
 import { AgendamentoEntity } from "@/lib/db/entities";
-import { criarDataBR, formatarHoraBR, getDataDiaBR, getInicioFimDiaBR } from "@/lib/date-br";
+import {
+  ensureEspecialidadesSchemaAndSeed,
+  listarTodasEspecialidadesEntity,
+} from "@/lib/db/especialidades-bootstrap";
+import { logOracleRouteError } from "@/lib/db/oracle-utils";
+import {
+  criarDataBR,
+  formatarHoraBR,
+  getDataDiaBR,
+  getInicioFimDiaBR,
+} from "@/lib/date-br";
 import { getSessao } from "@/lib/auth-session";
 import {
   buscarUsuarioMedicoAtivo,
   garantirEspelhoMedicoAgenda,
 } from "@/lib/medico-responsavel";
-import { ESPECIALIDADES_AGENDA_VALIDAS } from "@/lib/especialidades-clinica";
+import {
+  encontrarEspecialidadeCompativel,
+  gerarCodigoEspecialidadeLegado,
+} from "@/lib/especialidades-clinica";
 
 const TIPOS_VALIDOS = ["PRIMEIRA_CONSULTA", "RETORNO", "EXAME"] as const;
 const STATUS_VALIDOS = [
@@ -17,13 +30,14 @@ const STATUS_VALIDOS = [
   "CANCELADO",
   "FINALIZADO",
 ] as const;
-const ESPECIALIDADES_VALIDAS = ESPECIALIDADES_AGENDA_VALIDAS;
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    await ensureEspecialidadesSchemaAndSeed();
+
     const { id } = await context.params;
     const body = await request.json();
 
@@ -43,6 +57,7 @@ export async function PATCH(
       pacienteId?: string;
       medicoId?: string;
       especialidade?: string;
+      especialidadeId?: string | null;
       dataHora?: Date;
       duracaoMinutos?: number;
       encaixe?: boolean;
@@ -53,6 +68,23 @@ export async function PATCH(
 
     if (body.pacienteId) {
       dataUpdate.pacienteId = String(body.pacienteId);
+    }
+
+    if (body.especialidadeId || body.especialidade) {
+      const especialidades = await listarTodasEspecialidadesEntity(false);
+      const espEncontrada = body.especialidadeId
+        ? especialidades.find((e) => e.id === String(body.especialidadeId).trim()) ??
+          null
+        : encontrarEspecialidadeCompativel(
+            String(body.especialidade),
+            especialidades,
+          );
+      if (espEncontrada) {
+        dataUpdate.especialidadeId = espEncontrada.id;
+        dataUpdate.especialidade = gerarCodigoEspecialidadeLegado(
+          espEncontrada.nome,
+        );
+      }
     }
 
     if (body.medicoId) {
@@ -73,17 +105,21 @@ export async function PATCH(
             { status: 400 },
           );
         }
+        const espAlvoId =
+          dataUpdate.especialidadeId ?? existente.especialidadeId ?? null;
+        if (espAlvoId && medicoAtivo.especialidadeId !== espAlvoId) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `O profissional ${medicoAtivo.nome} não está vinculado à especialidade selecionada.`,
+            },
+            { status: 400 },
+          );
+        }
         await garantirEspelhoMedicoAgenda(medicoAtivo);
         dataUpdate.medicoId = medicoAtivo.id;
       } else {
         dataUpdate.medicoId = novoMedicoId;
-      }
-    }
-
-    if (body.especialidade) {
-      const esp = String(body.especialidade).toUpperCase();
-      if ((ESPECIALIDADES_VALIDAS as readonly string[]).includes(esp)) {
-        dataUpdate.especialidade = esp;
       }
     }
 
@@ -207,6 +243,7 @@ export async function PATCH(
         pacienteId: true,
         medicoId: true,
         especialidade: true,
+        especialidadeId: true,
         dataHora: true,
         duracaoMinutos: true,
         encaixe: true,
@@ -231,7 +268,7 @@ export async function PATCH(
       agendamento: atualizado,
     });
   } catch (error) {
-    console.error("[PATCH /api/agendamentos/[id]] Erro:", error);
+    logOracleRouteError("PATCH /api/agendamentos/[id]", error);
     return NextResponse.json(
       { success: false, error: "Erro ao atualizar agendamento." },
       { status: 500 },
@@ -256,7 +293,7 @@ export async function DELETE(
     await agendamentoRepo.delete({ id });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("[DELETE /api/agendamentos/[id]] Erro:", error);
+    logOracleRouteError("DELETE /api/agendamentos/[id]", error);
     return NextResponse.json(
       { success: false, error: "Erro ao remover agendamento." },
       { status: 500 },
