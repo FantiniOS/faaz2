@@ -27,10 +27,9 @@ import { mockUserSession } from "@/mocks/dashboard";
 import { ProntuarioModal } from "@/components/ProntuarioModal";
 import { PacotePacienteModal } from "@/components/PacotePacienteModal";
 import { podeGerenciarPacotes } from "@/lib/auth-rbac";
-import {
-  formatIsoDateBr,
-  type PacoteAtivoResumoListaDTO,
-  type PacotesPacienteResponse,
+import type {
+  PacoteAtivoResumoListaDTO,
+  PacotesPacienteResponse,
 } from "@/lib/pacotes-faaz";
 import {
   getClientCache,
@@ -869,7 +868,7 @@ export default function PacientesPage() {
                         </span>
                       </td>
 
-                      {/* Selo discreto do Programa / Pacote ativo ou Avulso */}
+                      {/* Selo clicável do Programa / Pacote ativo ou Avulso */}
                       <td className="py-2 px-3 whitespace-nowrap">
                         {p.pacoteAtivo ? (
                           <button
@@ -880,25 +879,29 @@ export default function PacientesPage() {
                               setSelectedPatientForPacote(p);
                               setIsPacoteModalOpen(true);
                             }}
-                            title={`${p.pacoteAtivo.nomePlano} • ${p.pacoteAtivo.consultasRealizadas} de ${p.pacoteAtivo.qtdTotalConsultas} realizadas • ${
-                              p.pacoteAtivo.consultasRestantes === 0
-                                ? "Saldo encerrado"
-                                : p.pacoteAtivo.consultasRestantes === 1
-                                  ? "Falta 1"
-                                  : `Faltam ${p.pacoteAtivo.consultasRestantes}`
-                            }${
-                              p.pacoteAtivo.dataValidade
-                                ? ` • Validade ${formatIsoDateBr(p.pacoteAtivo.dataValidade)}`
-                                : ""
-                            }`}
-                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
-                              canManagePacotes ? "cursor-pointer hover:shadow-2xs" : "cursor-default"
-                            } ${
+                            title={
+                              canManagePacotes
+                                ? "Clique para configurar o programa/pacote"
+                                : p.pacoteAtivo.nomePlano
+                            }
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
                               p.pacoteAtivo.vencido || p.pacoteAtivo.consultasRestantes === 0
-                                ? "bg-rose-50 text-rose-700 border-rose-200"
+                                ? `bg-rose-50 text-rose-700 border-rose-200 ${
+                                    canManagePacotes
+                                      ? "cursor-pointer hover:bg-rose-100 hover:border-rose-300 hover:shadow-xs active:scale-[0.98]"
+                                      : "cursor-default"
+                                  }`
                                 : p.pacoteAtivo.alertaRenovacao
-                                  ? "bg-amber-50 text-amber-800 border-amber-200"
-                                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  ? `bg-amber-50 text-amber-800 border-amber-200 ${
+                                      canManagePacotes
+                                        ? "cursor-pointer hover:bg-amber-100 hover:border-amber-300 hover:shadow-xs active:scale-[0.98]"
+                                        : "cursor-default"
+                                    }`
+                                  : `bg-emerald-50 text-emerald-700 border-emerald-200 ${
+                                      canManagePacotes
+                                        ? "cursor-pointer hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-xs active:scale-[0.98]"
+                                        : "cursor-default"
+                                    }`
                             }`}
                           >
                             <Award className="w-3 h-3 shrink-0" />
@@ -920,15 +923,18 @@ export default function PacientesPage() {
                             }}
                             title={
                               canManagePacotes
-                                ? "Atendimento avulso — clique para configurar um programa/pacote"
+                                ? "Clique para configurar o programa/pacote"
                                 : "Atendimento avulso"
                             }
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200 transition-colors ${
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 transition-all ${
                               canManagePacotes
-                                ? "cursor-pointer hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+                                ? "cursor-pointer hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 hover:shadow-xs active:scale-[0.98]"
                                 : "cursor-default"
                             }`}
                           >
+                            {canManagePacotes && (
+                              <Plus className="w-2.5 h-2.5 opacity-75 shrink-0" />
+                            )}
                             <span>Avulso</span>
                           </button>
                         )}
@@ -976,22 +982,6 @@ export default function PacientesPage() {
                               <Calendar className="w-3.5 h-3.5 text-emerald-100" />
                               <span>Novo Agendamento</span>
                             </Link>
-                          )}
-
-                          {/* BOTÃO ADMINISTRATIVO: PACOTE / PROGRAMA DE CONSULTAS (Secretária, Médico, Admin e Dono) */}
-                          {canManagePacotes && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedPatientForPacote(p);
-                                setIsPacoteModalOpen(true);
-                              }}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 hover:border-teal-300 rounded-lg transition-colors cursor-pointer"
-                              title="Configurar Programa & Pacote de Consultas"
-                            >
-                              <Award className="w-3.5 h-3.5 text-teal-600" />
-                              <span>Pacote</span>
-                            </button>
                           )}
 
                           {/* BOTÃO OPERACIONAL: EDITAR CADASTRO */}
