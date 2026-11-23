@@ -80,8 +80,14 @@ export async function proxy(request: NextRequest) {
     sessao?.role === "RECEPTIONIST";
 
   if (isSecretaria) {
+    const isRotaProntuarioPagina =
+      pathname.startsWith("/pacientes/") &&
+      pathname !== "/pacientes/" &&
+      !pathname.startsWith("/pacientes/novo");
+
     const isRotaClinica =
       ROTAS_CLINICAS_SENSIVEIS.some((rota) => pathname.startsWith(rota)) ||
+      isRotaProntuarioPagina ||
       pathname.includes("/prontuario") ||
       pathname.includes("/termometro") ||
       pathname.includes("/protocolo-glicemico") ||
@@ -121,6 +127,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/api/checkin-intestinal") ||
     (pathname.startsWith("/api/pacientes/") &&
       request.method === "GET" &&
+      !pathname.includes("/prontuario") &&
       !pathname.includes("/termometro") &&
       !pathname.endsWith("/pacotes")) ||
     (pathname.startsWith("/api/pacientes/") &&

@@ -9,9 +9,13 @@ import {
 import {
   CheckinHidratacaoEntity,
   CheckinIntestinalEntity,
+  ConsultaPacoteEntity,
   OrganizationEntity,
+  PacoteAcompanhamentoEntity,
   PatientEntity,
   type BiologicalSex,
+  type ConsultaPacote,
+  type PacoteAcompanhamento,
   type Patient,
   type PatientStatus,
 } from "@/lib/db/entities";
@@ -22,6 +26,12 @@ import {
   resolverUsuarioMedicoId,
   type MedicoResponsavelDTO,
 } from "@/lib/medico-responsavel";
+import { getDataDiaBR } from "@/lib/date-br";
+import {
+  consultaDescontaSaldo,
+  diffDiasIso,
+  type PacoteAtivoResumoListaDTO,
+} from "@/lib/pacotes-faaz";
 
 export const dynamic = "force-dynamic";
 
@@ -61,10 +71,11 @@ export async function GET() {
     }
 
     // Projeção explícita: omite CLOBs pesados não usados na listagem (workoutRestrictions, activeModules)
-    // Executa em onda leve (máx. 2 em paralelo): lista de pacientes + lista de médicos responsáveis ativos
+    // Executa em onda leve (máx. 2 em paralelo): pacientes, médicos responsáveis e pacotes ativos (apenas dados administrativos)
     const listData = {
       pacientes: [] as Patient[],
       medicos: [] as MedicoResponsavelDTO[],
+      pacotesAtivos: [] as PacoteAcompanhamento[],
     };
 
     await runWithConcurrency(
@@ -117,11 +128,83 @@ export async function GET() {
         async () => {
           listData.medicos = await listarMedicosClinica(orgId);
         },
+        async () => {
+          listData.pacotesAtivos = await withRepositoryRetry(
+            PacoteAcompanhamentoEntity,
+            (repo) =>
+              repo.find({
+                where: { status: "ATIVO" },
+                select: {
+                  id: true,
+                  pacienteId: true,
+                  nomePlano: true,
+                  qtdTotalConsultas: true,
+                  dataInicio: true,
+                  dataValidade: true,
+                  status: true,
+                  createdAt: true,
+                },
+                order: { createdAt: "DESC" },
+              }),
+            { label: "pacientes:pacotesAtivos" },
+          );
+        },
       ],
       2,
     );
 
-    const { pacientes, medicos } = listData;
+    const { pacientes, medicos, pacotesAtivos } = listData;
+
+    // Mantém apenas o pacote ATIVO mais recente por paciente
+    const pacoteMaisRecentePorPaciente = new Map<string, PacoteAcompanhamento>();
+    for (const pac of pacotesAtivos) {
+      if (!pacoteMaisRecentePorPaciente.has(pac.pacienteId)) {
+        pacoteMaisRecentePorPaciente.set(pac.pacienteId, pac);
+      }
+    }
+
+    const activePacoteIds = Array.from(pacoteMaisRecentePorPaciente.values()).map(
+      (p) => p.id,
+    );
+
+    const realizadasPorPacote = new Map<string, number>();
+    if (activePacoteIds.length > 0) {
+      const CHUNK_SIZE = 500;
+      const chunks: string[][] = [];
+      for (let i = 0; i < activePacoteIds.length; i += CHUNK_SIZE) {
+        chunks.push(activePacoteIds.slice(i, i + CHUNK_SIZE));
+      }
+
+      const consultasChunks: ConsultaPacote[][] = [];
+      await runWithConcurrency(
+        chunks.map((chunkIds, idx) => async () => {
+          const rows = await withRepositoryRetry(
+            ConsultaPacoteEntity,
+            (repo) =>
+              repo.find({
+                where: { pacoteId: In(chunkIds) },
+                select: { id: true, pacoteId: true, status: true },
+              }),
+            { label: `pacientes:consultasPacotes:${idx}` },
+          );
+          consultasChunks.push(rows);
+        }),
+        2,
+      );
+
+      for (const rows of consultasChunks) {
+        for (const c of rows) {
+          if (consultaDescontaSaldo(c.status)) {
+            realizadasPorPacote.set(
+              c.pacoteId,
+              (realizadasPorPacote.get(c.pacoteId) ?? 0) + 1,
+            );
+          }
+        }
+      }
+    }
+
+    const hojeIso = getDataDiaBR();
     const medicoById = new Map<string, MedicoResponsavelDTO>(
       medicos.map((m) => [m.id, m]),
     );
@@ -131,6 +214,37 @@ export async function GET() {
       const medicoResponsavel = p.primaryDoctorId
         ? medicoById.get(p.primaryDoctorId) ?? null
         : null;
+
+      const pacAtivo = pacoteMaisRecentePorPaciente.get(p.id) ?? null;
+      let pacoteAtivoResumo: PacoteAtivoResumoListaDTO | null = null;
+      if (pacAtivo) {
+        const qtdTotal = Math.max(1, Number(pacAtivo.qtdTotalConsultas) || 1);
+        const consultasRealizadas = realizadasPorPacote.get(pacAtivo.id) ?? 0;
+        const consultasRestantes = Math.max(0, qtdTotal - consultasRealizadas);
+        const diasParaVencer = pacAtivo.dataValidade
+          ? diffDiasIso(hojeIso, pacAtivo.dataValidade)
+          : null;
+        const vencido = diasParaVencer !== null && diasParaVencer < 0;
+        const alertaRenovacao =
+          pacAtivo.status === "ATIVO" &&
+          (consultasRestantes <= 1 ||
+            (diasParaVencer !== null && diasParaVencer <= 15));
+
+        pacoteAtivoResumo = {
+          id: pacAtivo.id,
+          nomePlano: pacAtivo.nomePlano,
+          qtdTotalConsultas: qtdTotal,
+          consultasRealizadas,
+          consultasRestantes,
+          dataInicio: pacAtivo.dataInicio,
+          dataValidade: pacAtivo.dataValidade ?? null,
+          status: pacAtivo.status,
+          diasParaVencer,
+          vencido,
+          alertaRenovacao,
+        };
+      }
+
       return {
         id: p.id,
         recordCode: p.recordCode,
@@ -143,6 +257,7 @@ export async function GET() {
         profissao: p.profissao || "",
         convenio: p.convenio || "Particular",
         planoFaaz: Boolean(p.planoFaaz),
+        pacoteAtivo: pacoteAtivoResumo,
         status: p.patientStatus === "ACTIVE" ? "Ativo" : "Inativo",
         telefoneWhatsapp: p.phoneWhatsapp || "",
         telefoneSecundario: p.telefoneSecundario || "",

@@ -15,7 +15,10 @@ import {
   type TipoConsultaPacote,
 } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
-import { podeCadastrarPacientes } from "@/lib/auth-rbac";
+import {
+  podeAcessarDadosClinicos,
+  podeGerenciarPacotes,
+} from "@/lib/auth-rbac";
 import { formatarHoraBR, getDataDiaBR, toIsoUtc } from "@/lib/date-br";
 import {
   consultaDescontaSaldo,
@@ -88,10 +91,69 @@ function validarStatusPacote(raw: unknown): StatusPacoteAcompanhamento | null {
   return null;
 }
 
+function revalidarRotasPacientes() {
+  try {
+    revalidatePath("/dashboard/pacientes");
+    revalidatePath("/pacientes");
+  } catch {
+    // ignora fora de contexto RSC
+  }
+}
+
+async function sincronizarConsultasRealizadas(
+  manager: EntityManager,
+  pacote: PacoteAcompanhamento,
+  qtdDesejada: number,
+  profissionalNome: string,
+  dataReferencia: string,
+  motivo: string,
+): Promise<void> {
+  const consultaRepo = manager.getRepository(ConsultaPacoteEntity);
+  const existentes = await consultaRepo.find({
+    where: { pacoteId: pacote.id },
+    order: { createdAt: "DESC" },
+  });
+
+  const descontam = existentes.filter((c) => consultaDescontaSaldo(c.status));
+  const qtdAtual = descontam.length;
+
+  if (qtdDesejada > qtdAtual) {
+    const diferenca = qtdDesejada - qtdAtual;
+    const novas = Array.from({ length: diferenca }).map(() =>
+      consultaRepo.create({
+        pacoteId: pacote.id,
+        pacienteId: pacote.pacienteId,
+        dataConsulta: dataReferencia,
+        horaConsulta: null,
+        tipo: "PRESENCIAL",
+        status: "REALIZADA",
+        profissionalNome: profissionalNome.slice(0, 120),
+        evolucaoId: null,
+        observacao: motivo.slice(0, 400),
+      }),
+    );
+    await consultaRepo.save(novas);
+  } else if (qtdDesejada < qtdAtual) {
+    const removerQtd = qtdAtual - qtdDesejada;
+    // Prioriza remover lançamentos administrativos (sem vínculo a evolução médica) mais recentes
+    const ordenadasParaRemocao = [...descontam].sort((a, b) => {
+      const aSemVinculo = a.evolucaoId ? 1 : 0;
+      const bSemVinculo = b.evolucaoId ? 1 : 0;
+      if (aSemVinculo !== bSemVinculo) return aSemVinculo - bSemVinculo;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+    const paraRemover = ordenadasParaRemocao.slice(0, removerQtd);
+    if (paraRemover.length > 0) {
+      await consultaRepo.remove(paraRemover);
+    }
+  }
+}
+
 function montarResumoPacote(
   pacote: PacoteAcompanhamento,
   consultasBrutas: ConsultaPacote[],
   hojeIso: string,
+  incluirVinculoClinico: boolean,
 ): PacoteResumoDTO {
   const ordenadas = [...consultasBrutas].sort((a, b) => {
     const cmpData = a.dataConsulta.localeCompare(b.dataConsulta);
@@ -114,7 +176,7 @@ function montarResumoPacote(
     tipo: c.tipo,
     status: c.status,
     profissionalNome: c.profissionalNome ?? null,
-    evolucaoId: c.evolucaoId ?? null,
+    evolucaoId: incluirVinculoClinico ? (c.evolucaoId ?? null) : null,
     observacao: c.observacao ?? null,
     createdAt: toIsoUtc(c.createdAt) ?? new Date(c.createdAt).toISOString(),
   }));
@@ -178,6 +240,7 @@ function montarResumoPacote(
 async function montarRespostaPacotes(
   pacienteId: string,
   manager?: EntityManager,
+  incluirVinculoClinico = false,
 ): Promise<PacotesPacienteResponse | null> {
   const patientRepo = manager
     ? manager.getRepository(PatientEntity)
@@ -215,7 +278,12 @@ async function montarRespostaPacotes(
   }
 
   const resumos = pacotes.map((p) =>
-    montarResumoPacote(p, consultasPorPacote.get(p.id) || [], hojeIso),
+    montarResumoPacote(
+      p,
+      consultasPorPacote.get(p.id) || [],
+      hojeIso,
+      incluirVinculoClinico,
+    ),
   );
 
   const pacoteAtivo = resumos.find((p) => p.status === "ATIVO") ?? null;
@@ -280,9 +348,10 @@ async function verificarAcesso(req: NextRequest) {
         { status: 401 },
       ),
       sessao: null,
+      incluirVinculoClinico: false,
     };
   }
-  if (!podeCadastrarPacientes(sessao.cargo)) {
+  if (!podeGerenciarPacotes(sessao.cargo)) {
     return {
       error: NextResponse.json(
         {
@@ -292,22 +361,32 @@ async function verificarAcesso(req: NextRequest) {
         { status: 403 },
       ),
       sessao: null,
+      incluirVinculoClinico: false,
     };
   }
-  return { error: null, sessao };
+  return {
+    error: null,
+    sessao,
+    incluirVinculoClinico: podeAcessarDadosClinicos(sessao.cargo),
+  };
 }
 
 /**
  * GET /api/pacientes/[id]/pacotes
- * Retorna o pacote ativo (com extrato e alertas), último concluído e histórico de ciclos.
+ * Retorna estritamente dados administrativos de pacotes/programas de consultas
+ * (nunca retorna evoluções clínicas, dieta, medicações ou glicemia).
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const { error } = await verificarAcesso(req);
+    const { error, incluirVinculoClinico } = await verificarAcesso(req);
     if (error) return error;
 
     const { id } = await params;
-    const resposta = await montarRespostaPacotes(id);
+    const resposta = await montarRespostaPacotes(
+      id,
+      undefined,
+      incluirVinculoClinico,
+    );
     if (!resposta) {
       return NextResponse.json(
         { error: "Paciente não encontrado." },
@@ -339,7 +418,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const { error, sessao } = await verificarAcesso(req);
+    const { error, sessao, incluirVinculoClinico } = await verificarAcesso(req);
     if (error || !sessao) return error!;
 
     const { id } = await params;
@@ -350,6 +429,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       const nomePlano =
         typeof body.nomePlano === "string" ? body.nomePlano.trim() : "";
       const qtdTotal = Number.parseInt(String(body.qtdTotalConsultas ?? ""), 10);
+      const consultasRealizadasIniciais =
+        body.consultasRealizadas !== undefined &&
+        body.consultasRealizadas !== null &&
+        body.consultasRealizadas !== ""
+          ? Number.parseInt(String(body.consultasRealizadas), 10)
+          : 0;
+      const statusExplicito =
+        body.status !== undefined && body.status !== null && body.status !== ""
+          ? validarStatusPacote(body.status)
+          : null;
       const dataInicio = validarDataIso(body.dataInicio) || getDataDiaBR();
       const dataValidade = body.dataValidade
         ? validarDataIso(body.dataValidade)
@@ -368,6 +457,30 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       if (!Number.isFinite(qtdTotal) || qtdTotal < 1 || qtdTotal > 999) {
         return NextResponse.json(
           { error: "A quantidade total de consultas deve estar entre 1 e 999." },
+          { status: 400 },
+        );
+      }
+      if (
+        !Number.isFinite(consultasRealizadasIniciais) ||
+        consultasRealizadasIniciais < 0 ||
+        consultasRealizadasIniciais > qtdTotal
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "A quantidade de consultas já realizadas deve estar entre 0 e o total do pacote.",
+          },
+          { status: 400 },
+        );
+      }
+      if (
+        body.status !== undefined &&
+        body.status !== null &&
+        body.status !== "" &&
+        !statusExplicito
+      ) {
+        return NextResponse.json(
+          { error: "Status do pacote inválido." },
           { status: 400 },
         );
       }
@@ -394,28 +507,33 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         });
         if (!paciente) return null;
 
-        // Encerra pacotes ATIVO anteriores ao criar/renovar
-        const ativosAnteriores = await pacoteRepo.find({
-          where: { pacienteId: id, status: "ATIVO" },
-        });
+        const statusInicial: StatusPacoteAcompanhamento =
+          statusExplicito ?? "ATIVO";
 
-        for (const anterior of ativosAnteriores) {
-          if (acao === "renovar_pacote") {
-            anterior.status = "RENOVADO";
-          } else {
-            const consAnt = await consultaRepo.find({
-              where: { pacoteId: anterior.id },
-              select: { id: true, status: true },
-            });
-            const realizadasAnt = consAnt.filter((c) =>
-              consultaDescontaSaldo(c.status),
-            ).length;
-            anterior.status =
-              realizadasAnt >= anterior.qtdTotalConsultas
-                ? "CONCLUIDO"
-                : "RENOVADO";
+        // Encerra pacotes ATIVO anteriores ao criar/renovar um pacote ATIVO
+        if (statusInicial === "ATIVO") {
+          const ativosAnteriores = await pacoteRepo.find({
+            where: { pacienteId: id, status: "ATIVO" },
+          });
+
+          for (const anterior of ativosAnteriores) {
+            if (acao === "renovar_pacote") {
+              anterior.status = "RENOVADO";
+            } else {
+              const consAnt = await consultaRepo.find({
+                where: { pacoteId: anterior.id },
+                select: { id: true, status: true },
+              });
+              const realizadasAnt = consAnt.filter((c) =>
+                consultaDescontaSaldo(c.status),
+              ).length;
+              anterior.status =
+                realizadasAnt >= anterior.qtdTotalConsultas
+                  ? "CONCLUIDO"
+                  : "RENOVADO";
+            }
+            await pacoteRepo.save(anterior);
           }
-          await pacoteRepo.save(anterior);
         }
 
         const criado = await pacoteRepo.save(
@@ -425,11 +543,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             qtdTotalConsultas: qtdTotal,
             dataInicio,
             dataValidade,
-            status: "ATIVO",
+            status: statusInicial,
             observacoes,
             createdBy: sessao.nome || sessao.userId,
           }),
         );
+
+        if (consultasRealizadasIniciais > 0) {
+          await sincronizarConsultasRealizadas(
+            manager,
+            criado,
+            consultasRealizadasIniciais,
+            sessao.nome || "Equipe Administrativa FAAZ",
+            dataInicio,
+            "Consulta já realizada informada na configuração inicial do pacote.",
+          );
+          if (!statusExplicito) {
+            await recalcularStatusAutomaticoPacote(manager, criado);
+          }
+        }
 
         // Ativa automaticamente a flag de Membro Plano FAAZ em PATIENTS
         if (!paciente.planoFaaz) {
@@ -438,7 +570,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           await patientRepo.save(paciente);
         }
 
-        const resposta = await montarRespostaPacotes(id, manager);
+        const resposta = await montarRespostaPacotes(
+          id,
+          manager,
+          incluirVinculoClinico,
+        );
         return { criado, resposta };
       });
 
@@ -449,11 +585,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         );
       }
 
-      try {
-        revalidatePath("/dashboard/pacientes");
-      } catch {
-        // ignora fora de contexto RSC
-      }
+      revalidarRotasPacientes();
 
       return NextResponse.json(
         {
@@ -481,7 +613,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           ? body.profissionalNome.trim().slice(0, 120)
           : sessao.nome || "Equipe Clínica FAAZ";
       const evolucaoId =
-        typeof body.evolucaoId === "string" && body.evolucaoId.trim()
+        incluirVinculoClinico &&
+        typeof body.evolucaoId === "string" &&
+        body.evolucaoId.trim()
           ? body.evolucaoId.trim().slice(0, 36)
           : null;
       const observacao =
@@ -537,7 +671,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
         await recalcularStatusAutomaticoPacote(manager, pacoteAlvo);
 
-        const resposta = await montarRespostaPacotes(id, manager);
+        const resposta = await montarRespostaPacotes(
+          id,
+          manager,
+          incluirVinculoClinico,
+        );
         return { consultaCriada, resposta, erro: null, statusCode: 201 as const };
       });
 
@@ -547,6 +685,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           { status: txRes.statusCode },
         );
       }
+
+      revalidarRotasPacientes();
 
       return NextResponse.json(
         {
@@ -576,13 +716,21 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 }
 
 /**
+ * PUT /api/pacientes/[id]/pacotes
+ * Alias administrativo para PATCH (atualização de pacote ou consulta do pacote).
+ */
+export async function PUT(req: NextRequest, ctx: RouteParams) {
+  return PATCH(req, ctx);
+}
+
+/**
  * PATCH /api/pacientes/[id]/pacotes
  * Edita um pacote (`pacoteId`) OU uma consulta específica (`consultaId`).
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const { error } = await verificarAcesso(req);
-    if (error) return error;
+    const { error, sessao, incluirVinculoClinico } = await verificarAcesso(req);
+    if (error || !sessao) return error!;
 
     const { id } = await params;
     const body = await req.json();
@@ -648,7 +796,11 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           await recalcularStatusAutomaticoPacote(manager, pacotePai);
         }
 
-        const resposta = await montarRespostaPacotes(id, manager);
+        const resposta = await montarRespostaPacotes(
+          id,
+          manager,
+          incluirVinculoClinico,
+        );
         return { resposta, erro: null, statusCode: 200 as const };
       });
 
@@ -658,6 +810,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           { status: txRes.statusCode },
         );
       }
+
+      revalidarRotasPacientes();
 
       return NextResponse.json({
         ...txRes.resposta,
@@ -670,6 +824,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       const pacoteId = body.pacoteId.trim();
 
       const txRes = await withTransaction(async (manager) => {
+        const patientRepo = manager.getRepository(PatientEntity);
         const pacoteRepo = manager.getRepository(PacoteAcompanhamentoEntity);
         const pacote = await pacoteRepo.findOne({
           where: { id: pacoteId, pacienteId: id },
@@ -692,6 +847,29 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             return { erro: "Quantidade de consultas deve estar entre 1 e 999.", statusCode: 400 as const };
           }
           pacote.qtdTotalConsultas = qtd;
+        }
+
+        let consultasRealizadasAlvo: number | null = null;
+        if (
+          body.consultasRealizadas !== undefined &&
+          body.consultasRealizadas !== null &&
+          body.consultasRealizadas !== ""
+        ) {
+          const qtdRealizadas = Number.parseInt(
+            String(body.consultasRealizadas),
+            10,
+          );
+          if (
+            !Number.isFinite(qtdRealizadas) ||
+            qtdRealizadas < 0 ||
+            qtdRealizadas > pacote.qtdTotalConsultas
+          ) {
+            return {
+              erro: "Consultas realizadas deve estar entre 0 e a quantidade total do pacote.",
+              statusCode: 400 as const,
+            };
+          }
+          consultasRealizadasAlvo = qtdRealizadas;
         }
 
         if (body.dataInicio !== undefined) {
@@ -734,17 +912,52 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           if (!st) {
             return { erro: "Status do pacote inválido.", statusCode: 400 as const };
           }
+          if (st === "ATIVO" && pacote.status !== "ATIVO") {
+            // Garante apenas um ciclo ATIVO por paciente
+            const outrosAtivos = await pacoteRepo.find({
+              where: { pacienteId: id, status: "ATIVO" },
+            });
+            for (const outro of outrosAtivos) {
+              if (outro.id !== pacote.id) {
+                outro.status = "RENOVADO";
+                await pacoteRepo.save(outro);
+              }
+            }
+            const paciente = await patientRepo.findOne({
+              where: { id, deletedAt: IsNull() },
+            });
+            if (paciente && !paciente.planoFaaz) {
+              paciente.planoFaaz = true;
+              if (sessao.userId) paciente.updatedBy = sessao.userId;
+              await patientRepo.save(paciente);
+            }
+          }
           pacote.status = st;
           statusExplicitado = true;
         }
 
         await pacoteRepo.save(pacote);
 
+        if (consultasRealizadasAlvo !== null) {
+          await sincronizarConsultasRealizadas(
+            manager,
+            pacote,
+            consultasRealizadasAlvo,
+            sessao.nome || "Equipe Administrativa FAAZ",
+            getDataDiaBR(),
+            "Ajuste administrativo de consultas realizadas no pacote.",
+          );
+        }
+
         if (!statusExplicitado) {
           await recalcularStatusAutomaticoPacote(manager, pacote);
         }
 
-        const resposta = await montarRespostaPacotes(id, manager);
+        const resposta = await montarRespostaPacotes(
+          id,
+          manager,
+          incluirVinculoClinico,
+        );
         return { resposta, erro: null, statusCode: 200 as const };
       });
 
@@ -754,6 +967,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           { status: txRes.statusCode },
         );
       }
+
+      revalidarRotasPacientes();
 
       return NextResponse.json({
         ...txRes.resposta,
@@ -781,7 +996,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
-    const { error } = await verificarAcesso(req);
+    const { error, incluirVinculoClinico } = await verificarAcesso(req);
     if (error) return error;
 
     const { id } = await params;
@@ -811,7 +1026,11 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
           await recalcularStatusAutomaticoPacote(manager, pacotePai);
         }
 
-        const resposta = await montarRespostaPacotes(id, manager);
+        const resposta = await montarRespostaPacotes(
+          id,
+          manager,
+          incluirVinculoClinico,
+        );
         return { resposta, erro: null, statusCode: 200 as const };
       });
 
@@ -821,6 +1040,8 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
           { status: txRes.statusCode },
         );
       }
+
+      revalidarRotasPacientes();
 
       return NextResponse.json({
         ...txRes.resposta,
@@ -841,7 +1062,11 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
         pacote.status = "CANCELADO";
         await pacoteRepo.save(pacote);
 
-        const resposta = await montarRespostaPacotes(id, manager);
+        const resposta = await montarRespostaPacotes(
+          id,
+          manager,
+          incluirVinculoClinico,
+        );
         return { resposta, erro: null, statusCode: 200 as const };
       });
 
@@ -851,6 +1076,8 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
           { status: txRes.statusCode },
         );
       }
+
+      revalidarRotasPacientes();
 
       return NextResponse.json({
         ...txRes.resposta,

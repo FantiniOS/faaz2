@@ -20,10 +20,18 @@ import {
   Send,
   FileText,
   Calendar,
+  Award,
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
 import { mockUserSession } from "@/mocks/dashboard";
 import { ProntuarioModal } from "@/components/ProntuarioModal";
+import { PacotePacienteModal } from "@/components/PacotePacienteModal";
+import { podeGerenciarPacotes } from "@/lib/auth-rbac";
+import {
+  formatIsoDateBr,
+  type PacoteAtivoResumoListaDTO,
+  type PacotesPacienteResponse,
+} from "@/lib/pacotes-faaz";
 import {
   getClientCache,
   invalidateClientCache,
@@ -49,6 +57,7 @@ export interface PacienteCadastral {
   profissao?: string;
   convenio?: string;
   planoFaaz?: boolean;
+  pacoteAtivo?: PacoteAtivoResumoListaDTO | null;
   status?: string;
   telefoneWhatsapp: string;
   telefoneSecundario?: string;
@@ -94,6 +103,10 @@ export default function PacientesPage() {
   // Estado do Modal de Prontuário Clínico (Ficha Digital)
   const [selectedPatientForProntuario, setSelectedPatientForProntuario] = useState<PacienteCadastral | null>(null);
   const [isProntuarioOpen, setIsProntuarioOpen] = useState(false);
+
+  // Estado do Modal Administrativo de Programa & Pacote de Consultas (Secretária, Médico, Admin e Dono)
+  const [selectedPatientForPacote, setSelectedPatientForPacote] = useState<PacienteCadastral | null>(null);
+  const [isPacoteModalOpen, setIsPacoteModalOpen] = useState(false);
 
   // Estado para exclusão com confirmação (Somente Dono/Admin)
   const [patientToDelete, setPatientToDelete] = useState<PacienteCadastral | null>(null);
@@ -267,6 +280,48 @@ export default function PacientesPage() {
     currentUserCargo === "ADMINISTRADOR" ||
     currentUserRole === "ADMIN" ||
     currentUserRole === "CLINIC_ADMIN";
+
+  // Gestão administrativa de programas/pacotes de consultas (visível para Secretária, Médico, Admin e Dono da Clínica)
+  const canManagePacotes =
+    podeGerenciarPacotes(currentUserCargo) ||
+    podeGerenciarPacotes(currentUserRole);
+
+  // Sincroniza imediatamente o selo do pacote na linha do paciente após alteração no Modal de Pacotes
+  function handlePacotesPacienteUpdated(
+    pacienteId: string,
+    next: PacotesPacienteResponse
+  ) {
+    const ativo = next.pacoteAtivo;
+    const resumoLista: PacoteAtivoResumoListaDTO | null = ativo
+      ? {
+          id: ativo.id,
+          nomePlano: ativo.nomePlano,
+          qtdTotalConsultas: ativo.qtdTotalConsultas,
+          consultasRealizadas: ativo.consultasRealizadas,
+          consultasRestantes: ativo.consultasRestantes,
+          dataInicio: ativo.dataInicio,
+          dataValidade: ativo.dataValidade,
+          status: ativo.status,
+          diasParaVencer: ativo.diasParaVencer,
+          vencido: ativo.vencido,
+          alertaRenovacao: ativo.alertaRenovacao,
+        }
+      : null;
+
+    setPacientes((prev) => {
+      const updated = prev.map((item) =>
+        item.id === pacienteId
+          ? {
+              ...item,
+              planoFaaz: next.membroPlanoFaaz,
+              pacoteAtivo: resumoLista,
+            }
+          : item
+      );
+      setClientCache("pacientes:list", updated);
+      return updated;
+    });
+  }
 
   // Abre automaticamente o Prontuário quando redirecionado da Agenda (?prontuarioId=...)
   useEffect(() => {
@@ -602,13 +657,24 @@ export default function PacientesPage() {
       // 4. Busca por Código de Prontuário
       const matchRecordCode = normalizeSearch(p.recordCode).includes(qNorm);
 
-      // 5. Busca por Cidade, Bairro ou Convênio
+      // 5. Busca por Cidade, Bairro, Convênio ou Programa/Pacote
       const matchEnd =
         normalizeSearch(p.cidade).includes(qNorm) ||
         normalizeSearch(p.bairro).includes(qNorm);
       const matchConv = normalizeSearch(p.convenio).includes(qNorm);
+      const matchPacote =
+        normalizeSearch(p.pacoteAtivo?.nomePlano).includes(qNorm) ||
+        (!p.pacoteAtivo && "avulso".includes(qNorm));
 
-      return matchNome || matchCpf || matchTel || matchRecordCode || matchEnd || matchConv;
+      return (
+        matchNome ||
+        matchCpf ||
+        matchTel ||
+        matchRecordCode ||
+        matchEnd ||
+        matchConv ||
+        matchPacote
+      );
     });
   }, [pacientes, searchQuery, apenasMembrosFaaz]);
 
@@ -716,6 +782,7 @@ export default function PacientesPage() {
                   <th className="py-2.5 px-3 font-bold">WhatsApp</th>
                   <th className="py-2.5 px-3 font-bold">Cidade / Bairro</th>
                   <th className="py-2.5 px-3 font-bold">Convênio</th>
+                  <th className="py-2.5 px-3 font-bold">Programa / Pacote</th>
                   <th className="py-2.5 px-3 font-bold text-center">Status</th>
                   <th className="py-2.5 px-4 font-bold text-right">Ações</th>
                 </tr>
@@ -723,7 +790,7 @@ export default function PacientesPage() {
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-slate-400">
+                    <td colSpan={8} className="py-10 text-center text-slate-400">
                       <div className="flex items-center justify-center gap-2">
                         <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
                         <span>Carregando pacientes da clínica...</span>
@@ -732,7 +799,7 @@ export default function PacientesPage() {
                   </tr>
                 ) : filteredPacientes.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-slate-400">
+                    <td colSpan={8} className="py-10 text-center text-slate-400">
                       Nenhum paciente encontrado para esta busca.
                     </td>
                   </tr>
@@ -802,6 +869,71 @@ export default function PacientesPage() {
                         </span>
                       </td>
 
+                      {/* Selo discreto do Programa / Pacote ativo ou Avulso */}
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        {p.pacoteAtivo ? (
+                          <button
+                            type="button"
+                            disabled={!canManagePacotes}
+                            onClick={() => {
+                              if (!canManagePacotes) return;
+                              setSelectedPatientForPacote(p);
+                              setIsPacoteModalOpen(true);
+                            }}
+                            title={`${p.pacoteAtivo.nomePlano} • ${p.pacoteAtivo.consultasRealizadas} de ${p.pacoteAtivo.qtdTotalConsultas} realizadas • ${
+                              p.pacoteAtivo.consultasRestantes === 0
+                                ? "Saldo encerrado"
+                                : p.pacoteAtivo.consultasRestantes === 1
+                                  ? "Falta 1"
+                                  : `Faltam ${p.pacoteAtivo.consultasRestantes}`
+                            }${
+                              p.pacoteAtivo.dataValidade
+                                ? ` • Validade ${formatIsoDateBr(p.pacoteAtivo.dataValidade)}`
+                                : ""
+                            }`}
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                              canManagePacotes ? "cursor-pointer hover:shadow-2xs" : "cursor-default"
+                            } ${
+                              p.pacoteAtivo.vencido || p.pacoteAtivo.consultasRestantes === 0
+                                ? "bg-rose-50 text-rose-700 border-rose-200"
+                                : p.pacoteAtivo.alertaRenovacao
+                                  ? "bg-amber-50 text-amber-800 border-amber-200"
+                                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            }`}
+                          >
+                            <Award className="w-3 h-3 shrink-0" />
+                            <span className="max-w-[130px] truncate">
+                              {p.pacoteAtivo.nomePlano}
+                            </span>
+                            <span className="font-mono font-black tabular-nums opacity-90">
+                              {p.pacoteAtivo.consultasRealizadas}/{p.pacoteAtivo.qtdTotalConsultas}
+                            </span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={!canManagePacotes}
+                            onClick={() => {
+                              if (!canManagePacotes) return;
+                              setSelectedPatientForPacote(p);
+                              setIsPacoteModalOpen(true);
+                            }}
+                            title={
+                              canManagePacotes
+                                ? "Atendimento avulso — clique para configurar um programa/pacote"
+                                : "Atendimento avulso"
+                            }
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200 transition-colors ${
+                              canManagePacotes
+                                ? "cursor-pointer hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+                                : "cursor-default"
+                            }`}
+                          >
+                            <span>Avulso</span>
+                          </button>
+                        )}
+                      </td>
+
                       {/* Status */}
                       <td className="py-2 px-3 text-center whitespace-nowrap">
                         <span
@@ -844,6 +976,22 @@ export default function PacientesPage() {
                               <Calendar className="w-3.5 h-3.5 text-emerald-100" />
                               <span>Novo Agendamento</span>
                             </Link>
+                          )}
+
+                          {/* BOTÃO ADMINISTRATIVO: PACOTE / PROGRAMA DE CONSULTAS (Secretária, Médico, Admin e Dono) */}
+                          {canManagePacotes && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPatientForPacote(p);
+                                setIsPacoteModalOpen(true);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 hover:border-teal-300 rounded-lg transition-colors cursor-pointer"
+                              title="Configurar Programa & Pacote de Consultas"
+                            >
+                              <Award className="w-3.5 h-3.5 text-teal-600" />
+                              <span>Pacote</span>
+                            </button>
                           )}
 
                           {/* BOTÃO OPERACIONAL: EDITAR CADASTRO */}
@@ -1430,9 +1578,23 @@ export default function PacientesPage() {
           onClose={() => {
             setIsProntuarioOpen(false);
             setSelectedPatientForProntuario(null);
+            void loadPacientes(false, false);
           }}
           paciente={selectedPatientForProntuario}
           currentUserCargo={currentUserCargo}
+        />
+      )}
+
+      {/* MODAL ADMINISTRATIVO: PROGRAMA & PACOTE DE CONSULTAS (Secretária, Médico, Admin e Dono — sem prontuário) */}
+      {canManagePacotes && (
+        <PacotePacienteModal
+          isOpen={isPacoteModalOpen}
+          onClose={() => {
+            setIsPacoteModalOpen(false);
+            setSelectedPatientForPacote(null);
+          }}
+          paciente={selectedPatientForPacote}
+          onPacotesUpdated={handlePacotesPacienteUpdated}
         />
       )}
     </div>

@@ -49,6 +49,14 @@ export const CARGOS_CADASTRO_PACIENTES: Cargo[] = [
   "ADMINISTRADOR",
 ];
 
+/** Cargos que podem gerenciar administrativamente programas/pacotes de consultas (sem acesso ao prontuário clínico) */
+export const CARGOS_GESTAO_PACOTES: Cargo[] = [
+  "DONO_CLINICA",
+  "MEDICO",
+  "SECRETARIA",
+  "ADMINISTRADOR",
+];
+
 /** Cargos autorizados a apagar/excluir pacientes (Somente Dono da Clínica e Administrador) */
 export const CARGOS_EXCLUSAO_PACIENTES: Cargo[] = [
   "DONO_CLINICA",
@@ -97,6 +105,19 @@ export function podeCadastrarPacientes(cargo: string | null | undefined): boolea
   if (!norm) return false;
   return (
     CARGOS_CADASTRO_PACIENTES.includes(norm as Cargo) ||
+    norm === "CLINIC_ADMIN" ||
+    norm === "DOCTOR" ||
+    norm === "RECEPTIONIST" ||
+    norm === "ADMIN"
+  );
+}
+
+/** Valida se o cargo pode gerenciar programas/pacotes de consultas (endpoint administrativo isolado) */
+export function podeGerenciarPacotes(cargo: string | null | undefined): boolean {
+  const norm = normalizarCargoRbac(cargo);
+  if (!norm) return false;
+  return (
+    CARGOS_GESTAO_PACOTES.includes(norm as Cargo) ||
     norm === "CLINIC_ADMIN" ||
     norm === "DOCTOR" ||
     norm === "RECEPTIONIST" ||

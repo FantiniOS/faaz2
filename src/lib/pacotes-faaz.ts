@@ -54,6 +54,20 @@ export interface PacoteResumoDTO {
   consultas: ConsultaPacoteDTO[];
 }
 
+export interface PacoteAtivoResumoListaDTO {
+  id: string;
+  nomePlano: string;
+  qtdTotalConsultas: number;
+  consultasRealizadas: number;
+  consultasRestantes: number;
+  dataInicio: string; // YYYY-MM-DD
+  dataValidade: string | null; // YYYY-MM-DD
+  status: StatusPacoteAcompanhamento;
+  diasParaVencer: number | null;
+  vencido: boolean;
+  alertaRenovacao: boolean;
+}
+
 export interface PacotesPacienteResponse {
   success: boolean;
   membroPlanoFaaz: boolean;

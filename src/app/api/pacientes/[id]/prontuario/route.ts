@@ -93,15 +93,22 @@ function safeOptionalJsonOrText(value: unknown): string {
  * Busca o prontuário clínico e os dados essenciais do paciente.
  * Acesso restrito: DONO_CLINICA, MEDICO.
  */
-export async function GET(_req: NextRequest, { params }: RouteParams) {
+export async function GET(req: NextRequest, { params }: RouteParams) {
   const reqStart = performance.now();
   let pacienteIdLog = "";
   try {
     const { id } = await params;
     pacienteIdLog = id;
-    const sessao = await getSessao();
+    const sessao = await getSessao(req);
 
-    if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
+    if (!sessao) {
+      return NextResponse.json(
+        { error: "Não autenticado. Faça login para acessar o prontuário clínico." },
+        { status: 401 },
+      );
+    }
+
+    if (!podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         {
           error:
@@ -575,9 +582,16 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     pacienteIdLog = id;
-    const sessao = await getSessao();
+    const sessao = await getSessao(req);
 
-    if (sessao && !podeAcessarDadosClinicos(sessao.cargo)) {
+    if (!sessao) {
+      return NextResponse.json(
+        { error: "Não autenticado. Faça login para salvar o prontuário clínico." },
+        { status: 401 },
+      );
+    }
+
+    if (!podeAcessarDadosClinicos(sessao.cargo)) {
       return NextResponse.json(
         {
           error:

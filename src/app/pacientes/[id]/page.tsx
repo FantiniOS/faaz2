@@ -1,12 +1,14 @@
 export const dynamic = "force-dynamic";
 
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getRepository } from "@/lib/db/data-source";
 import {
   CheckInSonoEntity,
   PatientEntity,
   ProntuarioPacienteEntity,
 } from "@/lib/db/entities";
+import { getSessao } from "@/lib/auth-session";
+import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { PacienteProntuarioView } from "./PacienteProntuarioView";
 
 interface PacienteDetailPageProps {
@@ -16,6 +18,14 @@ interface PacienteDetailPageProps {
 export default async function PacienteDetailPage(
   props: PacienteDetailPageProps,
 ) {
+  const sessao = await getSessao();
+  if (!sessao) {
+    redirect("/login");
+  }
+  if (!podeAcessarDadosClinicos(sessao.cargo)) {
+    redirect("/dashboard/pacientes?erro=acesso_negado_clinico");
+  }
+
   const { id } = await props.params;
 
   const patientRepo = await getRepository(PatientEntity);
