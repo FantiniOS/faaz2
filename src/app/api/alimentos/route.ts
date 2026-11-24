@@ -3,15 +3,16 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { Raw } from "typeorm";
 import { z } from "zod";
-import { getRepository } from "@/lib/db/data-source";
-import { AlimentoEntity } from "@/lib/db/entities";
+import { getRepository, withRepositoryRetry } from "@/lib/db/data-source";
+import { AlimentoEntity, type Alimento } from "@/lib/db/entities";
 import { getSessao } from "@/lib/auth-session";
 import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 
 /**
  * GET /api/alimentos?q=termo
- * Rota oficial de busca no banco de alimentos (Tabela TACO / UNICAMP).
- * Insensível a acentos, caixa e vírgulas/hífens (Oracle TRANSLATE + ordenação por relevância).
+ * Rota oficial de busca no banco de alimentos (TACO/UNICAMP + TBCA/POF-IBGE + FRdoc Clínico).
+ * Insensível a acentos, caixa, vírgulas, hífens e conectivos opcionais, com cache leve em memória
+ * (TTL 120s) para buscas sub-milissegundo sem sobrecarregar o pool do Oracle ADB.
  */
 const ALIMENTO_SELECT = {
   id: true,
@@ -27,7 +28,24 @@ const ALIMENTO_SELECT = {
   thumbnailUrl: true,
 } as const;
 
-// Mapeamento 1:1 para TRANSLATE no Oracle (mesmo comprimento; independe de ALTER SESSION no pool)
+type AlimentoResumo = Pick<Alimento, keyof typeof ALIMENTO_SELECT>;
+
+interface IndexedAlimento {
+  item: AlimentoResumo;
+  normFull: string;
+  normBase: string;
+  words: string[];
+  paddedBase: string;
+}
+
+const CATALOG_CACHE_TTL_MS = 120_000;
+let catalogCache: { expiresAt: number; entries: IndexedAlimento[] } | null = null;
+let catalogLoadingPromise: Promise<IndexedAlimento[]> | null = null;
+
+// Conectivos curtos ignorados quando há tokens significativos (ex.: "file de tilapia" -> ["file", "tilapia"])
+const SEARCH_STOPWORDS = new Set(["de", "da", "do", "das", "dos", "e", "a", "o", "em", "no", "na"]);
+
+// Mapeamento 1:1 para TRANSLATE no Oracle (usado na verificação de duplicidade do POST)
 const ORACLE_FROM_CHARS =
   "ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ,-/().%";
 const ORACLE_TO_CHARS =
@@ -47,19 +65,81 @@ function normalizeSearchText(text: string): string {
     .trim();
 }
 
-function relevanceRank(nome: string, normQuery: string, tokens: string[]): number {
-  const normName = normalizeSearchText(nome);
-  if (normName === normQuery) return 0;
-  if (normName.startsWith(`${normQuery} `)) return 1;
-  if (normName.startsWith(normQuery)) return 2;
+function indexAlimento(item: AlimentoResumo): IndexedAlimento {
+  const normFull = normalizeSearchText(item.nome);
+  const normBase = normalizeSearchText(item.nome.replace(/\(.*?\)/g, " ")) || normFull;
+  const words = normBase ? normBase.split(" ") : [];
+  return {
+    item,
+    normFull,
+    normBase,
+    words,
+    paddedBase: ` ${normBase} `,
+  };
+}
 
-  const words = normName.split(" ");
-  const firstToken = tokens[0];
-  if (words[0] === firstToken) return 3;
-  if (normName.startsWith(firstToken)) return 4;
-  if (tokens.every((t) => words.includes(t))) return 5;
-  if (normName.includes(` ${firstToken}`)) return 6;
-  return 7;
+function invalidateCatalogCache() {
+  catalogCache = null;
+}
+
+async function getIndexedCatalog(): Promise<IndexedAlimento[]> {
+  const now = Date.now();
+  if (catalogCache && catalogCache.expiresAt > now) {
+    return catalogCache.entries;
+  }
+
+  if (!catalogLoadingPromise) {
+    catalogLoadingPromise = withRepositoryRetry(
+      AlimentoEntity,
+      (repo) =>
+        repo.find({
+          order: { nome: "ASC" },
+          select: ALIMENTO_SELECT,
+        }),
+      { label: "alimentos:catalog-cache" },
+    )
+      .then((rows) => {
+        const entries = rows.map(indexAlimento);
+        catalogCache = {
+          expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
+          entries,
+        };
+        return entries;
+      })
+      .finally(() => {
+        catalogLoadingPromise = null;
+      });
+  }
+
+  return catalogLoadingPromise;
+}
+
+function matchesAllTokens(entry: IndexedAlimento, tokens: string[]): boolean {
+  for (const tok of tokens) {
+    if (!entry.normFull.includes(tok)) return false;
+  }
+  return true;
+}
+
+function relevanceRank(
+  entry: IndexedAlimento,
+  normQuery: string,
+  sigTokens: string[],
+): number {
+  const { normBase, normFull, words, paddedBase } = entry;
+  if (normBase === normQuery || normFull === normQuery) return 0;
+  if (normBase.startsWith(`${normQuery} `)) return 1;
+  if (normBase.startsWith(normQuery)) return 2;
+
+  const firstToken = sigTokens[0];
+  const allWholeWords = sigTokens.every((t) => words.includes(t));
+  if (firstToken && words[0] === firstToken && allWholeWords) return 3;
+  if (paddedBase.includes(` ${normQuery} `)) return 4;
+  if (firstToken && words[0] === firstToken) return 5;
+  if (allWholeWords) return 6;
+  if (sigTokens.every((t) => words.some((w) => w.startsWith(t)))) return 7;
+  if (firstToken && normBase.startsWith(firstToken)) return 8;
+  return 9;
 }
 
 export async function GET(req: NextRequest) {
@@ -67,17 +147,14 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const termoOriginal = (searchParams.get("q") || "").trim();
     const normQuery = normalizeSearchText(termoOriginal);
-    const tokens = normQuery ? normQuery.split(" ").filter(Boolean).slice(0, 8) : [];
+    const rawTokens = normQuery ? normQuery.split(" ").filter(Boolean).slice(0, 8) : [];
+    const sigTokens = rawTokens.filter((t) => !SEARCH_STOPWORDS.has(t));
+    const effectiveTokens = sigTokens.length > 0 ? sigTokens : rawTokens;
 
-    const alimentoRepo = await getRepository(AlimentoEntity);
+    const catalog = await getIndexedCatalog();
 
-    if (tokens.length === 0) {
-      const resultados = await alimentoRepo.find({
-        take: 50,
-        order: { nome: "ASC" },
-        select: ALIMENTO_SELECT,
-      });
-
+    if (effectiveTokens.length === 0) {
+      const resultados = catalog.slice(0, 50).map((e) => e.item);
       return NextResponse.json({
         sucesso: true,
         total: resultados.length,
@@ -85,35 +162,32 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const params: Record<string, string> = {};
-    tokens.forEach((tok, idx) => {
-      params[`t${idx}`] = `%${tok}%`;
-    });
+    // Prioriza busca com todos os tokens originais; se não houver match (ex.: "file de tilapia"),
+    // utiliza os tokens significativos sem conectivos curtos.
+    let candidatos = catalog.filter((e) => matchesAllTokens(e, rawTokens));
+    if (candidatos.length === 0 && effectiveTokens.length !== rawTokens.length) {
+      candidatos = catalog.filter((e) => matchesAllTokens(e, effectiveTokens));
+    }
 
-    // Busca sem LIMIT antes de ranquear por relevância para não cortar prefixos exatos (ex.: "sal", "maca", "pao")
-    const candidatos = await alimentoRepo.find({
-      where: {
-        nome: Raw(
-          (alias) => {
-            const normCol = oracleNormalizedExpr(alias);
-            return tokens.map((_, idx) => `${normCol} LIKE :t${idx}`).join(" AND ");
-          },
-          params,
-        ),
-      },
-      order: { nome: "ASC" },
-      select: ALIMENTO_SELECT,
-    });
-
+    const normSigQuery = effectiveTokens.join(" ");
     candidatos.sort((a, b) => {
       const diff =
-        relevanceRank(a.nome, normQuery, tokens) -
-        relevanceRank(b.nome, normQuery, tokens);
+        relevanceRank(a, normQuery, effectiveTokens) -
+        relevanceRank(b, normQuery, effectiveTokens);
       if (diff !== 0) return diff;
-      return a.nome.localeCompare(b.nome, "pt-BR");
+
+      const posA = a.paddedBase.indexOf(` ${normQuery} `);
+      const posB = b.paddedBase.indexOf(` ${normQuery} `);
+      if (posA !== -1 && posB !== -1 && posA !== posB) return posA - posB;
+
+      const exactA = a.paddedBase.includes(` ${normSigQuery} `) ? 0 : 1;
+      const exactB = b.paddedBase.includes(` ${normSigQuery} `) ? 0 : 1;
+      if (exactA !== exactB) return exactA - exactB;
+
+      return a.item.nome.localeCompare(b.item.nome, "pt-BR");
     });
 
-    const resultados = candidatos.slice(0, 50);
+    const resultados = candidatos.slice(0, 50).map((e) => e.item);
 
     return NextResponse.json({
       sucesso: true,
@@ -221,6 +295,8 @@ export async function POST(req: NextRequest) {
         thumbnailUrl: null,
       }),
     );
+
+    invalidateCatalogCache();
 
     return NextResponse.json(
       {
