@@ -2291,82 +2291,84 @@ export default function AgendaPage() {
             className="bg-white rounded-2xl border border-slate-200/90 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="cl-modal-header px-5 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-2.5 min-w-0">
+            <div className="cl-modal-header px-5 py-4 flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
                 <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
                   <Clock className="w-4 h-4" />
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 font-mono tabular-nums block">
                     {selectedCard.horario} ({selectedCard.duracaoMinutos || 30}{" "}
                     min) • {selectedCard.tipoLegivel}
                   </span>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
-                      {selectedCard.pacienteNome}
-                    </h3>
-                    {(() => {
-                      const pacSel =
-                        pacoteAtivoPorPacienteId.get(selectedCard.pacienteId) ??
-                        null;
-                      if (pacSel) {
-                        const visSel = getPacoteVisualStatus({
-                          realizadas: pacSel.consultasRealizadas,
-                          total: pacSel.qtdTotalConsultas,
-                          validade: pacSel.dataValidade,
-                          status: pacSel.status,
-                        });
-                        return (
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 break-words">
+                    {selectedCard.pacienteNome}
+                  </h3>
+                  {(() => {
+                    const pacSel =
+                      pacoteAtivoPorPacienteId.get(selectedCard.pacienteId) ??
+                      null;
+                    if (pacSel) {
+                      const visSel = getPacoteVisualStatus({
+                        realizadas: pacSel.consultasRealizadas,
+                        total: pacSel.qtdTotalConsultas,
+                        validade: pacSel.dataValidade,
+                        status: pacSel.status,
+                      });
+                      return (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           <span
                             title={`${pacSel.nomePlano} — ${visSel.tooltip}`}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wider shrink-0 font-mono tabular-nums ${visSel.pillClass}`}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wider font-mono tabular-nums ${visSel.pillClass}`}
                           >
                             {visSel.tone === "neutral"
                               ? visSel.shortLabel
                               : `${pacSel.nomePlano} · ${pacSel.consultasRealizadas}/${pacSel.qtdTotalConsultas}`}
                           </span>
-                        );
-                      }
-                      if (
-                        selectedCard.pacientePlanoFaaz ||
-                        selectedCard.paciente?.planoFaaz
-                      ) {
-                        return (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black uppercase tracking-wider shrink-0">
+                        </div>
+                      );
+                    }
+                    if (
+                      selectedCard.pacientePlanoFaaz ||
+                      selectedCard.paciente?.planoFaaz
+                    ) {
+                      return (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black uppercase tracking-wider">
                             FAAZ ✨
                           </span>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={() => setSelectedCard(null)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="p-5 space-y-3.5">
-              <div className="flex items-center justify-between bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs">
-                <span className="font-bold text-slate-500">Especialidade:</span>
+              <div className="flex items-center justify-between bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs gap-2">
+                <span className="font-bold text-slate-500 shrink-0">Especialidade:</span>
                 {(() => {
                   const estiloSel = getCorEspecialidadeEstilo(
                     selectedCard.especialidadeCor,
                   );
                   return (
                     <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-extrabold border ${estiloSel.badgeClass}`}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-extrabold border break-words text-right ${estiloSel.badgeClass}`}
                     >
                       <span
-                        className={`w-2 h-2 rounded-full ${estiloSel.dotClass}`}
+                        className={`w-2 h-2 rounded-full shrink-0 ${estiloSel.dotClass}`}
                       />
-                      <span>
+                      <span className="break-words">
                         {selectedCard.especialidadeLegivel || "Especialidade"}
                       </span>
                     </span>
@@ -2374,9 +2376,9 @@ export default function AgendaPage() {
                 })()}
               </div>
 
-              <div className="flex items-center justify-between bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs">
-                <span className="font-bold text-slate-500">Profissional:</span>
-                <span className="inline-flex items-center gap-1.5 font-extrabold text-slate-800">
+              <div className="flex items-center justify-between bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs gap-2">
+                <span className="font-bold text-slate-500 shrink-0">Profissional:</span>
+                <span className="inline-flex items-center gap-1.5 font-extrabold text-slate-800 text-right break-words">
                   <span
                     className="w-2.5 h-2.5 rounded-full shrink-0"
                     style={{
@@ -2386,7 +2388,7 @@ export default function AgendaPage() {
                         "#059669",
                     }}
                   />
-                  <span>
+                  <span className="break-words">
                     {selectedCard.medicoNome || "Equipe Clínica"}
                   </span>
                 </span>
