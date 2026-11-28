@@ -45,6 +45,8 @@ import { MetasTab } from "@/components/MetasTab";
 import { TreinosTab } from "@/components/TreinosTab";
 import { PlanoFaazTab } from "@/components/PlanoFaazTab";
 import { ExamesTab } from "@/components/ExamesTab";
+import { ExportarPacienteLgpdButton } from "@/components/ExportarPacienteLgpdButton";
+import { podeAcessarDadosClinicos } from "@/lib/auth-rbac";
 import { MeasurementModal } from "@/components/MeasurementModal";
 import {
   MapaGlicemicoModal,
@@ -2358,15 +2360,29 @@ export function ProntuarioModal({
               </div>
             </div>
 
-            {/* BOTÃO FECHAR DISCRETO */}
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-colors cursor-pointer shrink-0 self-center"
-              title="Fechar prontuário"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {/* AÇÕES NO CABEÇALHO: PORTABILIDADE LGPD (CORPO CLÍNICO) + FECHAR */}
+            <div className="flex items-center gap-2 shrink-0 self-center">
+              {!isAccessDenied &&
+                paciente?.id &&
+                (!currentUserCargo ||
+                  podeAcessarDadosClinicos(currentUserCargo)) && (
+                  <ExportarPacienteLgpdButton
+                    pacienteId={paciente.id}
+                    pacienteNome={pacienteNome}
+                    currentUserCargo={currentUserCargo}
+                    compact
+                  />
+                )}
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-colors cursor-pointer shrink-0 self-center"
+                title="Fechar prontuário"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
 

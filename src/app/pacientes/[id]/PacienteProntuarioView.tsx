@@ -24,8 +24,10 @@ import { TopMenu } from "@/components/TopMenu";
 import { MetasTab } from "@/components/MetasTab";
 import { DietaTab } from "@/components/DietaTab";
 import { ExamesTab } from "@/components/ExamesTab";
+import { ExportarPacienteLgpdButton } from "@/components/ExportarPacienteLgpdButton";
 
 export interface PacienteProntuarioViewProps {
+  currentUserCargo?: string | null;
   paciente: {
     id: string;
     nome: string;
@@ -49,6 +51,7 @@ export interface PacienteProntuarioViewProps {
 }
 
 export function PacienteProntuarioView({
+  currentUserCargo,
   paciente,
   ultimoSono,
 }: PacienteProntuarioViewProps) {
@@ -184,6 +187,12 @@ export function PacienteProntuarioView({
                 </select>
               </div>
             </div>
+
+            <ExportarPacienteLgpdButton
+              pacienteId={paciente.id}
+              pacienteNome={paciente.nome}
+              currentUserCargo={currentUserCargo}
+            />
 
             <Link
               href={`/dashboard/pacientes?prontuarioId=${paciente.id}`}

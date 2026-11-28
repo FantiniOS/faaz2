@@ -88,8 +88,10 @@ export async function proxy(request: NextRequest) {
     const isRotaClinica =
       ROTAS_CLINICAS_SENSIVEIS.some((rota) => pathname.startsWith(rota)) ||
       isRotaProntuarioPagina ||
+      pathname.startsWith("/api/clinica/") ||
       pathname.includes("/prontuario") ||
       pathname.includes("/exames") ||
+      pathname.includes("/exportar-lgpd") ||
       pathname.includes("/termometro") ||
       pathname.includes("/protocolo-glicemico") ||
       pathname.includes("/mapa-glicemico");
@@ -130,6 +132,7 @@ export async function proxy(request: NextRequest) {
       request.method === "GET" &&
       !pathname.includes("/prontuario") &&
       !pathname.includes("/exames") &&
+      !pathname.includes("/exportar-lgpd") &&
       !pathname.includes("/termometro") &&
       !pathname.endsWith("/pacotes")) ||
     (pathname.startsWith("/api/pacientes/") &&
@@ -212,11 +215,14 @@ export async function proxy(request: NextRequest) {
       const hasPatientCreds =
         Boolean(request.headers.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) ||
         Boolean(request.headers.get("paciente-id")?.trim());
-      if (pathname.includes("/exames") && hasPatientCreds) {
+      if (
+        (pathname.includes("/exames") || pathname.includes("/exportar-lgpd")) &&
+        hasPatientCreds
+      ) {
         return NextResponse.json(
           {
             error:
-              "Acesso negado (Sigilo Médico). Exames laboratoriais são restritos ao painel do corpo clínico.",
+              "Acesso negado (Sigilo Médico). Este recurso é restrito ao painel do corpo clínico.",
             bloqueado: true,
           },
           { status: 403 }
@@ -274,6 +280,7 @@ export const config = {
     "/api/equipe/:path*",
     "/api/especialidades",
     "/api/especialidades/:path*",
+    "/api/clinica/:path*",
     "/api/pacientes/:path*",
     "/api/busca",
     "/api/auth/me",

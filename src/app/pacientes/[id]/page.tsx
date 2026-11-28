@@ -50,6 +50,7 @@ export default async function PacienteDetailPage(
 
   return (
     <PacienteProntuarioView
+      currentUserCargo={sessao.cargo}
       paciente={{
         id: paciente.id,
         nome: paciente.fullName,

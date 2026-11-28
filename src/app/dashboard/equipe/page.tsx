@@ -24,8 +24,13 @@ import {
   Plus,
   Power,
   Check,
+  Database,
+  UploadCloud,
 } from "lucide-react";
 import { TopMenu } from "@/components/TopMenu";
+import { ExportacaoClinicaTab } from "@/components/ExportacaoClinicaTab";
+import { ImportacaoIClinicTab } from "@/components/ImportacaoIClinicTab";
+import { isDonoClinica } from "@/lib/auth-rbac";
 import { formatarDataBR } from "@/lib/date-br";
 import { invalidateClientCache } from "@/lib/client-swr-cache";
 import {
@@ -103,9 +108,10 @@ const statusConfig: Record<string, { label: string; cor: string }> = {
 
 export default function EquipePage() {
   const router = useRouter();
-  const [abaAtiva, setAbaAtiva] = useState<"equipe" | "especialidades">(
-    "equipe",
-  );
+  const [abaAtiva, setAbaAtiva] = useState<
+    "equipe" | "especialidades" | "exportacao" | "importacao"
+  >("equipe");
+  const [isDiretoriaClinica, setIsDiretoriaClinica] = useState(false);
 
   // Estado da Equipe
   const [equipe, setEquipe] = useState<MembroEquipe[]>([]);
@@ -197,7 +203,19 @@ export default function EquipePage() {
     let ativo = true;
     void Promise.resolve().then(() => {
       if (ativo) {
-        void Promise.all([carregarEquipe(), carregarEspecialidades()]);
+        void Promise.all([
+          carregarEquipe(),
+          carregarEspecialidades(),
+          fetch("/api/auth/me", { cache: "no-store" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (!ativo || !data?.autenticado || !data?.usuario) return;
+              const cargo = String(data.usuario.cargo || "");
+              const role = String(data.usuario.role || "");
+              setIsDiretoriaClinica(isDonoClinica(cargo) || isDonoClinica(role));
+            })
+            .catch(() => {}),
+        ]);
       }
     });
     return () => {
@@ -527,15 +545,20 @@ export default function EquipePage() {
                 <span className="cl-badge-slate px-2.5 py-0.5 text-[11px] font-mono tabular-nums">
                   {abaAtiva === "equipe"
                     ? `${equipe.length} ${equipe.length === 1 ? "membro" : "membros"}`
-                    : `${especialidadesAtivas.length} ${especialidadesAtivas.length === 1 ? "ativa" : "ativas"}`}
+                    : abaAtiva === "especialidades"
+                      ? `${especialidadesAtivas.length} ${especialidadesAtivas.length === 1 ? "ativa" : "ativas"}`
+                      : abaAtiva === "exportacao"
+                        ? "Portabilidade LGPD"
+                        : "Migração iClinic"}
                 </span>
               </div>
               <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
                 Configurações da Clínica
               </h1>
               <p className="text-xs text-slate-500 font-medium">
-                Gerencie os acessos da equipe e as especialidades atendidas na
-                Agenda.
+                {isDiretoriaClinica
+                  ? "Gerencie os acessos da equipe, as especialidades da Agenda, a exportação completa (LGPD) e a importação do iClinic."
+                  : "Gerencie os acessos da equipe e as especialidades atendidas na Agenda."}
               </p>
             </div>
           </div>
@@ -548,7 +571,7 @@ export default function EquipePage() {
               <UserPlus className="w-4 h-4" />
               <span>Novo Membro</span>
             </button>
-          ) : (
+          ) : abaAtiva === "especialidades" ? (
             <button
               onClick={handleAbrirNovaEspecialidade}
               className="cl-btn-primary px-4 py-2 text-xs self-start sm:self-center active:scale-95"
@@ -556,18 +579,18 @@ export default function EquipePage() {
               <Plus className="w-4 h-4" />
               <span>Nova Especialidade</span>
             </button>
-          )}
+          ) : null}
         </div>
 
-        {/* Seletor Limpo de 2 Abas */}
-        <div className="flex items-center gap-1.5 border-b border-slate-200/80">
+        {/* Seletor Limpo de Abas */}
+        <div className="flex items-center gap-1.5 border-b border-slate-200/80 overflow-x-auto">
           <button
             type="button"
             onClick={() => {
               setAbaAtiva("equipe");
               setMensagem(null);
             }}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-colors cursor-pointer -mb-px ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-colors cursor-pointer -mb-px whitespace-nowrap ${
               abaAtiva === "equipe"
                 ? "border-emerald-600 text-emerald-700"
                 : "border-transparent text-slate-500 hover:text-slate-800"
@@ -592,7 +615,7 @@ export default function EquipePage() {
               setAbaAtiva("especialidades");
               setMensagem(null);
             }}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-colors cursor-pointer -mb-px ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-colors cursor-pointer -mb-px whitespace-nowrap ${
               abaAtiva === "especialidades"
                 ? "border-emerald-600 text-emerald-700"
                 : "border-transparent text-slate-500 hover:text-slate-800"
@@ -610,6 +633,60 @@ export default function EquipePage() {
               {especialidadesAtivas.length}
             </span>
           </button>
+
+          {isDiretoriaClinica && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setAbaAtiva("exportacao");
+                  setMensagem(null);
+                }}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-colors cursor-pointer -mb-px whitespace-nowrap ${
+                  abaAtiva === "exportacao"
+                    ? "border-emerald-600 text-emerald-700"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <Database className="w-4 h-4" />
+                <span>Exportação de Dados & LGPD</span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    abaAtiva === "exportacao"
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  Excel
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAbaAtiva("importacao");
+                  setMensagem(null);
+                }}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-colors cursor-pointer -mb-px whitespace-nowrap ${
+                  abaAtiva === "importacao"
+                    ? "border-emerald-600 text-emerald-700"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <UploadCloud className="w-4 h-4" />
+                <span>Importar do iClinic</span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    abaAtiva === "importacao"
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  CSV/ZIP
+                </span>
+              </button>
+            </>
+          )}
         </div>
 
         {/* Toast de Feedback */}
@@ -1065,6 +1142,16 @@ export default function EquipePage() {
               </div>
             )}
           </>
+        )}
+
+        {/* ==================== ABA 3: EXPORTAÇÃO DE DADOS & LGPD ==================== */}
+        {abaAtiva === "exportacao" && isDiretoriaClinica && (
+          <ExportacaoClinicaTab />
+        )}
+
+        {/* ==================== ABA 4: IMPORTAR DO ICLINIC ==================== */}
+        {abaAtiva === "importacao" && isDiretoriaClinica && (
+          <ImportacaoIClinicTab />
         )}
       </main>
 
