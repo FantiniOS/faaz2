@@ -38,11 +38,13 @@ import {
   Smartphone,
   Award,
   Syringe,
+  FlaskConical,
 } from "lucide-react";
 import { DietaTab } from "@/components/DietaTab";
 import { MetasTab } from "@/components/MetasTab";
 import { TreinosTab } from "@/components/TreinosTab";
 import { PlanoFaazTab } from "@/components/PlanoFaazTab";
+import { ExamesTab } from "@/components/ExamesTab";
 import { MeasurementModal } from "@/components/MeasurementModal";
 import {
   MapaGlicemicoModal,
@@ -477,7 +479,7 @@ export function ProntuarioModal({
 }: ProntuarioModalProps) {
   // Controle da Aba Selecionada (Prontuário ativa por padrão)
   const [activeTab, setActiveTab] = useState<
-    "prontuario" | "dieta" | "metas" | "treinos" | "documentos" | "plano_faaz"
+    "prontuario" | "exames" | "dieta" | "metas" | "treinos" | "documentos" | "plano_faaz"
   >("prontuario");
 
   // Controle de Pacotes e Consultas (Plano FAAZ)
@@ -2703,6 +2705,21 @@ export function ProntuarioModal({
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             </button>
 
+            {/* ABA: EXAMES LABORATORIAIS & LAUDOS */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("exames")}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t-2 shrink-0 ${
+                activeTab === "exames"
+                  ? "bg-white text-emerald-800 border-emerald-600 shadow-2xs"
+                  : "text-slate-500 hover:text-slate-800 border-transparent hover:bg-white/70"
+              }`}
+            >
+              <FlaskConical className={`w-4 h-4 ${activeTab === "exames" ? "text-emerald-600" : "text-slate-400"}`} />
+              <span>Exames</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            </button>
+
             {/* ABA 2: DIETA (DATA-DRIVEN) */}
             <button
               type="button"
@@ -3681,7 +3698,21 @@ export function ProntuarioModal({
             </div>
           </div>
         </div>
-      ) : activeTab === "dieta" ? (
+      ) : activeTab === "exames" ? (
+          /* CONTEÚDO ATIVO DA ABA EXAMES LABORATORIAIS & LAUDOS */
+          <ExamesTab
+            pacienteId={paciente?.id || ""}
+            pacienteNome={pacienteNome}
+            pacienteRecordCode={pacienteRecordCode}
+            pacienteCpf={pacienteCpf}
+            onCopiarParaEvolucao={(resumoTexto) => {
+              setEvolucao((prev) => {
+                const base = prev.trim();
+                return base ? `${base}\n${resumoTexto}` : resumoTexto;
+              });
+            }}
+          />
+        ) : activeTab === "dieta" ? (
           /* CONTEÚDO ATIVO DA ABA DIETA (DATA-DRIVEN) */
           <DietaTab
             pacienteId={paciente?.id || ""}

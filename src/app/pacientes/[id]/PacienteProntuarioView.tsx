@@ -16,12 +16,14 @@ import {
   Target,
   CheckCircle2,
   Loader2,
+  FlaskConical,
 } from "lucide-react";
 import { CLINICAL_OBJECTIVES } from "@/lib/clinical-objectives";
 import { formatarDataBR } from "@/lib/date-br";
 import { TopMenu } from "@/components/TopMenu";
 import { MetasTab } from "@/components/MetasTab";
 import { DietaTab } from "@/components/DietaTab";
+import { ExamesTab } from "@/components/ExamesTab";
 
 export interface PacienteProntuarioViewProps {
   paciente: {
@@ -50,7 +52,7 @@ export function PacienteProntuarioView({
   paciente,
   ultimoSono,
 }: PacienteProntuarioViewProps) {
-  const [activeTab, setActiveTab] = useState<"metas" | "geral" | "dieta">("metas");
+  const [activeTab, setActiveTab] = useState<"metas" | "exames" | "geral" | "dieta">("metas");
   const [evolucaoGeral, setEvolucaoGeral] = useState("");
   const [currentObjective, setCurrentObjective] = useState<string>(
     paciente.treatmentObjective || "Otimização Metabólica & Saúde Integrativa"
@@ -220,6 +222,18 @@ export function PacienteProntuarioView({
           </button>
 
           <button
+            onClick={() => setActiveTab("exames")}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+              activeTab === "exames"
+                ? "bg-teal-600 text-white shadow-xs"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span>Exames</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab("geral")}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
               activeTab === "geral"
@@ -244,6 +258,21 @@ export function PacienteProntuarioView({
               pacientePesoAtualKg={paciente.pesoAtual}
               pacienteAlturaCm={paciente.alturaCm}
               ultimoSonoInicial={ultimoSono}
+            />
+          </div>
+        ) : activeTab === "exames" ? (
+          <div className="w-full flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex flex-col">
+            <ExamesTab
+              pacienteId={paciente.id}
+              pacienteNome={paciente.nome}
+              pacienteRecordCode={paciente.recordCode}
+              pacienteCpf={paciente.cpf}
+              onCopiarParaEvolucao={(resumoTexto) => {
+                setEvolucaoGeral((prev) => {
+                  const base = prev.trim();
+                  return base ? `${base}\n${resumoTexto}` : resumoTexto;
+                });
+              }}
             />
           </div>
         ) : activeTab === "dieta" ? (

@@ -99,10 +99,25 @@ body {
   display: none;
 }
 
-/* Padronização Global em Caixa Alta (Uppercase) - exceto senhas, e-mails e campos específicos */
-input:not([type="password"]):not([type="email"]):not([type="number"]):not([type="date"]):not([type="time"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(.no-uppercase),
-textarea:not(.no-uppercase) {
+/* Padronização Global em Caixa Alta (Uppercase) — NUNCA em username, email, password, url ou campos explicitamente excluídos */
+input:not([type="password"]):not([type="email"]):not([type="url"]):not([type="number"]):not([type="date"]):not([type="time"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([name="username"]):not([autocomplete="username"]):not([autocomplete="email"]):not([autocomplete="current-password"]):not([autocomplete="new-password"]):not(.no-uppercase):not(.lowercase),
+textarea:not(.no-uppercase):not(.lowercase) {
   text-transform: uppercase;
+}
+
+input[type="email"],
+input[type="password"],
+input[type="url"],
+input[name="username"],
+input[autocomplete="username"],
+input.no-uppercase,
+textarea.no-uppercase {
+  text-transform: none;
+}
+
+input.lowercase,
+textarea.lowercase {
+  text-transform: lowercase;
 }
 
 .scrollbar-saas {

@@ -255,7 +255,7 @@ export async function POST(request: Request) {
     const salvo = await userRepo.save(
       userRepo.create({
         organizationId: sessao.organizationId!,
-        fullName: String(nome).trim(),
+        fullName: String(nome).trim().toUpperCase(),
         username: normalizedUsername,
         email: normalizedEmail,
         passwordHash,
@@ -367,7 +367,7 @@ export async function PATCH(request: Request) {
       updatedBy: sessao.userId,
     };
 
-    if (nome) updateData.fullName = String(nome).trim();
+    if (nome) updateData.fullName = String(nome).trim().toUpperCase();
     if (cargo) {
       updateData.cargo = cargoFinal;
       updateData.podeAcessarProntuario = isCargoClinico;

@@ -89,6 +89,7 @@ export async function proxy(request: NextRequest) {
       ROTAS_CLINICAS_SENSIVEIS.some((rota) => pathname.startsWith(rota)) ||
       isRotaProntuarioPagina ||
       pathname.includes("/prontuario") ||
+      pathname.includes("/exames") ||
       pathname.includes("/termometro") ||
       pathname.includes("/protocolo-glicemico") ||
       pathname.includes("/mapa-glicemico");
@@ -128,6 +129,7 @@ export async function proxy(request: NextRequest) {
     (pathname.startsWith("/api/pacientes/") &&
       request.method === "GET" &&
       !pathname.includes("/prontuario") &&
+      !pathname.includes("/exames") &&
       !pathname.includes("/termometro") &&
       !pathname.endsWith("/pacotes")) ||
     (pathname.startsWith("/api/pacientes/") &&
@@ -207,6 +209,19 @@ export async function proxy(request: NextRequest) {
   // 7. Rotas protegidas sem sessão válida -> manda para /login limpando cookie corrompido
   if (!sessao) {
     if (pathname.startsWith("/api/")) {
+      const hasPatientCreds =
+        Boolean(request.headers.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) ||
+        Boolean(request.headers.get("paciente-id")?.trim());
+      if (pathname.includes("/exames") && hasPatientCreds) {
+        return NextResponse.json(
+          {
+            error:
+              "Acesso negado (Sigilo Médico). Exames laboratoriais são restritos ao painel do corpo clínico.",
+            bloqueado: true,
+          },
+          { status: 403 }
+        );
+      }
       const res = NextResponse.json(
         { error: "Não autenticado. Faça login para continuar.", autenticado: false },
         { status: 401 }

@@ -449,7 +449,7 @@ export async function POST(request: Request) {
       patientStatus,
       phoneWhatsapp: String(telefoneWhatsapp).trim(),
       telefoneSecundario: telefoneSecundario || null,
-      email: email ? String(email).trim() : null,
+      email: email ? String(email).trim().toLowerCase() : null,
       contatoEmergenciaNome: contatoEmergenciaNome
         ? String(contatoEmergenciaNome).trim().toUpperCase()
         : null,

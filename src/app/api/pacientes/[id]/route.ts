@@ -315,7 +315,7 @@ async function handleUpdate(
           ? { telefoneSecundario: telefoneSecundario || null }
           : {}),
         ...(email !== undefined
-          ? { email: email ? String(email).trim() : null }
+          ? { email: email ? String(email).trim().toLowerCase() : null }
           : {}),
         ...(contatoEmergenciaNome !== undefined
           ? {
@@ -698,6 +698,12 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         manager,
         "EVOLUCOES_CLINICAS",
         `DELETE FROM "EVOLUCOES_CLINICAS" WHERE "PACIENTE_ID" = :1`,
+        [id],
+      );
+      await executarEtapaLimpezaOracle(
+        manager,
+        "EXAMES_LABORATORIAIS",
+        `DELETE FROM "EXAMES_LABORATORIAIS" WHERE "PACIENTE_ID" = :1`,
         [id],
       );
       await executarEtapaLimpezaOracle(

@@ -95,7 +95,9 @@ export async function PUT(
 
     const targetFullName = String(
       nome || fullName || userExistente.fullName,
-    ).trim();
+    )
+      .trim()
+      .toUpperCase();
 
     // Validação de Username se alterado
     let targetUsername = userExistente.username;

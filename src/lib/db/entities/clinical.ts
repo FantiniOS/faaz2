@@ -613,3 +613,64 @@ export const RegistroInsulinaEntity = new EntitySchema<RegistroInsulina>({
     },
   },
 });
+
+// ============================================================================
+// 34. EXAMES_LABORATORIAIS (Lotes de Exames e Laudos de Imagem — Painel Médico)
+// ============================================================================
+export interface ExamePersonalizadoItem {
+  nome: string;
+  valor: string | number;
+  unidade?: string;
+  referencia?: string;
+}
+
+export interface ExameLaboratorial {
+  id: string;
+  organizacaoId: string;
+  pacienteId: string;
+  medicoId: string | null;
+  /** DATE do Oracle hidratado como 'YYYY-MM-DD' (ou Date). */
+  dataColeta: string;
+  laboratorio: string | null;
+  valores: Record<string, number | string>;
+  examesPersonalizados: ExamePersonalizadoItem[];
+  laudosImagem: Record<string, string>;
+  observacoes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+
+  organization?: Organization;
+  paciente?: Patient;
+}
+
+export const ExameLaboratorialEntity = new EntitySchema<ExameLaboratorial>({
+  name: "ExameLaboratorial",
+  tableName: "EXAMES_LABORATORIAIS",
+  columns: {
+    id: uuidPrimary,
+    organizacaoId: uuidRef("ORGANIZACAO_ID"),
+    pacienteId: uuidRef("PACIENTE_ID"),
+    medicoId: uuidRef("MEDICO_ID", true),
+    dataColeta: { name: "DATA_COLETA", type: "date", nullable: false },
+    laboratorio: varchar("LABORATORIO", 160, true),
+    valores: json("VALORES", false),
+    examesPersonalizados: json("EXAMES_PERSONALIZADOS", false),
+    laudosImagem: json("LAUDOS_IMAGEM", false),
+    observacoes: clob("OBSERVACOES", true),
+    createdAt: { ...timestampTz("CREATED_AT"), createDate: true },
+    updatedAt: { ...timestampTz("UPDATED_AT"), updateDate: true },
+  },
+  relations: {
+    organization: {
+      type: "many-to-one",
+      target: "Organization",
+      joinColumn: { name: "ORGANIZACAO_ID" },
+    },
+    paciente: {
+      type: "many-to-one",
+      target: "Patient",
+      joinColumn: { name: "PACIENTE_ID" },
+      onDelete: "CASCADE",
+    },
+  },
+});

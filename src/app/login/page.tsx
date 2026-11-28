@@ -85,7 +85,7 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmedIdentifier = username.trim();
+    const trimmedIdentifier = username.trim().toLowerCase();
     if (!trimmedIdentifier || !senha) {
       setErro("Informe seu usuário ou e-mail e sua senha.");
       return;
@@ -536,7 +536,7 @@ export default function LoginPage() {
                     type="text"
                     value={username}
                     onChange={(e) => {
-                      setUsername(e.target.value);
+                      setUsername(e.target.value.toLowerCase());
                       if (erro) setErro("");
                     }}
                     placeholder="usuario ou e-mail institucional"
@@ -546,7 +546,7 @@ export default function LoginPage() {
                     autoCorrect="off"
                     spellCheck={false}
                     disabled={carregando}
-                    className="no-uppercase w-full h-11 pl-10 pr-4 bg-slate-50/80 border border-slate-200/90 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/12 transition-all disabled:opacity-60"
+                    className="no-uppercase lowercase w-full h-11 pl-10 pr-4 bg-slate-50/80 border border-slate-200/90 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/12 transition-all disabled:opacity-60"
                   />
                 </div>
               </div>

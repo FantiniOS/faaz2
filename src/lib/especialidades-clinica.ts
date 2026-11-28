@@ -408,5 +408,5 @@ export function normalizarCrmArmazenado(rawCrm?: string | null): string | null {
   const trimmed = rawCrm.trim();
   if (!trimmed) return null;
   const semPrefixo = trimmed.replace(/^crm[\s:-]*/i, "").trim();
-  return (semPrefixo || trimmed).slice(0, 40);
+  return (semPrefixo || trimmed).toUpperCase().slice(0, 40);
 }

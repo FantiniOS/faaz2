@@ -571,7 +571,7 @@ export default function PacientesPage() {
         medicoResponsavelId: medicoResponsavelId || null,
         telefoneWhatsapp: telefoneWhatsapp.trim(),
         telefoneSecundario: telefoneSecundario.trim(),
-        email: email.trim(), // Regra: E-mail não é forçado em uppercase
+        email: email.trim().toLowerCase(), // Regra: E-mail sempre normalizado em minúsculas
         contatoEmergenciaNome: contatoEmergenciaNome.trim().toUpperCase(),
         contatoEmergenciaTelefone: contatoEmergenciaTelefone.trim(),
         cep: cep.trim(),
@@ -782,14 +782,14 @@ export default function PacientesPage() {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50/90 text-[10px] uppercase tracking-wider font-bold text-slate-500 border-b border-slate-200/80">
-                  <th className="py-2.5 px-4 font-bold">Nome Completo</th>
-                  <th className="py-2.5 px-3 font-bold">CPF</th>
-                  <th className="py-2.5 px-3 font-bold">WhatsApp</th>
-                  <th className="py-2.5 px-3 font-bold">Cidade / Bairro</th>
-                  <th className="py-2.5 px-3 font-bold">Convênio</th>
-                  <th className="py-2.5 px-3 font-bold">Programa / Pacote</th>
-                  <th className="py-2.5 px-3 font-bold text-center">Status</th>
-                  <th className="py-2.5 px-4 font-bold text-right">Ações</th>
+                  <th className="py-2.5 px-3 font-bold">Nome Completo</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 font-bold">CPF</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 font-bold">WhatsApp</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 font-bold">Cidade / Bairro</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 font-bold">Convênio</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 font-bold">Programa / Pacote</th>
+                  <th className="py-2.5 px-2 xl:px-2.5 font-bold text-center">Status</th>
+                  <th className="py-2.5 px-3 font-bold text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -809,17 +809,25 @@ export default function PacientesPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredPacientes.map((p) => (
+                  filteredPacientes.map((p) => {
+                    const nomeExibicao = (p.nome || "").toUpperCase();
+                    const cidadeBairro = p.cidade
+                      ? `${p.cidade}${p.bairro ? ` - ${p.bairro}` : ""}`
+                      : "--";
+
+                    return (
                     <tr
                       key={p.id}
                       className="hover:bg-emerald-50/35 transition-colors"
                     >
                       {/* Nome + Selo FAAZ ✨ */}
-                      <td className="py-2 px-4 font-bold text-slate-900 whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
-                          <span>{p.nome}</span>
+                      <td className="py-2 px-3 font-bold text-slate-900 max-w-[215px] xl:max-w-[260px]">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="truncate" title={nomeExibicao}>
+                            {nomeExibicao}
+                          </span>
                           {p.planoFaaz && (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black tracking-wider uppercase">
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-black tracking-wider uppercase shrink-0">
                               FAAZ ✨
                             </span>
                           )}
@@ -827,12 +835,12 @@ export default function PacientesPage() {
                       </td>
 
                       {/* CPF */}
-                      <td className="py-2 px-3 text-slate-500 font-mono tabular-nums text-[11px] whitespace-nowrap">
+                      <td className="py-2 px-2 xl:px-2.5 text-slate-500 font-mono tabular-nums text-[11px] whitespace-nowrap">
                         {p.cpf ? formatCpf(p.cpf) : "--"}
                       </td>
 
                       {/* WhatsApp com atalho direto e ícone */}
-                      <td className="py-2 px-3 text-slate-700 whitespace-nowrap">
+                      <td className="py-2 px-2 xl:px-2.5 text-slate-700 whitespace-nowrap">
                         {p.telefoneWhatsapp ? (
                           <div className="flex items-center gap-1.5">
                             {getWhatsAppLink(p.telefoneWhatsapp) && (
@@ -863,19 +871,21 @@ export default function PacientesPage() {
                       </td>
 
                       {/* Cidade / Bairro */}
-                      <td className="py-2 px-3 text-slate-500 whitespace-nowrap">
-                        {p.cidade ? `${p.cidade}${p.bairro ? ` - ${p.bairro}` : ""}` : "--"}
+                      <td className="py-2 px-2 xl:px-2.5 text-slate-500 max-w-[145px] xl:max-w-[185px]">
+                        <span className="block truncate" title={cidadeBairro !== "--" ? cidadeBairro : undefined}>
+                          {cidadeBairro}
+                        </span>
                       </td>
 
                       {/* Convênio */}
-                      <td className="py-2 px-3 whitespace-nowrap">
-                        <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
+                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap">
+                        <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 max-w-[96px] truncate align-middle" title={p.convenio || "Particular"}>
                           {p.convenio || "Particular"}
                         </span>
                       </td>
 
                       {/* Selo clicável do Programa / Pacote (semáforo visual — nunca desabilitado quando esgotado/vencido) */}
-                      <td className="py-2 px-3 whitespace-nowrap">
+                      <td className="py-2 px-2 xl:px-2.5 whitespace-nowrap">
                         {(() => {
                           const visualPacote = getPacoteVisualStatus(
                             p.pacoteAtivo
@@ -903,19 +913,19 @@ export default function PacientesPage() {
                                 title={
                                   visualPacote.tone === "red" || isInativoManual
                                     ? visualPacote.tooltip
-                                    : `${visualPacote.tooltip} • Clique para configurar o programa/pacote`
+                                    : `${p.pacoteAtivo.nomePlano} (${p.pacoteAtivo.consultasRealizadas}/${p.pacoteAtivo.qtdTotalConsultas}) • ${visualPacote.tooltip} • Clique para configurar`
                                 }
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer hover:shadow-xs active:scale-[0.98] ${visualPacote.interactivePillClass}`}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer hover:shadow-xs active:scale-[0.98] ${visualPacote.interactivePillClass}`}
                               >
                                 <Award className="w-3 h-3 shrink-0" />
                                 {isInativoManual ? (
                                   <span>Inativo</span>
                                 ) : (
                                   <>
-                                    <span className="max-w-[130px] truncate">
+                                    <span className="max-w-[100px] xl:max-w-[130px] truncate">
                                       {p.pacoteAtivo.nomePlano}
                                     </span>
-                                    <span className="font-mono font-black tabular-nums opacity-90">
+                                    <span className="font-mono font-black tabular-nums opacity-90 shrink-0">
                                       {p.pacoteAtivo.consultasRealizadas}/
                                       {p.pacoteAtivo.qtdTotalConsultas}
                                     </span>
@@ -933,7 +943,7 @@ export default function PacientesPage() {
                                 setIsPacoteModalOpen(true);
                               }}
                               title={visualPacote.tooltip}
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-all cursor-pointer hover:shadow-xs active:scale-[0.98] ${visualPacote.interactivePillClass}`}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-all cursor-pointer hover:shadow-xs active:scale-[0.98] ${visualPacote.interactivePillClass}`}
                             >
                               <Plus className="w-2.5 h-2.5 opacity-75 shrink-0" />
                               <span>{visualPacote.shortLabel}</span>
@@ -943,9 +953,9 @@ export default function PacientesPage() {
                       </td>
 
                       {/* Status */}
-                      <td className="py-2 px-3 text-center whitespace-nowrap">
+                      <td className="py-2 px-2 xl:px-2.5 text-center whitespace-nowrap">
                         <span
-                          className={`inline-block text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                             p.status === "Ativo"
                               ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                               : "bg-slate-100 text-slate-500 border-slate-200"
@@ -956,8 +966,8 @@ export default function PacientesPage() {
                       </td>
 
                       {/* Ações */}
-                      <td className="py-2 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1">
                           {/* BOTÃO CLÍNICO: PRONTUÁRIO — Exclusivo MÉDICO / ADMIN */}
                           {canAccessProntuario && (
                             <button
@@ -977,42 +987,43 @@ export default function PacientesPage() {
                           {/* BOTÃO OPERACIONAL: NOVO AGENDAMENTO (Exclusivo para Recepção / Secretária) */}
                           {isSecretaria && (
                             <Link
-                              href={`/agenda?pacienteId=${p.id}&pacienteNome=${encodeURIComponent(p.nome)}`}
+                              href={`/agenda?pacienteId=${p.id}&pacienteNome=${encodeURIComponent(nomeExibicao)}`}
                               className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 shadow-2xs rounded-lg transition-all cursor-pointer"
                               title="Criar novo agendamento para este paciente na Agenda"
                             >
                               <Calendar className="w-3.5 h-3.5 text-emerald-100" />
-                              <span>Novo Agendamento</span>
+                              <span>Agendar</span>
                             </Link>
                           )}
 
-                          {/* BOTÃO OPERACIONAL: EDITAR CADASTRO */}
+                          {/* BOTÃO OPERACIONAL: EDITAR CADASTRO (Compacto com ícone + tooltip/aria-label) */}
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(p)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 hover:border-emerald-300 rounded-lg transition-colors cursor-pointer"
+                            className="inline-flex items-center justify-center w-7 h-7 text-slate-600 bg-white hover:bg-slate-50 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 rounded-lg transition-colors cursor-pointer"
                             title="Editar cadastro do paciente"
+                            aria-label={`Editar cadastro de ${nomeExibicao}`}
                           >
-                            <Edit2 className="w-3 h-3 text-slate-500" />
-                            <span>Editar</span>
+                            <Edit2 className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* BOTÃO ADMINISTRATIVO: EXCLUIR CADASTRO (Apenas Dono/Admin) */}
+                          {/* BOTÃO ADMINISTRATIVO: EXCLUIR CADASTRO (Apenas Dono/Admin — Compacto com ícone) */}
                           {canDelete && (
                             <button
                               type="button"
                               onClick={() => setPatientToDelete(p)}
-                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+                              className="inline-flex items-center justify-center w-7 h-7 text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
                               title="Excluir paciente (Apenas Diretoria Clínica/Admin)"
+                              aria-label={`Excluir paciente ${nomeExibicao}`}
                             >
-                              <Trash2 className="w-3 h-3 text-rose-600" />
-                              <span>Apagar</span>
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
                         </div>
                       </td>
                     </tr>
-                  ))
+                  );
+                  })
                 )}
               </tbody>
             </table>
@@ -1324,9 +1335,13 @@ export default function PacientesPage() {
                     <input
                       type="email"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => setEmail(e.target.value.toLowerCase())}
                       placeholder="paciente@exemplo.com.br"
-                      className="w-full h-8 px-2.5 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+                      autoComplete="email"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className="no-uppercase lowercase w-full h-8 px-2.5 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
                     />
                   </div>
 

@@ -248,14 +248,14 @@ export default function EquipePage() {
         )
       : "";
     setMembroEmEdicao(membro);
-    setFormNome(membro.fullName);
-    setFormUsername(membro.username || "");
-    setFormEmail(membro.email || "");
+    setFormNome((membro.fullName || "").toUpperCase());
+    setFormUsername((membro.username || "").toLowerCase());
+    setFormEmail((membro.email || "").toLowerCase());
     setFormCargo(membro.cargo);
     setFormSenha("");
     setFormEspecialidadeId(clinico ? membro.especialidadeId || "" : "");
     setFormSubespecialidade(subInicial);
-    setFormCRM(clinico ? membro.councilNumber || "" : "");
+    setFormCRM(clinico ? (membro.councilNumber || "").toUpperCase() : "");
     setMensagem(null);
     setModalAberto(true);
   }
@@ -283,13 +283,13 @@ export default function EquipePage() {
     const method = isEdicao ? "PUT" : "POST";
 
     const payload: Record<string, string | null | undefined> = {
-      nome: formNome.trim(),
+      nome: formNome.trim().toUpperCase(),
       username: formUsername.trim().toLowerCase(),
       email: formEmail.trim() ? formEmail.trim().toLowerCase() : undefined,
       cargo: formCargo,
       especialidadeId: clinico ? formEspecialidadeId || null : null,
       subespecialidade: clinico ? formSubespecialidade.trim() || null : null,
-      crm: clinico ? formCRM.trim() || null : null,
+      crm: clinico ? formCRM.trim().toUpperCase() || null : null,
     };
 
     if (formSenha.trim()) {
@@ -725,7 +725,7 @@ export default function EquipePage() {
                                   </div>
                                   <div>
                                     <span className="font-bold text-slate-900 block">
-                                      {membro.fullName}
+                                      {(membro.fullName || "").toUpperCase()}
                                     </span>
                                     <span className="text-[11px] text-slate-400 tabular-nums">
                                       Cadastrado em{" "}
@@ -758,15 +758,16 @@ export default function EquipePage() {
                                     );
                                   }
                                   const crmFormatado = membro.councilNumber
-                                    ? membro.councilNumber
+                                    ? (membro.councilNumber
                                         .toUpperCase()
                                         .startsWith(
                                           (
                                             membro.councilType || "CRM"
                                           ).toUpperCase(),
                                         )
-                                      ? membro.councilNumber
-                                      : `${membro.councilType || "CRM"} ${membro.councilNumber}`
+                                        ? membro.councilNumber
+                                        : `${membro.councilType || "CRM"} ${membro.councilNumber}`
+                                      ).toUpperCase()
                                     : null;
 
                                   if (!membro.especialidadeNome) {
@@ -1104,10 +1105,10 @@ export default function EquipePage() {
                 <input
                   type="text"
                   value={formNome}
-                  onChange={(e) => setFormNome(e.target.value)}
-                  placeholder="Ex: Dra. Ana Silva"
+                  onChange={(e) => setFormNome(e.target.value.toUpperCase())}
+                  placeholder="EX: DRA. ANA SILVA"
                   required
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  className="uppercase w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 />
               </div>
 
@@ -1126,13 +1127,22 @@ export default function EquipePage() {
                     @
                   </span>
                   <input
+                    name="username"
                     type="text"
                     value={formUsername}
-                    onChange={(e) => setFormUsername(e.target.value)}
+                    onChange={(e) =>
+                      setFormUsername(
+                        e.target.value.toLowerCase().replace(/\s+/g, ""),
+                      )
+                    }
                     placeholder="ex: ana.silva ou recepcao"
                     required
                     pattern="^[a-zA-Z0-9._-]+$"
-                    className="w-full pl-8 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="no-uppercase lowercase w-full pl-8 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
                 </div>
               </div>
@@ -1150,11 +1160,18 @@ export default function EquipePage() {
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
+                    name="email"
                     type="email"
                     value={formEmail}
-                    onChange={(e) => setFormEmail(e.target.value)}
+                    onChange={(e) =>
+                      setFormEmail(e.target.value.toLowerCase().trim())
+                    }
                     placeholder="ana.silva@clinicafaaz.com.br"
-                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="no-uppercase lowercase w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
                 </div>
               </div>
@@ -1257,10 +1274,10 @@ export default function EquipePage() {
                       <input
                         type="text"
                         value={formCRM}
-                        onChange={(e) => setFormCRM(e.target.value)}
+                        onChange={(e) => setFormCRM(e.target.value.toUpperCase())}
                         maxLength={40}
-                        placeholder="Ex: CRM 54321/MG"
-                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                        placeholder="EX: CRM 54321/MG"
+                        className="uppercase w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                       />
                     </div>
                   </div>
@@ -1287,7 +1304,8 @@ export default function EquipePage() {
                     }
                     required={!membroEmEdicao}
                     minLength={membroEmEdicao ? 0 : 6}
-                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    autoComplete="new-password"
+                    className="no-uppercase w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
                 </div>
               </div>
